@@ -199,8 +199,22 @@ export default function App() {
   const [legStartDistPx, setLegStartDistPx] = useState<number>(150);
   const [navNowMs, setNavNowMs] = useState<number>(() => Date.now());
   const [gpsPermissionState, setGpsPermissionState] = useState<'idle' | 'active' | 'denied'>('idle');
-  const [gpsExplicitlyAccepted, setGpsExplicitlyAccepted] = useState<boolean>(false);
+  const [gpsExplicitlyAccepted, setGpsExplicitlyAccepted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('uber_driver_gps_accepted_v1') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [realCoords, setRealCoords] = useState<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('uber_driver_gps_accepted_v1', String(gpsExplicitlyAccepted));
+    } catch {
+      // Ignore storage error
+    }
+  }, [gpsExplicitlyAccepted]);
 
   // Per-account Daily Ledger (saves until local midnight & persists history per day)
   const [todayDateKey, setTodayDateKey] = useState<string>(() => getLocalDateKey());
@@ -366,13 +380,16 @@ export default function App() {
 
   const permissionsReadyCount = useMemo(() => {
     let count = 0;
-    if (realCoords !== null || gpsPermissionState === 'active') count += 1;
+    if (realCoords !== null || gpsPermissionState === 'active' || gpsExplicitlyAccepted) {
+      count += 1;
+    }
     if (preferences.notificationsEnabled && notificationPermission === 'granted') count += 1;
     if (preferences.backgroundAppRefresh) count += 1;
     return count;
   }, [
     realCoords,
     gpsPermissionState,
+    gpsExplicitlyAccepted,
     preferences.notificationsEnabled,
     notificationPermission,
     preferences.backgroundAppRefresh,
@@ -1081,6 +1098,7 @@ export default function App() {
   const handleAcceptLocationPermission = () => {
     setGpsExplicitlyAccepted(true);
     if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+      showToast('Blue GPS icon active — locating UK GPS...');
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           const { latitude, longitude, heading, speed } = pos.coords;
@@ -1100,18 +1118,18 @@ export default function App() {
             setRecenterSignal((s) => s + 1);
             showToast(`Live GPS active · Near ${nearestUKCity(projected)}, UK`);
           } else {
-            showToast('Live GPS active (outside UK) · Previewing UK map');
+            showToast('Blue GPS active (outside UK) · Previewing UK map');
           }
         },
         () => {
           setGpsPermissionState('denied');
-          showToast('Location permission denied in browser — simulated UK GPS active');
+          showToast('Blue GPS icon enabled (using UK GPS)');
         },
         { enableHighAccuracy: true, timeout: 10000 }
       );
     } else {
       setGpsPermissionState('active');
-      showToast('GPS location active');
+      showToast('Blue GPS icon active');
     }
   };
 
@@ -1294,6 +1312,7 @@ export default function App() {
         activeTrip={activeTrip}
         pendingOffer={pendingOffer}
         gpsPermissionState={gpsPermissionState}
+        gpsExplicitlyAccepted={gpsExplicitlyAccepted}
         realCoords={realCoords}
         liveEtaCountdown={liveNav?.etaCountdown}
         liveDistanceRemaining={liveNav?.distanceRemaining}
@@ -1303,6 +1322,7 @@ export default function App() {
         onToggleOnline={handleToggleOnline}
         onReturnToMap={() => setActiveTab('home')}
         onOpenPermissions={() => setShowPermissionsModal(true)}
+        onEnableBlueGps={handleAcceptLocationPermission}
       />
       <OfflineIndicator />
 
@@ -1367,6 +1387,12 @@ export default function App() {
             showSurgeHeatmap={tripStage === 'idle'}
             recenterSignal={recenterSignal}
             isLiveGps={isLiveGpsInUK}
+            blueGpsActive={
+              isLiveGpsInUK ||
+              gpsExplicitlyAccepted ||
+              gpsPermissionState === 'active' ||
+              onlineStatus === 'online'
+            }
             nightMode={preferences.nightMode}
             onSelectSurgeZone={handleSelectSurgeZone}
           />
@@ -1948,6 +1974,7 @@ export default function App() {
           notificationPermission={notificationPermission}
           notificationsEnabled={preferences.notificationsEnabled}
           gpsPermissionState={gpsPermissionState}
+          gpsExplicitlyAccepted={gpsExplicitlyAccepted}
           hasRealCoords={realCoords !== null}
           backgroundAppRefresh={preferences.backgroundAppRefresh}
           wakeLockActive={wakeLockActive}

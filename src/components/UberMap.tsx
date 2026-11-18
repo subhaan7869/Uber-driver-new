@@ -33,6 +33,7 @@ interface UberMapProps {
   showSurgeHeatmap: boolean;
   recenterSignal: number;
   isLiveGps?: boolean;
+  blueGpsActive?: boolean;
   nightMode?: boolean;
   compact?: boolean;
   onSelectSurgeZone?: (zone: SurgeZone) => void;
@@ -52,6 +53,7 @@ export const UberMap: React.FC<UberMapProps> = ({
   showSurgeHeatmap,
   recenterSignal,
   isLiveGps = false,
+  blueGpsActive = false,
   nightMode = false,
   compact = false,
   onSelectSurgeZone,
@@ -636,13 +638,13 @@ export const UberMap: React.FC<UberMapProps> = ({
             }}
             className="absolute z-20 pointer-events-none"
           >
-            {(onlineStatus === 'online' || isLiveGps) && tripStage === 'idle' && (
+            {(onlineStatus === 'online' || isLiveGps || blueGpsActive) && tripStage === 'idle' && (
               <div className="absolute -inset-3.5 rounded-full bg-[#276EF1]/25 animate-go-pulse" />
             )}
             <div
               style={{ transform: `rotate(${driverHeading}deg)` }}
               className={`w-10 h-10 rounded-full bg-white dark:bg-[#1E2028] border-[3px] shadow-lg flex items-center justify-center ${
-                isLiveGps
+                isLiveGps || blueGpsActive
                   ? 'border-[#276EF1]'
                   : nightMode
                   ? 'border-white'
@@ -652,7 +654,7 @@ export const UberMap: React.FC<UberMapProps> = ({
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M12 3L4.5 19.5L12 16L19.5 19.5L12 3Z"
-                  fill={isLiveGps ? '#276EF1' : nightMode ? '#FFFFFF' : '#000000'}
+                  fill={isLiveGps || blueGpsActive ? '#276EF1' : nightMode ? '#FFFFFF' : '#000000'}
                 />
               </svg>
             </div>
@@ -668,11 +670,15 @@ export const UberMap: React.FC<UberMapProps> = ({
               }}
               className="absolute z-10 pointer-events-none text-[10.5px] font-bold text-[#1F2937] dark:text-white bg-white/90 dark:bg-[#181A20]/90 backdrop-blur-xs px-2.5 py-0.5 rounded-full shadow-xs border border-black/10 dark:border-white/15 whitespace-nowrap flex items-center gap-1.5"
             >
-              {isLiveGps && (
+              {(isLiveGps || blueGpsActive) && (
                 <span className="w-2 h-2 rounded-full bg-[#276EF1] animate-pulse" />
               )}
               <span>
-                {isLiveGps ? `Live GPS · ${nearCityLabel}` : `Near ${nearCityLabel} · UK`}
+                {isLiveGps
+                  ? `Live GPS · ${nearCityLabel}`
+                  : blueGpsActive
+                  ? `GPS Active · ${nearCityLabel}`
+                  : `Near ${nearCityLabel} · UK`}
               </span>
             </div>
           )}

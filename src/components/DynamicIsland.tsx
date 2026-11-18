@@ -15,6 +15,7 @@ interface DynamicIslandProps {
   activeTrip: TripOffer | null;
   pendingOffer: TripOffer | null;
   gpsPermissionState: 'idle' | 'active' | 'denied';
+  gpsExplicitlyAccepted: boolean;
   realCoords: { lat: number; lng: number } | null;
   liveEtaCountdown?: string;
   liveDistanceRemaining?: string;
@@ -24,6 +25,7 @@ interface DynamicIslandProps {
   onToggleOnline: () => void;
   onReturnToMap: () => void;
   onOpenPermissions: () => void;
+  onEnableBlueGps?: () => void;
 }
 
 export const DynamicIsland: React.FC<DynamicIslandProps> = ({
@@ -32,6 +34,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
   activeTrip,
   pendingOffer,
   gpsPermissionState,
+  gpsExplicitlyAccepted,
   realCoords,
   liveEtaCountdown,
   liveDistanceRemaining,
@@ -41,6 +44,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
   onToggleOnline,
   onReturnToMap,
   onOpenPermissions,
+  onEnableBlueGps,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -57,7 +61,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
   }, [expanded]);
 
   const isLocationActive =
-    onlineStatus === 'online' || tripStage !== 'idle' || realCoords !== null;
+    onlineStatus === 'online' ||
+    tripStage !== 'idle' ||
+    realCoords !== null ||
+    gpsPermissionState === 'active' ||
+    gpsExplicitlyAccepted;
   const isTripActive = activeTrip !== null && tripStage !== 'idle';
 
   const statusLabel = isTripActive
@@ -72,7 +80,7 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
     ? `${pendingOffer.serviceName} · £${pendingOffer.fare.toFixed(2)}`
     : onlineStatus === 'online'
     ? 'Online · GPS'
-    : realCoords
+    : realCoords || gpsExplicitlyAccepted || gpsPermissionState === 'active'
     ? 'GPS Active'
     : 'Uber Driver';
 
@@ -87,11 +95,13 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
           type="button"
           onClick={() => setExpanded(true)}
           aria-label="Expand Dynamic Island status"
-          className={`pointer-events-auto h-[34px] rounded-full bg-black text-white shadow-[0_8px_24px_rgba(0,0,0,0.32)] border border-white/15 flex items-center justify-between gap-3 px-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] ${
+          className={`pointer-events-auto h-[34px] rounded-full bg-black text-white shadow-[0_8px_24px_rgba(0,0,0,0.32)] border flex items-center justify-between gap-3 px-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] ${
+            isLocationActive ? 'border-[#276EF1]/45' : 'border-white/15'
+          } ${
             isTripActive || pendingOffer
               ? 'min-w-[230px] max-w-[300px]'
               : isLocationActive
-              ? 'min-w-[185px]'
+              ? 'min-w-[192px]'
               : 'min-w-[148px]'
           }`}
         >
@@ -101,14 +111,14 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
               <span
                 className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
                   tripStage === 'pickup' || tripStage === 'waiting'
-                    ? 'bg-[#05944F]'
-                    : 'bg-[#276EF1]'
+                    ? 'bg-[#05944F] ring-2 ring-[#05944F]/35'
+                    : 'bg-[#276EF1] ring-2 ring-[#276EF1]/40 shadow-[0_0_10px_rgba(39,110,241,0.6)]'
                 }`}
               >
-                <Navigation className="w-3 h-3 text-white fill-white rotate-45" />
+                <Navigation className="w-3 h-3 text-white fill-white -translate-x-[0.5px] translate-y-[0.5px]" />
               </span>
             ) : (
-              <span className="w-3 h-3 rounded-full bg-[#1C1C1E] border border-white/15 shrink-0" />
+              <span className="w-3 h-3 rounded-full bg-[#2C2C2E] border border-white/25 shrink-0" />
             )}
 
             <span className="text-[12px] font-bold tracking-tight truncate">
@@ -146,11 +156,13 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
             <div className="flex items-center gap-2.5 min-w-0">
               <div
                 className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
-                  isLocationActive ? 'bg-[#276EF1]' : 'bg-white/10'
+                  isLocationActive
+                    ? 'bg-[#276EF1] ring-2 ring-[#276EF1]/35'
+                    : 'bg-white/10'
                 }`}
               >
                 {isLocationActive ? (
-                  <Navigation className="w-4 h-4 text-white fill-white rotate-45" />
+                  <Navigation className="w-4 h-4 text-white fill-white" />
                 ) : (
                   <Radar className="w-4 h-4 text-white/70" />
                 )}
@@ -161,15 +173,17 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
                     ? `${activeTrip.serviceName} · ${activeTrip.riderName}`
                     : onlineStatus === 'online'
                     ? 'Uber Driver · Using Location'
+                    : isLocationActive
+                    ? 'Uber Driver · Blue GPS Active'
                     : 'Uber Driver · Offline'}
                 </p>
                 <p className="text-[11.5px] text-white/65 truncate mt-0.5 tabular-nums">
                   {realCoords
                     ? `GPS ${realCoords.lat.toFixed(4)}, ${realCoords.lng.toFixed(4)}`
-                    : gpsPermissionState === 'denied'
-                    ? 'Simulated GPS · Central London'
+                    : gpsPermissionState === 'denied' && isLocationActive
+                    ? 'UK GPS active · Browser GPS blocked'
                     : isLocationActive
-                    ? 'Active foreground GPS · London'
+                    ? 'Blue GPS indicator active · UK'
                     : `Today: ${privacyHidden ? '£••••' : `£${todayEarnings.toFixed(2)}`}`}
                 </p>
               </div>
@@ -220,17 +234,30 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
             </div>
           ) : (
             <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenPermissions();
-                  setExpanded(false);
-                }}
-                className="flex items-center gap-1.5 text-[11.5px] text-white/80 hover:text-white underline-offset-2 hover:underline"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-[#05944F] shrink-0" />
-                <span>{isLocationActive ? 'Blue GPS active' : 'Permissions'}</span>
-              </button>
+              {!isLocationActive && onEnableBlueGps ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onEnableBlueGps();
+                  }}
+                  className="flex items-center gap-1.5 text-[11.5px] text-[#5B9BF8] font-bold hover:underline"
+                >
+                  <Navigation className="w-3.5 h-3.5 fill-[#5B9BF8] shrink-0" />
+                  <span>Show Blue Icon</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenPermissions();
+                    setExpanded(false);
+                  }}
+                  className="flex items-center gap-1.5 text-[11.5px] text-white/80 hover:text-white underline-offset-2 hover:underline"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#05944F] shrink-0" />
+                  <span>{isLocationActive ? 'Blue GPS active' : 'Permissions'}</span>
+                </button>
+              )}
               <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"

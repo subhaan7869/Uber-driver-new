@@ -6,6 +6,7 @@ interface PermissionsModalProps {
   notificationPermission: NotificationPermissionState;
   notificationsEnabled: boolean;
   gpsPermissionState: 'idle' | 'active' | 'denied';
+  gpsExplicitlyAccepted: boolean;
   hasRealCoords: boolean;
   backgroundAppRefresh: boolean;
   wakeLockActive: boolean;
@@ -20,6 +21,7 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
   notificationPermission,
   notificationsEnabled,
   gpsPermissionState,
+  gpsExplicitlyAccepted,
   hasRealCoords,
   backgroundAppRefresh,
   wakeLockActive,
@@ -32,7 +34,7 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
   const notifGranted =
     notificationsEnabled && notificationPermission === 'granted';
   const locationGranted =
-    hasRealCoords || gpsPermissionState === 'active';
+    hasRealCoords || gpsPermissionState === 'active' || gpsExplicitlyAccepted;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -47,7 +49,7 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
                 Enable Driver Permissions
               </h3>
               <p className="text-[12px] text-[#545454] dark:text-neutral-400">
-                Required for live alerts, GPS indicator & sync
+                Required for live alerts, Dynamic Island blue icon & sync
               </p>
             </div>
           </div>
@@ -65,22 +67,24 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
           {/* 1. Location + Dynamic Island Blue Indicator */}
           <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#1B1D22] flex items-center justify-between gap-3">
             <div className="flex items-start gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-[#276EF1] text-white flex items-center justify-center shrink-0">
-                <Navigation className="w-5 h-5 fill-white rotate-45" />
+              <div className="w-10 h-10 rounded-xl bg-[#276EF1] text-white flex items-center justify-center shrink-0 shadow-[0_4px_12px_rgba(39,110,241,0.4)]">
+                <Navigation className="w-5 h-5 fill-white" />
               </div>
               <div className="min-w-0">
                 <p className="text-[14.5px] font-bold text-black dark:text-white">
-                  Location & Blue GPS Indicator
+                  Dynamic Island & Blue GPS Icon
                 </p>
                 <p className="text-[12px] text-[#545454] dark:text-neutral-400 leading-snug mt-0.5">
-                  Shows real iOS Dynamic Island / status bar blue GPS arrow while driving
+                  {gpsPermissionState === 'denied' && gpsExplicitlyAccepted
+                    ? 'Blue icon active · Browser blocked raw GPS, using UK GPS'
+                    : 'Shows the blue GPS arrow on the Dynamic Island & UK map'}
                 </p>
               </div>
             </div>
             {locationGranted ? (
-              <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F] text-[12px] font-bold shrink-0">
+              <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#5B9BF8] text-[12px] font-bold shrink-0">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                Active
+                {hasRealCoords ? 'Live GPS' : 'Blue On'}
               </span>
             ) : (
               <button

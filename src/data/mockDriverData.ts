@@ -101,6 +101,9 @@ export const SAMPLE_TRIP_OFFERS: TripOffer[] = [
     pickupCoords: projectLatLngToMap(51.515, -0.141),
     dropoffCoords: projectLatLngToMap(51.497, -0.135),
     surgeBonus: 2.25,
+    pinCode: '4829',
+    surchargeLabel: 'Central Congestion Zone',
+    surchargeAmount: 1.5,
     expiresInSec: 15,
   },
   {
@@ -121,6 +124,9 @@ export const SAMPLE_TRIP_OFFERS: TripOffer[] = [
     dropoffArea: 'London Heathrow Airport',
     pickupCoords: projectLatLngToMap(51.509, -0.134),
     dropoffCoords: projectLatLngToMap(51.47, -0.454),
+    pinCode: '7104',
+    surchargeLabel: 'Heathrow Terminal Drop-off',
+    surchargeAmount: 5.0,
     expiresInSec: 18,
   },
   {
@@ -142,6 +148,9 @@ export const SAMPLE_TRIP_OFFERS: TripOffer[] = [
     pickupCoords: projectLatLngToMap(53.477, -2.23),
     dropoffCoords: projectLatLngToMap(53.358, -2.273),
     surgeBonus: 3.0,
+    pinCode: '3391',
+    surchargeLabel: 'Airport Barrier Fee',
+    surchargeAmount: 4.0,
     expiresInSec: 15,
   },
   {
@@ -162,6 +171,8 @@ export const SAMPLE_TRIP_OFFERS: TripOffer[] = [
     dropoffArea: 'West Sussex, RH6',
     pickupCoords: projectLatLngToMap(51.517, -0.082),
     dropoffCoords: projectLatLngToMap(51.153, -0.182),
+    surchargeLabel: 'Gatwick Drop-off Levy',
+    surchargeAmount: 6.0,
     expiresInSec: 18,
   },
   {
@@ -354,6 +365,8 @@ export const INITIAL_PREFERENCES: DriverPreferences = {
   soundEffects: true,
   notificationsEnabled: true,
   backgroundAppRefresh: true,
+  nightMode: false,
+  voiceNavigation: true,
 };
 
 export const DEFAULT_DESTINATION: DestinationConfig = {
@@ -389,5 +402,32 @@ export const OPPORTUNITIES_LIST = [
     subtitle: 'Tomorrow 04:30 · Soho to Heathrow T5',
     badge: '£54.20 est.',
     highlight: false,
+  },
+];
+
+export const UK_AIRPORT_QUEUES = [
+  {
+    id: 'lhr',
+    airport: 'London Heathrow (LHR)',
+    zone: 'AVP Holding Area · T2–T5',
+    carsAhead: '16–20',
+    estWait: '11 min',
+    demand: 'High',
+  },
+  {
+    id: 'lgw',
+    airport: 'London Gatwick (LGW)',
+    zone: 'North & South Authorised Bay',
+    carsAhead: '11–15',
+    estWait: '9 min',
+    demand: 'Moderate',
+  },
+  {
+    id: 'man',
+    airport: 'Manchester Airport (MAN)',
+    zone: 'T1–T3 Rideshare Rank',
+    carsAhead: '6–10',
+    estWait: '6 min',
+    demand: 'High',
   },
 ];

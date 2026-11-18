@@ -26,12 +26,14 @@ interface UberMapProps {
   tripStage: TripStage;
   activeTrip: TripOffer | null;
   pendingOffer: TripOffer | null;
+  routePolyline?: Coordinates[];
   surgeZones: SurgeZone[];
   mapReports: MapReportPin[];
   destination: DestinationConfig;
   showSurgeHeatmap: boolean;
   recenterSignal: number;
   isLiveGps?: boolean;
+  nightMode?: boolean;
   compact?: boolean;
   onSelectSurgeZone?: (zone: SurgeZone) => void;
 }
@@ -43,12 +45,14 @@ export const UberMap: React.FC<UberMapProps> = ({
   tripStage,
   activeTrip,
   pendingOffer,
+  routePolyline,
   surgeZones,
   mapReports,
   destination,
   showSurgeHeatmap,
   recenterSignal,
   isLiveGps = false,
+  nightMode = false,
   compact = false,
   onSelectSurgeZone,
 }) => {
@@ -150,28 +154,33 @@ export const UberMap: React.FC<UberMapProps> = ({
     const trip = activeTrip || pendingOffer;
     if (!trip) return null;
 
-    if (tripStage === 'enroute' || tripStage === 'dropoff_arrived') {
-      const midX = (driverPos.x + trip.dropoffCoords.x) / 2 + 6;
-      const midY = (driverPos.y + trip.dropoffCoords.y) / 2 - 5;
+    const isDropoff = tripStage === 'enroute' || tripStage === 'dropoff_arrived';
+    const endCoord = isDropoff ? trip.dropoffCoords : trip.pickupCoords;
+    const pinLabel = isDropoff ? 'Dropoff' : `Pickup ${trip.riderName}`;
+
+    if (routePolyline && routePolyline.length >= 2) {
+      const dPath = [driverPos, ...routePolyline.slice(1)]
+        .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x} ${p.y}`)
+        .join(' ');
       return {
         start: driverPos,
-        mid: { x: midX, y: midY },
-        end: trip.dropoffCoords,
-        pinLabel: 'Dropoff',
-        isDropoff: true,
+        end: routePolyline[routePolyline.length - 1] ?? endCoord,
+        pathD: dPath,
+        pinLabel,
+        isDropoff,
       };
     }
 
-    const midX = (driverPos.x + trip.pickupCoords.x) / 2 - 4;
-    const midY = (driverPos.y + trip.pickupCoords.y) / 2;
+    const midX = (driverPos.x + endCoord.x) / 2 + (isDropoff ? 6 : -4);
+    const midY = (driverPos.y + endCoord.y) / 2 - (isDropoff ? 5 : 0);
     return {
       start: driverPos,
-      mid: { x: midX, y: midY },
-      end: trip.pickupCoords,
-      pinLabel: `Pickup ${trip.riderName}`,
-      isDropoff: false,
+      end: endCoord,
+      pathD: `M ${driverPos.x} ${driverPos.y} Q ${midX} ${midY} ${endCoord.x} ${endCoord.y}`,
+      pinLabel,
+      isDropoff,
     };
-  }, [activeTrip, pendingOffer, tripStage, driverPos]);
+  }, [activeTrip, pendingOffer, tripStage, driverPos, routePolyline]);
 
   const renderReportIcon = (category: MapReportPin['category']) => {
     switch (category) {
@@ -233,7 +242,9 @@ export const UberMap: React.FC<UberMapProps> = ({
       onPointerCancel={handlePointerUp}
       onWheel={handleWheel}
       onDoubleClick={handleDoubleClick}
-      className="relative w-full h-full overflow-hidden bg-[#B9D5EE] select-none touch-none cursor-grab active:cursor-grabbing"
+      className={`relative w-full h-full overflow-hidden select-none touch-none cursor-grab active:cursor-grabbing transition-colors duration-300 ${
+        nightMode ? 'bg-[#0B1520]' : 'bg-[#B9D5EE]'
+      }`}
     >
       {/* Zoom In / Zoom Out Controls (Clear of Top Search Icon) */}
       {!compact && (
@@ -245,7 +256,7 @@ export const UberMap: React.FC<UberMapProps> = ({
           <button
             type="button"
             onClick={() => setZoom((z) => clampZoom(z + 0.35))}
-            className="w-11 h-11 rounded-full bg-white shadow-lg border border-black/5 flex items-center justify-center text-[20px] font-bold text-black hover:bg-[#F8F8F8] active:scale-95 transition-all"
+            className="w-11 h-11 rounded-full bg-white dark:bg-[#1E2028] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center text-[20px] font-bold text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38] active:scale-95 transition-all"
             aria-label="Zoom in map"
             title="Zoom in"
           >
@@ -254,7 +265,7 @@ export const UberMap: React.FC<UberMapProps> = ({
           <button
             type="button"
             onClick={() => setZoom((z) => clampZoom(z - 0.35))}
-            className="w-11 h-11 rounded-full bg-white shadow-lg border border-black/5 flex items-center justify-center text-[20px] font-bold text-black hover:bg-[#F8F8F8] active:scale-95 transition-all"
+            className="w-11 h-11 rounded-full bg-white dark:bg-[#1E2028] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center text-[20px] font-bold text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38] active:scale-95 transition-all"
             aria-label="Zoom out map"
             title="Zoom out"
           >
@@ -267,7 +278,7 @@ export const UberMap: React.FC<UberMapProps> = ({
                 setZoom(defaultZoom);
                 setPan({ x: 0, y: 0 });
               }}
-              className="px-2 py-1 rounded-full bg-black/85 text-white text-[10px] font-bold tabular-nums shadow-md hover:bg-black active:scale-95 transition-all"
+              className="px-2 py-1 rounded-full bg-black/85 dark:bg-[#276EF1] text-white text-[10px] font-bold tabular-nums shadow-md hover:bg-black active:scale-95 transition-all"
               aria-label="Reset map zoom"
               title="Reset zoom"
             >
@@ -319,40 +330,40 @@ export const UberMap: React.FC<UberMapProps> = ({
             </defs>
 
             {/* Surrounding Seas (North Sea, Irish Sea, English Channel, Atlantic) */}
-            <rect width="1000" height="1000" fill="#B9D5EE" />
+            <rect width="1000" height="1000" fill={nightMode ? '#0B1520' : '#B9D5EE'} />
 
             {/* Neighboring Landmasses (Muted Republic of Ireland & Northern France) */}
             <path
               d={UK_SVG_PATHS.irelandMuted}
-              fill="#DFE3E7"
-              stroke="#CFD5DC"
+              fill={nightMode ? '#10151C' : '#DFE3E7'}
+              stroke={nightMode ? '#1B232E' : '#CFD5DC'}
               strokeWidth="1.5"
             />
             <path
               d={UK_SVG_PATHS.franceMuted}
-              fill="#DFE3E7"
-              stroke="#CFD5DC"
+              fill={nightMode ? '#10151C' : '#DFE3E7'}
+              stroke={nightMode ? '#1B232E' : '#CFD5DC'}
               strokeWidth="1.5"
             />
 
             {/* Great Britain & Northern Ireland Main Landmass */}
             <path
               d={UK_SVG_PATHS.greatBritain}
-              fill="#E9ECEF"
-              stroke="#D5DCE4"
+              fill={nightMode ? '#151D26' : '#E9ECEF'}
+              stroke={nightMode ? '#222E3C' : '#D5DCE4'}
               strokeWidth="2"
               strokeLinejoin="round"
             />
             <path
               d={UK_SVG_PATHS.northernIreland}
-              fill="#E9ECEF"
-              stroke="#D5DCE4"
+              fill={nightMode ? '#151D26' : '#E9ECEF'}
+              stroke={nightMode ? '#222E3C' : '#D5DCE4'}
               strokeWidth="2"
               strokeLinejoin="round"
             />
 
             {/* UK National Parks & Green Belts */}
-            <g fill="#CDE5D0" opacity="0.9">
+            <g fill={nightMode ? '#13271D' : '#CDE5D0'} opacity="0.9">
               {UK_SVG_PATHS.parks.map((pk, idx) => (
                 <ellipse
                   key={`park-${idx}`}
@@ -368,13 +379,18 @@ export const UberMap: React.FC<UberMapProps> = ({
             <path
               d={UK_SVG_PATHS.thames}
               fill="none"
-              stroke="#B9D5EE"
+              stroke={nightMode ? '#0D2238' : '#B9D5EE'}
               strokeWidth="3.5"
               strokeLinecap="round"
             />
 
             {/* Urban City Street Grids around London, Manchester & Birmingham when zoomed in */}
-            <g stroke="#FFFFFF" strokeWidth="1.4" opacity="0.7" fill="none">
+            <g
+              stroke={nightMode ? '#222D3A' : '#FFFFFF'}
+              strokeWidth="1.4"
+              opacity={nightMode ? '0.85' : '0.7'}
+              fill="none"
+            >
               {[-18, -12, -6, 0, 6, 12, 18].map((d) => (
                 <React.Fragment key={`lon-grid-${d}`}>
                   <line x1={646 + d} y1={752} x2={646 + d} y2={792} />
@@ -385,9 +401,9 @@ export const UberMap: React.FC<UberMapProps> = ({
               ))}
             </g>
 
-            {/* UK Motorway Network (White Roads + Subtle Motorway Blue Core) */}
+            {/* UK Motorway Network (White/Slate Roads + Subtle Motorway Blue Core) */}
             <g
-              stroke="#FFFFFF"
+              stroke={nightMode ? '#243242' : '#FFFFFF'}
               strokeWidth="4.8"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -398,9 +414,9 @@ export const UberMap: React.FC<UberMapProps> = ({
               ))}
             </g>
             <g
-              stroke="#92B4E3"
+              stroke={nightMode ? '#3C69AD' : '#92B4E3'}
               strokeWidth="1.6"
-              strokeOpacity="0.7"
+              strokeOpacity={nightMode ? '0.85' : '0.7'}
               strokeLinecap="round"
               strokeLinejoin="round"
               fill="none"
@@ -433,7 +449,7 @@ export const UberMap: React.FC<UberMapProps> = ({
 
             {/* UK City Labels */}
             <g
-              fill="#5F6872"
+              fill={nightMode ? '#8EA0B5' : '#5F6872'}
               fontFamily="Plus Jakarta Sans, sans-serif"
               letterSpacing="0.03em"
             >
@@ -445,7 +461,7 @@ export const UberMap: React.FC<UberMapProps> = ({
                       cx={city.coords.x}
                       cy={city.coords.y}
                       r={city.major ? 2.4 : 1.7}
-                      fill="#5F6872"
+                      fill={nightMode ? '#8EA0B5' : '#5F6872'}
                       opacity="0.55"
                     />
                     <text
@@ -472,7 +488,7 @@ export const UberMap: React.FC<UberMapProps> = ({
                     height="11"
                     rx="2.5"
                     fill="#276EF1"
-                    stroke="#FFFFFF"
+                    stroke={nightMode ? '#151D26' : '#FFFFFF'}
                     strokeWidth="0.9"
                   />
                   <text x={s.x} y={s.y + 1.8} textAnchor="middle" fill="#FFFFFF">
@@ -482,22 +498,30 @@ export const UberMap: React.FC<UberMapProps> = ({
               ))}
             </g>
 
-            {/* Active Trip / Pending Offer Route Line */}
+            {/* Active Trip / Pending Offer Route Line (Road-Snapped Polyline) */}
             {routePoints && (
               <g>
                 <path
-                  d={`M ${routePoints.start.x} ${routePoints.start.y} Q ${routePoints.mid.x} ${routePoints.mid.y} ${routePoints.end.x} ${routePoints.end.y}`}
+                  d={routePoints.pathD}
                   fill="none"
-                  stroke="rgba(0,0,0,0.18)"
-                  strokeWidth={6 * invScale}
+                  stroke={nightMode ? 'rgba(91,155,248,0.28)' : 'rgba(0,0,0,0.18)'}
+                  strokeWidth={6.5 * invScale}
                   strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
                 <path
-                  d={`M ${routePoints.start.x} ${routePoints.start.y} Q ${routePoints.mid.x} ${routePoints.mid.y} ${routePoints.end.x} ${routePoints.end.y}`}
+                  d={routePoints.pathD}
                   fill="none"
-                  stroke="#000000"
-                  strokeWidth={3.5 * invScale}
+                  stroke={
+                    routePoints.isDropoff
+                      ? nightMode
+                        ? '#5B9BF8'
+                        : '#000000'
+                      : '#276EF1'
+                  }
+                  strokeWidth={3.6 * invScale}
                   strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
                 <circle
                   cx={routePoints.end.x}
@@ -617,14 +641,18 @@ export const UberMap: React.FC<UberMapProps> = ({
             )}
             <div
               style={{ transform: `rotate(${driverHeading}deg)` }}
-              className={`w-10 h-10 rounded-full bg-white border-[3px] shadow-lg flex items-center justify-center ${
-                isLiveGps ? 'border-[#276EF1]' : 'border-black'
+              className={`w-10 h-10 rounded-full bg-white dark:bg-[#1E2028] border-[3px] shadow-lg flex items-center justify-center ${
+                isLiveGps
+                  ? 'border-[#276EF1]'
+                  : nightMode
+                  ? 'border-white'
+                  : 'border-black'
               }`}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                 <path
                   d="M12 3L4.5 19.5L12 16L19.5 19.5L12 3Z"
-                  fill={isLiveGps ? '#276EF1' : '#000000'}
+                  fill={isLiveGps ? '#276EF1' : nightMode ? '#FFFFFF' : '#000000'}
                 />
               </svg>
             </div>
@@ -638,7 +666,7 @@ export const UberMap: React.FC<UberMapProps> = ({
                 top: `${driverPos.y + 22 * invScale}px`,
                 transform: `translate(-50%, 0) scale(${invScale})`,
               }}
-              className="absolute z-10 pointer-events-none text-[10.5px] font-bold text-[#1F2937] bg-white/90 backdrop-blur-xs px-2.5 py-0.5 rounded-full shadow-xs border border-black/10 whitespace-nowrap flex items-center gap-1.5"
+              className="absolute z-10 pointer-events-none text-[10.5px] font-bold text-[#1F2937] dark:text-white bg-white/90 dark:bg-[#181A20]/90 backdrop-blur-xs px-2.5 py-0.5 rounded-full shadow-xs border border-black/10 dark:border-white/15 whitespace-nowrap flex items-center gap-1.5"
             >
               {isLiveGps && (
                 <span className="w-2 h-2 rounded-full bg-[#276EF1] animate-pulse" />

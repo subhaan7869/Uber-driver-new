@@ -25,7 +25,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       icon: (active) => (
         <Home
           className={`w-[22px] h-[22px] ${
-            active ? 'text-black fill-black' : 'text-[#6B6B6B]'
+            active
+              ? 'text-black dark:text-white fill-black dark:fill-white'
+              : 'text-[#6B6B6B] dark:text-neutral-400'
           }`}
         />
       ),
@@ -36,7 +38,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       icon: (active) => (
         <Banknote
           className={`w-[22px] h-[22px] ${
-            active ? 'text-black stroke-[2.4]' : 'text-[#6B6B6B]'
+            active
+              ? 'text-black dark:text-white stroke-[2.4]'
+              : 'text-[#6B6B6B] dark:text-neutral-400'
           }`}
         />
       ),
@@ -48,7 +52,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       icon: (active) => (
         <Mail
           className={`w-[22px] h-[22px] ${
-            active ? 'text-black fill-black/15 stroke-[2.4]' : 'text-[#6B6B6B]'
+            active
+              ? 'text-black dark:text-white fill-black/15 dark:fill-white/20 stroke-[2.4]'
+              : 'text-[#6B6B6B] dark:text-neutral-400'
           }`}
         />
       ),
@@ -59,7 +65,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       icon: (active) => (
         <Menu
           className={`w-[22px] h-[22px] ${
-            active ? 'text-black stroke-[2.6]' : 'text-[#6B6B6B]'
+            active
+              ? 'text-black dark:text-white stroke-[2.6]'
+              : 'text-[#6B6B6B] dark:text-neutral-400'
           }`}
         />
       ),
@@ -69,7 +77,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   return (
     <nav
       aria-label="Primary navigation"
-      className="w-full bg-white border-t border-[#EAEAEA] grid grid-cols-4 h-[64px] shrink-0 z-30"
+      className="w-full bg-white dark:bg-[#141416] border-t border-[#EAEAEA] dark:border-white/10 grid grid-cols-4 h-[64px] shrink-0 z-30"
     >
       {items.map((item) => {
         const active = activeTab === item.id;
@@ -78,7 +86,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
             key={item.id}
             type="button"
             onClick={() => onChangeTab(item.id)}
-            className="relative flex flex-col items-center justify-center gap-1 min-h-[44px] focus:outline-none hover:bg-[#F8F8F8] transition-colors"
+            className="relative flex flex-col items-center justify-center gap-1 min-h-[44px] focus:outline-none hover:bg-[#F8F8F8] dark:hover:bg-white/5 transition-colors"
           >
             <div className="relative">
               {item.icon(active)}
@@ -90,7 +98,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
             </div>
             <span
               className={`text-[11px] leading-none tracking-tight whitespace-nowrap ${
-                active ? 'font-bold text-black' : 'font-medium text-[#6B6B6B]'
+                active
+                  ? 'font-bold text-black dark:text-white'
+                  : 'font-medium text-[#6B6B6B] dark:text-neutral-400'
               }`}
             >
               {item.label}

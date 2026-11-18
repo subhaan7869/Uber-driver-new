@@ -81,20 +81,20 @@ export const MapReportModal: React.FC<MapReportModalProps> = ({
   onClose,
 }) => {
   return (
-    <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="bg-white w-full sm:max-w-[380px] rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl border border-black/10">
+    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white dark:bg-[#141416] w-full sm:max-w-[380px] rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl border border-black/10 dark:border-white/10">
         <div className="flex items-center justify-between mb-6">
           <div className="w-9" />
-          <h3 className="text-[19px] font-bold text-black text-center">
+          <h3 className="text-[19px] font-bold text-black dark:text-white text-center">
             Add a map report
           </h3>
           <button
             type="button"
             onClick={onClose}
-            className="w-9 h-9 rounded-full bg-[#F3F3F3] hover:bg-[#E5E5E5] flex items-center justify-center transition-colors"
+            className="w-9 h-9 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center transition-colors"
             aria-label="Close map report"
           >
-            <X className="w-4 h-4 text-black" />
+            <X className="w-4 h-4 text-black dark:text-white" />
           </button>
         </div>
 
@@ -109,7 +109,7 @@ export const MapReportModal: React.FC<MapReportModalProps> = ({
               <div className="h-16 flex items-center justify-center group-hover:scale-105 group-active:scale-95 transition-transform">
                 {item.renderIcon()}
               </div>
-              <span className="text-[13px] font-semibold text-black">
+              <span className="text-[13px] font-semibold text-black dark:text-white">
                 {item.label}
               </span>
             </button>

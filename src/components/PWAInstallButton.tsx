@@ -47,10 +47,10 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
       <button
         type="button"
         onClick={isInstallable ? install : () => setShowIOSGuide(true)}
-        className="w-full py-3.5 flex items-center justify-between hover:bg-[#FAFAFA] transition-colors text-left"
+        className="w-full py-3.5 flex items-center justify-between hover:bg-[#FAFAFA] dark:hover:bg-white/5 transition-colors text-left"
       >
         <div className="flex items-center gap-3.5">
-          <div className="w-8 h-8 rounded-lg bg-[#E8F0FE] flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-[#E8F0FE] dark:bg-[#276EF1]/20 flex items-center justify-center shrink-0">
             {isInstallable ? (
               <Download className="w-4 h-4 text-[#276EF1]" />
             ) : (
@@ -58,10 +58,10 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
             )}
           </div>
           <div>
-            <p className="text-[16px] font-semibold text-black">
+            <p className="text-[16px] font-semibold text-black dark:text-white">
               {isInstallable ? 'Install Uber Driver App' : 'Add to Home Screen'}
             </p>
-            <p className="text-[12px] text-[#545454]">
+            <p className="text-[12px] text-[#545454] dark:text-neutral-400">
               Launch full-screen with offline support
             </p>
           </div>
@@ -77,43 +77,43 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
 };
 
 const IOSInstallModal: React.FC<{ onClose: () => void }> = ({ onClose }) => (
-  <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
-    <div className="bg-white w-full sm:max-w-[380px] rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl border border-black/10">
+  <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div className="bg-white dark:bg-[#141416] w-full sm:max-w-[380px] rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl border border-black/10 dark:border-white/10">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[19px] font-bold text-black">
+        <h3 className="text-[19px] font-bold text-black dark:text-white">
           Install on iPhone / iPad
         </h3>
         <button
           type="button"
           onClick={onClose}
-          className="w-9 h-9 rounded-full bg-[#F3F3F3] flex items-center justify-center"
+          className="w-9 h-9 rounded-full bg-[#F3F3F3] dark:bg-white/10 flex items-center justify-center"
           aria-label="Close install instructions"
         >
-          <X className="w-4 h-4 text-black" />
+          <X className="w-4 h-4 text-black dark:text-white" />
         </button>
       </div>
-      <div className="space-y-3 text-[14px] text-[#333333] leading-relaxed">
+      <div className="space-y-3 text-[14px] text-[#333333] dark:text-neutral-300 leading-relaxed">
         <p className="flex items-start gap-2.5">
-          <span className="w-6 h-6 rounded-full bg-[#EEEEEE] text-black text-[12px] font-bold flex items-center justify-center shrink-0">
+          <span className="w-6 h-6 rounded-full bg-[#EEEEEE] dark:bg-white/10 text-black dark:text-white text-[12px] font-bold flex items-center justify-center shrink-0">
             1
           </span>
           <span>
-            Tap the <strong className="text-black inline-flex items-center gap-1">Share <Share className="w-3.5 h-3.5 inline" /></strong> button in the Safari toolbar.
+            Tap the <strong className="text-black dark:text-white inline-flex items-center gap-1">Share <Share className="w-3.5 h-3.5 inline" /></strong> button in the Safari toolbar.
           </span>
         </p>
         <p className="flex items-start gap-2.5">
-          <span className="w-6 h-6 rounded-full bg-[#EEEEEE] text-black text-[12px] font-bold flex items-center justify-center shrink-0">
+          <span className="w-6 h-6 rounded-full bg-[#EEEEEE] dark:bg-white/10 text-black dark:text-white text-[12px] font-bold flex items-center justify-center shrink-0">
             2
           </span>
           <span>
-            Scroll down and tap <strong className="text-black">Add to Home Screen</strong>.
+            Scroll down and tap <strong className="text-black dark:text-white">Add to Home Screen</strong>.
           </span>
         </p>
       </div>
       <button
         type="button"
         onClick={onClose}
-        className="mt-5 w-full h-11 rounded-xl bg-black text-white text-[14px] font-bold hover:bg-neutral-800 transition-colors"
+        className="mt-5 w-full h-11 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[14px] font-bold hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] transition-colors"
       >
         Got it
       </button>

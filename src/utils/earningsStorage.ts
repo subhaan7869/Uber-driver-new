@@ -52,13 +52,22 @@ export function formatWeekRangeLabel(): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
-export function loadDriverLedger(initialDefaults: {
-  proPoints: number;
-  walletBalance: number;
-  questCompletedCount: number;
-}): DriverLedger {
+function getLedgerKey(accountId?: string): string {
+  return accountId ? `${LEDGER_STORAGE_KEY}_${accountId}` : LEDGER_STORAGE_KEY;
+}
+
+export function loadDriverLedger(
+  initialDefaults: {
+    proPoints: number;
+    walletBalance: number;
+    questCompletedCount: number;
+  },
+  accountId?: string
+): DriverLedger {
   try {
-    const raw = localStorage.getItem(LEDGER_STORAGE_KEY);
+    const raw =
+      localStorage.getItem(getLedgerKey(accountId)) ||
+      (accountId === 'acct-alex' ? localStorage.getItem(LEDGER_STORAGE_KEY) : null);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<DriverLedger>;
       return {
@@ -93,9 +102,9 @@ export function loadDriverLedger(initialDefaults: {
   };
 }
 
-export function saveDriverLedger(ledger: DriverLedger): void {
+export function saveDriverLedger(ledger: DriverLedger, accountId?: string): void {
   try {
-    localStorage.setItem(LEDGER_STORAGE_KEY, JSON.stringify(ledger));
+    localStorage.setItem(getLedgerKey(accountId), JSON.stringify(ledger));
   } catch {
     // Ignore storage write error
   }

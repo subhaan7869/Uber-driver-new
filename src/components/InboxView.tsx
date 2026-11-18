@@ -35,9 +35,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const renderRowIcon = (type: InboxThread['iconType']) => {
     switch (type) {
       case 'chat':
-        return <MessageSquare className="w-5 h-5 text-black fill-black" />;
+        return <MessageSquare className="w-5 h-5 text-black dark:text-white fill-black dark:fill-white" />;
       case 'mail':
-        return <Mail className="w-5 h-5 text-black fill-black/85" />;
+        return <Mail className="w-5 h-5 text-black dark:text-white fill-black/85 dark:fill-white/85" />;
       case 'doc':
         return <FileCheck className="w-5 h-5 text-[#05944F]" />;
       case 'promo':
@@ -58,38 +58,40 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
   if (selectedThread) {
     return (
-      <div className="flex-1 min-h-0 flex flex-col bg-white overflow-hidden">
-        <div className="px-4 pt-15 lg:pt-3.5 pb-3.5 border-b border-[#EEEEEE] flex items-center gap-3">
+      <div className="flex-1 min-h-0 flex flex-col bg-white dark:bg-[#0E0F12] overflow-hidden">
+        <div className="px-4 pt-15 lg:pt-3.5 pb-3.5 border-b border-[#EEEEEE] dark:border-white/10 flex items-center gap-3">
           <button
             type="button"
             onClick={() => setActiveThreadId(null)}
-            className="w-10 h-10 rounded-full bg-[#F3F3F3] hover:bg-[#E5E5E5] flex items-center justify-center"
+            className="w-10 h-10 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center"
             aria-label="Back to Inbox"
           >
-            <ChevronLeft className="w-6 h-6 text-black" />
+            <ChevronLeft className="w-6 h-6 text-black dark:text-white" />
           </button>
           <div className="min-w-0 flex-1">
-            <h2 className="text-[17px] font-bold text-black truncate">
+            <h2 className="text-[17px] font-bold text-black dark:text-white truncate">
               {selectedThread.title}
             </h2>
-            <p className="text-[12px] text-[#545454]">Uber Support · {selectedThread.timeAgo}</p>
+            <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+              Uber Support · {selectedThread.timeAgo}
+            </p>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#FAFAFA]">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#FAFAFA] dark:bg-[#141416]">
           {selectedThread.messages.map((msg) => (
             <div
               key={msg.id}
               className={`max-w-[85%] rounded-2xl px-4 py-3 text-[14px] leading-relaxed ${
                 msg.sender === 'driver'
-                  ? 'ml-auto bg-black text-white'
-                  : 'bg-white border border-[#E6E6E6] text-black'
+                  ? 'ml-auto bg-black dark:bg-[#276EF1] text-white'
+                  : 'bg-white dark:bg-[#1E2026] border border-[#E6E6E6] dark:border-white/10 text-black dark:text-white'
               }`}
             >
               <p>{msg.text}</p>
               <p
                 className={`text-[11px] mt-1 ${
-                  msg.sender === 'driver' ? 'text-white/65' : 'text-[#757575]'
+                  msg.sender === 'driver' ? 'text-white/65' : 'text-[#757575] dark:text-neutral-400'
                 }`}
               >
                 {msg.timestamp}
@@ -98,19 +100,19 @@ export const InboxView: React.FC<InboxViewProps> = ({
           ))}
         </div>
 
-        <div className="p-3 bg-white border-t border-[#EEEEEE] flex items-center gap-2">
+        <div className="p-3 bg-white dark:bg-[#0E0F12] border-t border-[#EEEEEE] dark:border-white/10 flex items-center gap-2">
           <input
             type="text"
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSendReply()}
             placeholder="Reply to Uber Support..."
-            className="flex-1 h-11 px-4 rounded-xl bg-[#F3F3F3] text-[14px] text-black placeholder:text-[#757575] focus:outline-none focus:ring-2 focus:ring-black"
+            className="flex-1 h-11 px-4 rounded-xl bg-[#F3F3F3] dark:bg-white/10 text-[14px] text-black dark:text-white placeholder:text-[#757575] dark:placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-[#276EF1]"
           />
           <button
             type="button"
             onClick={handleSendReply}
-            className="w-11 h-11 rounded-xl bg-black text-white flex items-center justify-center hover:bg-neutral-800 transition-colors shrink-0"
+            className="w-11 h-11 rounded-xl bg-black dark:bg-[#276EF1] text-white flex items-center justify-center hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] transition-colors shrink-0"
             aria-label="Send support reply"
           >
             <Send className="w-4 h-4" />
@@ -121,28 +123,30 @@ export const InboxView: React.FC<InboxViewProps> = ({
   }
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto bg-white">
+    <div className="flex-1 min-h-0 overflow-y-auto bg-white dark:bg-[#0E0F12]">
       <div className="px-5 pt-15 lg:pt-6 pb-2 flex items-center gap-3">
         <button
           type="button"
           onClick={onBack}
-          className="w-10 h-10 rounded-full bg-[#F3F3F3] hover:bg-[#E5E5E5] active:scale-95 flex items-center justify-center transition-all shrink-0"
+          className="w-10 h-10 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 active:scale-95 flex items-center justify-center transition-all shrink-0"
           aria-label="Back to Map"
         >
-          <ChevronLeft className="w-6 h-6 text-black" />
+          <ChevronLeft className="w-6 h-6 text-black dark:text-white" />
         </button>
-        <h1 className="text-[32px] font-extrabold tracking-tight text-black">
+        <h1 className="text-[32px] font-extrabold tracking-tight text-black dark:text-white">
           Inbox
         </h1>
       </div>
 
-      {/* Sub-Tabs (1:1 Match to Image 6) */}
-      <div className="grid grid-cols-2 border-b border-[#EEEEEE]">
+      {/* Sub-Tabs */}
+      <div className="grid grid-cols-2 border-b border-[#EEEEEE] dark:border-white/10">
         <button
           type="button"
           onClick={() => setSubTab('notifications')}
           className={`relative py-3.5 flex items-center justify-center gap-2 text-[15px] font-bold transition-colors ${
-            subTab === 'notifications' ? 'text-black' : 'text-[#6B6B6B] hover:text-black'
+            subTab === 'notifications'
+              ? 'text-black dark:text-white'
+              : 'text-[#6B6B6B] dark:text-neutral-400 hover:text-black dark:hover:text-white'
           }`}
         >
           <span>Notifications</span>
@@ -152,7 +156,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
             </span>
           )}
           {subTab === 'notifications' && (
-            <span className="absolute bottom-0 inset-x-0 h-[3px] bg-black" />
+            <span className="absolute bottom-0 inset-x-0 h-[3px] bg-black dark:bg-[#276EF1]" />
           )}
         </button>
 
@@ -160,7 +164,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
           type="button"
           onClick={() => setSubTab('support')}
           className={`relative py-3.5 flex items-center justify-center gap-2 text-[15px] font-bold transition-colors ${
-            subTab === 'support' ? 'text-black' : 'text-[#6B6B6B] hover:text-black'
+            subTab === 'support'
+              ? 'text-black dark:text-white'
+              : 'text-[#6B6B6B] dark:text-neutral-400 hover:text-black dark:hover:text-white'
           }`}
         >
           <span>Support</span>
@@ -170,23 +176,23 @@ export const InboxView: React.FC<InboxViewProps> = ({
             </span>
           )}
           {subTab === 'support' && (
-            <span className="absolute bottom-0 inset-x-0 h-[3px] bg-black" />
+            <span className="absolute bottom-0 inset-x-0 h-[3px] bg-black dark:bg-[#276EF1]" />
           )}
         </button>
       </div>
 
       <div className="px-5 pt-5 pb-6">
-        <h2 className="text-[22px] font-extrabold tracking-tight text-black mb-3">
+        <h2 className="text-[22px] font-extrabold tracking-tight text-black dark:text-white mb-3">
           {subTab === 'support' ? 'Active' : 'Updates'}
         </h2>
 
-        <div className="divide-y divide-[#EEEEEE]">
+        <div className="divide-y divide-[#EEEEEE] dark:divide-white/10">
           {filteredThreads.map((thread) => (
             <button
               key={thread.id}
               type="button"
               onClick={() => handleOpenThread(thread)}
-              className="w-full py-4 flex items-start gap-4 text-left hover:bg-[#FAFAFA] transition-colors"
+              className="w-full py-4 flex items-start gap-4 text-left hover:bg-[#FAFAFA] dark:hover:bg-white/5 transition-colors"
             >
               <div className="w-8 h-8 flex items-center justify-center mt-0.5 shrink-0">
                 {renderRowIcon(thread.iconType)}
@@ -194,14 +200,14 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2">
-                  <p className="text-[16px] font-bold text-black leading-snug">
+                  <p className="text-[16px] font-bold text-black dark:text-white leading-snug">
                     {thread.title}
                   </p>
-                  <span className="text-[13px] text-[#6B6B6B] whitespace-nowrap shrink-0">
+                  <span className="text-[13px] text-[#6B6B6B] dark:text-neutral-400 whitespace-nowrap shrink-0">
                     {thread.timeAgo}
                   </span>
                 </div>
-                <p className="text-[14px] text-[#545454] truncate mt-1">
+                <p className="text-[14px] text-[#545454] dark:text-neutral-400 truncate mt-1">
                   {thread.preview}
                 </p>
                 {thread.statusText && (

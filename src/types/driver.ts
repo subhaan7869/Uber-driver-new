@@ -17,6 +17,51 @@ export interface Coordinates {
   y: number; // 0 - 1000 map space
 }
 
+export type NavManeuverKind =
+  | 'turn-left'
+  | 'turn-right'
+  | 'roundabout'
+  | 'merge'
+  | 'straight'
+  | 'arrive';
+
+export interface RouteStep {
+  id: string;
+  maneuver: NavManeuverKind;
+  instruction: string;
+  streetName: string;
+  distanceMeters: number;
+  speedLimitMph: 20 | 30 | 50 | 70;
+  waypointIndex: number;
+}
+
+export interface ComputedRoute {
+  polyline: Coordinates[];
+  steps: RouteStep[];
+  totalDistanceMeters: number;
+  totalDurationSec: number;
+  source: 'osrm' | 'uk-corridor';
+}
+
+export interface DriverAccount {
+  id: string;
+  name: string;
+  email: string;
+  password: string;
+  tier: 'Diamond' | 'Platinum' | 'Gold';
+  proPoints: number;
+  rating: number;
+  acceptanceRate: number;
+  cancellationRate: number;
+  vehicle: string;
+  vehicleColor: string;
+  licensePlate: string;
+  phvBadge: string;
+  city: string;
+  lastFaceVerifiedAt: number | null;
+  drivingMinutesUsedToday: number;
+}
+
 export interface TripOffer {
   id: string;
   type: OfferType;
@@ -36,6 +81,9 @@ export interface TripOffer {
   pickupCoords: Coordinates;
   dropoffCoords: Coordinates;
   surgeBonus?: number;
+  pinCode?: string;
+  surchargeLabel?: string;
+  surchargeAmount?: number;
   expiresInSec: number;
 }
 
@@ -70,6 +118,11 @@ export interface CompletedTrip {
   serviceName: string;
   fare: number;
   tip: number;
+  waitFee?: number;
+  surchargeAmount?: number;
+  surchargeLabel?: string;
+  uberFee?: number;
+  netPayout?: number;
   distanceMiles: number;
   durationMin: number;
   pickupArea: string;
@@ -120,4 +173,6 @@ export interface DriverPreferences {
   soundEffects: boolean;
   notificationsEnabled: boolean;
   backgroundAppRefresh: boolean;
+  nightMode: boolean;
+  voiceNavigation: boolean;
 }

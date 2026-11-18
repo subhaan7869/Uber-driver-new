@@ -17,6 +17,15 @@ export function projectLatLngToMap(lat: number, lng: number): Coordinates {
   };
 }
 
+export function mapToLatLng(coords: Coordinates): { lat: number; lng: number } {
+  const lat = LAT_MAX - (coords.y - TOP_Y) / PX_PER_LAT;
+  const lng = CENTER_LNG + (coords.x - CENTER_X) / PX_PER_LNG;
+  return {
+    lat: Number(lat.toFixed(5)),
+    lng: Number(lng.toFixed(5)),
+  };
+}
+
 export function isWithinUKBounds(lat: number, lng: number): boolean {
   return lat >= 49.5 && lat <= 60.9 && lng >= -8.6 && lng <= 2.3;
 }

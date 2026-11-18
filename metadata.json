@@ -1,0 +1,6 @@
+{
+  "name": "Uber Driver",
+  "description": "Interactive 1:1 clone of the Uber Driver mobile and navigation experience with live dispatch, trip radar, turn-by-turn pickup/dropoff flows, surge heatmaps, earnings, inbox, and menu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

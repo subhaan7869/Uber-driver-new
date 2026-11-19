@@ -21,6 +21,7 @@ export const DEFAULT_ACCOUNTS: DriverAccount[] = [
     city: 'London',
     lastFaceVerifiedAt: null,
     drivingMinutesUsedToday: 118,
+    batteryPct: 86,
   },
   {
     id: 'acct-sarah',
@@ -39,6 +40,7 @@ export const DEFAULT_ACCOUNTS: DriverAccount[] = [
     city: 'Manchester',
     lastFaceVerifiedAt: null,
     drivingMinutesUsedToday: 64,
+    batteryPct: 78,
   },
 ];
 
@@ -48,7 +50,10 @@ export function loadAccounts(): DriverAccount[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        return parsed.map((acct) => ({
+          ...acct,
+          batteryPct: typeof acct.batteryPct === 'number' ? acct.batteryPct : 84,
+        }));
       }
     }
   } catch {

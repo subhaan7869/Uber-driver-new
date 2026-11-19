@@ -1,10 +1,27 @@
 import React from 'react';
-import { Car, Check, Moon, Package, PawPrint, Sparkles, Volume2, X } from 'lucide-react';
-import { DriverPreferences } from '../types/driver';
+import {
+  Car,
+  Check,
+  Clock,
+  ExternalLink,
+  Layers,
+  Moon,
+  Package,
+  PawPrint,
+  Route,
+  ShieldAlert,
+  Sparkles,
+  Volume2,
+  X,
+  Zap,
+} from 'lucide-react';
+import { DriverPreferences, NavProvider } from '../types/driver';
+import { uberSounds } from '../utils/uberSounds';
 
 interface PreferencesSheetProps {
   preferences: DriverPreferences;
   onTogglePreference: (key: keyof DriverPreferences) => void;
+  onSetNavProvider?: (provider: NavProvider) => void;
   onResetDefaults: () => void;
   onClose: () => void;
 }
@@ -26,6 +43,12 @@ const SERVICE_OPTIONS: Array<{
     title: 'Comfort',
     subtitle: 'Newer cars with extra legroom & top-rated drivers',
     icon: <Sparkles className="w-5 h-5 text-black dark:text-white" />,
+  },
+  {
+    key: 'intercity',
+    title: 'Intercity (Out of City)',
+    subtitle: 'Long-distance motorway runs (Oxford, Brighton, Birmingham)',
+    icon: <Route className="w-5 h-5 text-[#7C3AED]" />,
   },
   {
     key: 'uberXL',
@@ -50,6 +73,7 @@ const SERVICE_OPTIONS: Array<{
 export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
   preferences,
   onTogglePreference,
+  onSetNavProvider,
   onResetDefaults,
   onClose,
 }) => {
@@ -161,6 +185,182 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
 
           <button
             type="button"
+            onClick={() => onTogglePreference('rushNav')}
+            className="w-full flex items-center justify-between py-1 text-left"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <Zap className="w-4 h-4 text-[#F59E0B] shrink-0" />
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">Rush Nav</p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Accelerate navigation progress to finish trips quicker
+                </p>
+              </div>
+            </div>
+            <div
+              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                preferences.rushNav ? 'bg-[#F59E0B]' : 'bg-[#DCDCDC] dark:bg-white/20'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.rushNav ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onTogglePreference('showTrafficLayer')}
+            className="w-full flex items-center justify-between py-1 text-left"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <Layers className="w-4 h-4 text-[#05944F] shrink-0" />
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">Live UK Motorway Traffic</p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Green/amber/red flow on M1, M25, M4, M6 & M40
+                </p>
+              </div>
+            </div>
+            <div
+              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                preferences.showTrafficLayer ? 'bg-[#05944F]' : 'bg-[#DCDCDC] dark:bg-white/20'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.showTrafficLayer ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onTogglePreference('showUKZones')}
+            className="w-full flex items-center justify-between py-1 text-left"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <Layers className="w-4 h-4 text-[#7C3AED] shrink-0" />
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">London CC & ULEZ Zones</p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Display Congestion Charge & ULEZ boundaries on map
+                </p>
+              </div>
+            </div>
+            <div
+              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                preferences.showUKZones ? 'bg-[#7C3AED]' : 'bg-[#DCDCDC] dark:bg-white/20'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.showUKZones ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onTogglePreference('speedCameraWarnings')}
+            className="w-full flex items-center justify-between py-1 text-left"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <ShieldAlert className="w-4 h-4 text-[#E11900] shrink-0" />
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">Speed & Bus-Lane Cameras</p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Alert on UK average-speed & red-light camera traps
+                </p>
+              </div>
+            </div>
+            <div
+              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                preferences.speedCameraWarnings ? 'bg-[#E11900]' : 'bg-[#DCDCDC] dark:bg-white/20'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.speedCameraWarnings ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onTogglePreference('showBusySoonZones')}
+            className="w-full flex items-center justify-between py-1 text-left"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <Clock className="w-4 h-4 text-[#F59E0B] shrink-0" />
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">Busy Soon Forecasts</p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Predict upcoming stadium, airport & commuter surges
+                </p>
+              </div>
+            </div>
+            <div
+              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                preferences.showBusySoonZones ? 'bg-[#F59E0B]' : 'bg-[#DCDCDC] dark:bg-white/20'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.showBusySoonZones ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </button>
+
+          {/* Navigation App Provider (Uber Nav vs 3rd-party Maps) */}
+          {onSetNavProvider && (
+            <div className="pt-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[14px] font-bold text-black dark:text-white flex items-center gap-1.5">
+                  <ExternalLink className="w-3.5 h-3.5 text-[#276EF1]" />
+                  <span>Navigation App</span>
+                </p>
+                <span className="text-[11.5px] text-[#545454] dark:text-neutral-400">
+                  Active turn-by-turn
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5">
+                {(
+                  [
+                    { id: 'uber', label: 'Uber Nav' },
+                    { id: 'google', label: 'Google' },
+                    { id: 'waze', label: 'Waze' },
+                    { id: 'apple', label: 'Apple' },
+                  ] as const
+                ).map((item) => {
+                  const active = (preferences.navProvider ?? 'uber') === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onSetNavProvider(item.id)}
+                      className={`h-9 rounded-xl text-[12px] font-bold border transition-all ${
+                        active
+                          ? 'bg-black dark:bg-[#276EF1] text-white border-black dark:border-[#276EF1]'
+                          : 'bg-[#F6F6F6] dark:bg-white/5 text-black dark:text-white border-transparent hover:bg-[#EAEAEA] dark:hover:bg-white/10'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
             onClick={() => onTogglePreference('autoAccept')}
             className="w-full flex items-center justify-between py-1 text-left"
           >
@@ -207,29 +407,48 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
             </div>
           </button>
 
-          <button
-            type="button"
-            onClick={() => onTogglePreference('soundEffects')}
-            className="w-full flex items-center justify-between py-1 text-left"
-          >
-            <div>
-              <p className="text-[15px] font-bold text-black dark:text-white">Driver app sounds</p>
-              <p className="text-[12px] text-[#545454] dark:text-neutral-400">
-                Dispatch pings, online/offline chimes, and trip cues
-              </p>
-            </div>
-            <div
-              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
-                preferences.soundEffects ? 'bg-[#276EF1]' : 'bg-[#DCDCDC] dark:bg-white/20'
-              }`}
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => {
+                uberSounds.unlock();
+                onTogglePreference('soundEffects');
+              }}
+              className="w-full flex items-center justify-between py-1 text-left"
             >
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">Driver app sounds</p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Dispatch pings, online/offline chimes, and trip cues
+                </p>
+              </div>
               <div
-                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
-                  preferences.soundEffects ? 'translate-x-5' : 'translate-x-0'
+                className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                  preferences.soundEffects ? 'bg-[#276EF1]' : 'bg-[#DCDCDC] dark:bg-white/20'
                 }`}
-              />
-            </div>
-          </button>
+              >
+                <div
+                  className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                    preferences.soundEffects ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </button>
+            {preferences.soundEffects && (
+              <button
+                type="button"
+                onClick={() => {
+                  uberSounds.unlock();
+                  uberSounds.setEnabled(true);
+                  uberSounds.play('exclusiveDispatch');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#EAEAEA] dark:hover:bg-white/15 text-[12px] font-bold text-black dark:text-white transition-colors"
+              >
+                <Volume2 className="w-3.5 h-3.5 text-[#276EF1]" />
+                <span>Test Exclusive Chime</span>
+              </button>
+            )}
+          </div>
 
           <button
             type="button"

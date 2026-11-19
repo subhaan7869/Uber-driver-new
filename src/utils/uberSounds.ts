@@ -2,6 +2,7 @@ export type UberSoundName =
   | 'online'
   | 'offline'
   | 'dispatch'
+  | 'exclusiveDispatch'
   | 'accept'
   | 'startTrip'
   | 'completeTrip'
@@ -10,7 +11,16 @@ export type UberSoundName =
   | 'cashOut'
   | 'message';
 
-const MP3_SOURCES: Record<'online' | 'offline' | 'dispatch' | 'accept' | 'startTrip', string> = {
+type Mp3Key =
+  | 'online'
+  | 'offline'
+  | 'dispatch'
+  | 'exclusiveDispatch'
+  | 'accept'
+  | 'startTrip';
+
+const MP3_SOURCES: Record<Mp3Key, string> = {
+  exclusiveDispatch: '/assets/aistudio/uber_tune_7af85c35.mp3',
   online: '/sounds/online.mp3',
   offline: '/sounds/offline.mp3',
   dispatch: '/sounds/dispatch.mp3',
@@ -18,12 +28,57 @@ const MP3_SOURCES: Record<'online' | 'offline' | 'dispatch' | 'accept' | 'startT
   startTrip: '/sounds/start-trip.mp3',
 };
 
+interface ActivePlaybackHandle {
+  stop: () => void;
+  setOnEnded: (cb: () => void) => void;
+  durationMs?: number;
+}
+
 class UberSoundEngine {
-  private audioCache: Partial<Record<keyof typeof MP3_SOURCES, HTMLAudioElement>> = {};
+  private audioCache: Partial<Record<Mp3Key, HTMLAudioElement>> = {};
+  private rawBufferPromises: Partial<Record<Mp3Key, Promise<ArrayBuffer | null>>> = {};
+  private bufferCache: Partial<Record<Mp3Key, AudioBuffer>> = {};
+  private bufferPromises: Partial<Record<Mp3Key, Promise<AudioBuffer | null>>> = {};
   private dispatchLoopTimer: number | null = null;
-  private activeDispatchAudio: HTMLAudioElement | null = null;
+  private dispatchLoopActive = false;
+  private activeDispatchHandle: ActivePlaybackHandle | null = null;
   private audioCtx: AudioContext | null = null;
   private enabled = true;
+  private globalListenersAttached = false;
+  private pendingLoopKind: 'exclusive' | 'radar' | null = null;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      this.attachGlobalUnlockListeners();
+    }
+  }
+
+  private attachGlobalUnlockListeners() {
+    if (this.globalListenersAttached || typeof window === 'undefined') return;
+    this.globalListenersAttached = true;
+
+    const handleUserGesture = () => {
+      this.unlock();
+    };
+
+    window.addEventListener('pointerdown', handleUserGesture, { capture: true, passive: true });
+    window.addEventListener('touchstart', handleUserGesture, { capture: true, passive: true });
+    window.addEventListener('click', handleUserGesture, { capture: true, passive: true });
+    window.addEventListener('keydown', handleUserGesture, { capture: true, passive: true });
+  }
+
+  private ensureAudioContext(): AudioContext | null {
+    if (typeof window === 'undefined') return null;
+    if (!this.audioCtx) {
+      const Ctx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (Ctx) {
+        this.audioCtx = new Ctx();
+      }
+    }
+    return this.audioCtx;
+  }
 
   public setEnabled(enabled: boolean) {
     this.enabled = enabled;
@@ -36,42 +91,192 @@ class UberSoundEngine {
     return this.enabled;
   }
 
+  private prefetchRaw(key: Mp3Key): Promise<ArrayBuffer | null> {
+    const existing = this.rawBufferPromises[key];
+    if (existing) return existing;
+    if (typeof fetch === 'undefined') return Promise.resolve(null);
+
+    const p = fetch(MP3_SOURCES[key])
+      .then((res) => (res.ok ? res.arrayBuffer() : null))
+      .catch(() => null);
+    this.rawBufferPromises[key] = p;
+    return p;
+  }
+
   public preload() {
     if (typeof window === 'undefined') return;
-    (Object.keys(MP3_SOURCES) as Array<keyof typeof MP3_SOURCES>).forEach((key) => {
+    this.attachGlobalUnlockListeners();
+
+    (Object.keys(MP3_SOURCES) as Mp3Key[]).forEach((key) => {
       if (!this.audioCache[key]) {
         const audio = new Audio(MP3_SOURCES[key]);
         audio.preload = 'auto';
+        audio.load();
         this.audioCache[key] = audio;
       }
+      void this.prefetchRaw(key);
     });
+
+    if (this.audioCtx) {
+      (Object.keys(MP3_SOURCES) as Mp3Key[]).forEach((key) => {
+        void this.loadDecodedBuffer(key);
+      });
+    }
+  }
+
+  private loadDecodedBuffer(key: Mp3Key): Promise<AudioBuffer | null> {
+    if (this.bufferCache[key]) {
+      return Promise.resolve(this.bufferCache[key]!);
+    }
+    const existing = this.bufferPromises[key];
+    if (existing) return existing;
+
+    const ctx = this.ensureAudioContext();
+    if (!ctx) return Promise.resolve(null);
+
+    const promise = this.prefetchRaw(key)
+      .then((arr) => {
+        if (!arr) return null;
+        // Clone ArrayBuffer so decodeAudioData never detaches shared bytes
+        return ctx.decodeAudioData(arr.slice(0));
+      })
+      .then((decoded) => {
+        if (decoded) {
+          this.bufferCache[key] = decoded;
+        }
+        return decoded;
+      })
+      .catch(() => null);
+
+    this.bufferPromises[key] = promise;
+    return promise;
   }
 
   public unlock() {
     this.preload();
-    if (typeof window !== 'undefined' && !this.audioCtx) {
-      const Ctx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext?: typeof AudioContext })
-          .webkitAudioContext;
-      if (Ctx) {
-        this.audioCtx = new Ctx();
+    const ctx = this.ensureAudioContext();
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
       }
+      // Play 1-sample silent buffer to strictly unlock Web Audio on iOS Safari
+      try {
+        const silentBuffer = ctx.createBuffer(1, 1, 22050);
+        const src = ctx.createBufferSource();
+        src.buffer = silentBuffer;
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch {
+        // Ignore if context cannot start yet
+      }
+
+      (Object.keys(MP3_SOURCES) as Mp3Key[]).forEach((key) => {
+        void this.loadDecodedBuffer(key);
+      });
     }
-    if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume().catch(() => {});
+
+    if (this.pendingLoopKind && this.enabled) {
+      const kind = this.pendingLoopKind;
+      this.pendingLoopKind = null;
+      this.startDispatchLoop(kind);
     }
   }
 
-  private playMp3(key: keyof typeof MP3_SOURCES, volume = 0.9) {
-    if (!this.enabled || typeof window === 'undefined') return null;
+  private playBuffer(
+    key: Mp3Key,
+    volume = 0.95
+  ): ActivePlaybackHandle | null {
+    const ctx = this.audioCtx;
+    const buffer = this.bufferCache[key];
+    if (!ctx || !buffer) return null;
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
     try {
-      const src = MP3_SOURCES[key];
-      const audio = new Audio(src);
-      audio.volume = volume;
-      audio.play().catch(() => {});
-      return audio;
+      const source = ctx.createBufferSource();
+      const gain = ctx.createGain();
+      source.buffer = buffer;
+      gain.gain.setValueAtTime(volume, ctx.currentTime);
+      source.connect(gain);
+      gain.connect(ctx.destination);
+
+      let stopped = false;
+      source.start(0);
+
+      return {
+        durationMs: Math.round(buffer.duration * 1000),
+        stop: () => {
+          if (stopped) return;
+          stopped = true;
+          source.onended = null;
+          try {
+            source.stop();
+          } catch {
+            // Already ended
+          }
+          source.disconnect();
+          gain.disconnect();
+        },
+        setOnEnded: (cb: () => void) => {
+          source.onended = () => {
+            if (!stopped) cb();
+          };
+        },
+      };
     } catch {
+      return null;
+    }
+  }
+
+  private playMp3(
+    key: Mp3Key,
+    volume = 0.95,
+    onAutoplayBlocked?: () => void
+  ): ActivePlaybackHandle | null {
+    if (!this.enabled || typeof window === 'undefined') return null;
+
+    // 1. Prefer decoded Web Audio AudioBuffer (immune to timer/async autoplay blocks once unlocked)
+    const bufferHandle = this.playBuffer(key, volume);
+    if (bufferHandle) {
+      return bufferHandle;
+    }
+
+    // Trigger decoding if AudioContext exists
+    if (this.audioCtx) {
+      void this.loadDecodedBuffer(key);
+    }
+
+    // 2. Fallback to HTMLAudioElement
+    try {
+      const cached = this.audioCache[key] ?? new Audio(MP3_SOURCES[key]);
+      this.audioCache[key] = cached;
+
+      cached.pause();
+      cached.currentTime = 0;
+      cached.muted = false;
+      cached.volume = volume;
+
+      const playPromise = cached.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          onAutoplayBlocked?.();
+        });
+      }
+
+      return {
+        stop: () => {
+          cached.onended = null;
+          cached.pause();
+          cached.currentTime = 0;
+        },
+        setOnEnded: (cb: () => void) => {
+          cached.onended = cb;
+        },
+      };
+    } catch {
+      onAutoplayBlocked?.();
       return null;
     }
   }
@@ -80,13 +285,17 @@ class UberSoundEngine {
     notes: Array<{ freq: number; delay: number; dur: number; type?: OscillatorType; gain?: number }>
   ) {
     if (!this.enabled || typeof window === 'undefined') return;
-    this.unlock();
-    if (!this.audioCtx) return;
+    const ctx = this.ensureAudioContext();
+    if (!ctx) return;
 
-    const now = this.audioCtx.currentTime;
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    const now = ctx.currentTime;
     for (const n of notes) {
-      const osc = this.audioCtx.createOscillator();
-      const gainNode = this.audioCtx.createGain();
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
       osc.type = n.type ?? 'sine';
       osc.frequency.setValueAtTime(n.freq, now + n.delay);
 
@@ -96,7 +305,7 @@ class UberSoundEngine {
       gainNode.gain.exponentialRampToValueAtTime(0.0001, now + n.delay + n.dur);
 
       osc.connect(gainNode);
-      gainNode.connect(this.audioCtx.destination);
+      gainNode.connect(ctx.destination);
 
       osc.start(now + n.delay);
       osc.stop(now + n.delay + n.dur + 0.02);
@@ -117,6 +326,9 @@ class UberSoundEngine {
       case 'dispatch':
         this.playMp3('dispatch', 0.95);
         break;
+      case 'exclusiveDispatch':
+        this.playMp3('exclusiveDispatch', 0.95);
+        break;
       case 'accept':
         this.stopDispatchLoop();
         this.playMp3('accept', 0.95);
@@ -125,7 +337,6 @@ class UberSoundEngine {
         this.playMp3('startTrip', 0.95);
         break;
       case 'completeTrip':
-        // Warm Uber-style rising 3-note completion chord
         this.playSynthTone([
           { freq: 523.25, delay: 0, dur: 0.14, gain: 0.15 },
           { freq: 659.25, delay: 0.08, dur: 0.16, gain: 0.16 },
@@ -160,32 +371,67 @@ class UberSoundEngine {
     }
   }
 
-  public startDispatchLoop() {
+  public startDispatchLoop(kind: 'exclusive' | 'radar' = 'exclusive') {
     this.stopDispatchLoop();
     if (!this.enabled || typeof window === 'undefined') return;
 
-    const triggerPing = () => {
-      if (!this.enabled) return;
-      if (this.activeDispatchAudio) {
-        this.activeDispatchAudio.pause();
-        this.activeDispatchAudio.currentTime = 0;
+    this.dispatchLoopActive = true;
+    const sourceKey: Mp3Key =
+      kind === 'exclusive' ? 'exclusiveDispatch' : 'dispatch';
+
+    const scheduleNext = (delayMs: number) => {
+      if (!this.dispatchLoopActive || !this.enabled) return;
+      if (this.dispatchLoopTimer !== null) {
+        window.clearTimeout(this.dispatchLoopTimer);
       }
-      this.activeDispatchAudio = this.playMp3('dispatch', 0.95);
+      this.dispatchLoopTimer = window.setTimeout(triggerPing, delayMs);
+    };
+
+    const triggerPing = () => {
+      if (!this.dispatchLoopActive || !this.enabled) return;
+      if (this.activeDispatchHandle) {
+        this.activeDispatchHandle.stop();
+        this.activeDispatchHandle = null;
+      }
+
+      const handle = this.playMp3(sourceKey, 0.95, () => {
+        if (!this.dispatchLoopActive) return;
+        // If HTMLAudio fallback was autoplay-blocked while AudioBuffer was decoding, retry via buffer once decoded
+        if (this.audioCtx && this.audioCtx.state === 'running') {
+          void this.loadDecodedBuffer(sourceKey).then((buf) => {
+            if (buf && this.dispatchLoopActive && !this.activeDispatchHandle?.durationMs) {
+              triggerPing();
+            }
+          });
+        } else {
+          this.pendingLoopKind = kind;
+        }
+      });
+      this.activeDispatchHandle = handle;
+
+      if (kind === 'exclusive' && handle) {
+        handle.setOnEnded(() => {
+          scheduleNext(400);
+        });
+        scheduleNext((handle.durationMs ?? 3500) + 650);
+      } else {
+        scheduleNext(2400);
+      }
     };
 
     triggerPing();
-    this.dispatchLoopTimer = window.setInterval(triggerPing, 2400);
   }
 
   public stopDispatchLoop() {
+    this.dispatchLoopActive = false;
+    this.pendingLoopKind = null;
     if (this.dispatchLoopTimer !== null) {
-      window.clearInterval(this.dispatchLoopTimer);
+      window.clearTimeout(this.dispatchLoopTimer);
       this.dispatchLoopTimer = null;
     }
-    if (this.activeDispatchAudio) {
-      this.activeDispatchAudio.pause();
-      this.activeDispatchAudio.currentTime = 0;
-      this.activeDispatchAudio = null;
+    if (this.activeDispatchHandle) {
+      this.activeDispatchHandle.stop();
+      this.activeDispatchHandle = null;
     }
   }
 }

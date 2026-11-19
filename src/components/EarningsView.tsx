@@ -8,11 +8,18 @@ import {
   Eye,
   EyeOff,
   MoreHorizontal,
+  ReceiptText,
+  Route,
+  Target,
   Trophy,
   X,
 } from 'lucide-react';
 import { CompletedTrip } from '../types/driver';
-import { formatWeekRangeLabel, getCurrentWeekDays } from '../utils/earningsStorage';
+import {
+  formatWeekRangeLabel,
+  getCurrentWeekDays,
+  getLocalDateKey,
+} from '../utils/earningsStorage';
 import { uberSounds } from '../utils/uberSounds';
 
 interface EarningsViewProps {
@@ -22,6 +29,9 @@ interface EarningsViewProps {
   dailyTotals: Record<string, number>;
   completedTrips: CompletedTrip[];
   questCompletedCount: number;
+  dailyGoalGbp?: number;
+  weeklyGoalGbp?: number;
+  onUpdateGoals?: (daily: number, weekly: number) => void;
   privacyHidden: boolean;
   onTogglePrivacy: () => void;
   onBack: () => void;
@@ -36,6 +46,9 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
   dailyTotals,
   completedTrips,
   questCompletedCount,
+  dailyGoalGbp = 180,
+  weeklyGoalGbp = 950,
+  onUpdateGoals,
   privacyHidden,
   onTogglePrivacy,
   onBack,
@@ -47,6 +60,7 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
   const [cashOutDone, setCashOutDone] = useState<string | null>(null);
   const [showAllTrips, setShowAllTrips] = useState(false);
   const [expandedTripId, setExpandedTripId] = useState<string | null>(null);
+  const [editingGoals, setEditingGoals] = useState(false);
 
   const weekDays = useMemo(() => {
     return getCurrentWeekDays().map((d) => ({
@@ -87,6 +101,24 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
 
   const visibleTrips = showAllTrips ? completedTrips : completedTrips.slice(0, 6);
   const selectedDay = weekDays[selectedDayIdx] || weekDays[todayIdx];
+
+  const todayKey = useMemo(() => getLocalDateKey(), []);
+  const mileageStats = useMemo(() => {
+    let todayMiles = 0;
+    let totalMiles = 0;
+    for (const t of completedTrips) {
+      totalMiles += t.distanceMiles;
+      if (!t.dateKey || t.dateKey === todayKey) {
+        todayMiles += t.distanceMiles;
+      }
+    }
+    return {
+      todayMiles: Number(todayMiles.toFixed(1)),
+      totalMiles: Number(totalMiles.toFixed(1)),
+      todayTaxRelief: Number((todayMiles * 0.45).toFixed(2)),
+      totalTaxRelief: Number((totalMiles * 0.45).toFixed(2)),
+    };
+  }, [completedTrips, todayKey]);
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto bg-white dark:bg-[#0D0E12] pb-6">
@@ -286,6 +318,163 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
           <ChevronRight className="w-5 h-5 text-[#545454] dark:text-neutral-400 shrink-0" />
         </button>
 
+        {/* Daily & Weekly Earnings Goal Tracker */}
+        <div className="rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181E] p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] flex items-center justify-center shrink-0">
+                <Target className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-[14px] font-bold text-black dark:text-white">
+                  Earnings Goals
+                </p>
+                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 tabular-nums">
+                  Daily {mask(`£${dailyGoalGbp}`)} · Weekly {mask(`£${weeklyGoalGbp}`)}
+                </p>
+              </div>
+            </div>
+            {onUpdateGoals && (
+              <button
+                type="button"
+                onClick={() => setEditingGoals((v) => !v)}
+                className="px-3 py-1 rounded-full bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[12px] font-bold text-black dark:text-white hover:bg-[#F3F3F3] dark:hover:bg-white/15"
+              >
+                {editingGoals ? 'Done' : 'Edit Goal'}
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              {
+                label: 'Today’s Goal',
+                current: todayEarnings,
+                target: Math.max(1, dailyGoalGbp),
+                accent: 'bg-[#05944F]',
+              },
+              {
+                label: 'Weekly Goal',
+                current: weeklyEarnings,
+                target: Math.max(1, weeklyGoalGbp),
+                accent: 'bg-[#276EF1]',
+              },
+            ].map((g) => {
+              const pct = Math.min(100, Math.round((g.current / g.target) * 100));
+              const remaining = Math.max(0, g.target - g.current);
+              return (
+                <div
+                  key={g.label}
+                  className="rounded-xl bg-white dark:bg-white/5 p-3 border border-black/5 dark:border-white/5 space-y-1.5"
+                >
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="font-semibold text-[#545454] dark:text-neutral-400">
+                      {g.label}
+                    </span>
+                    <span className="font-extrabold text-black dark:text-white tabular-nums">
+                      {pct}%
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full bg-[#ECECEC] dark:bg-white/10 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${g.accent}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <p className="text-[11.5px] font-semibold text-black dark:text-white tabular-nums">
+                    {remaining === 0
+                      ? 'Target reached!'
+                      : `${mask(`£${remaining.toFixed(2)}`)} left to target`}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+
+          {editingGoals && onUpdateGoals && (
+            <div className="pt-2 border-t border-black/5 dark:border-white/10 space-y-2.5">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-[#545454] dark:text-neutral-400 mb-1.5">
+                  Daily Target
+                </p>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[120, 180, 250, 320].map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => onUpdateGoals(val, weeklyGoalGbp)}
+                      className={`h-8 rounded-lg text-[12px] font-bold tabular-nums transition-colors ${
+                        dailyGoalGbp === val
+                          ? 'bg-black dark:bg-[#276EF1] text-white'
+                          : 'bg-white dark:bg-white/10 text-black dark:text-white border border-black/10 dark:border-white/10'
+                      }`}
+                    >
+                      £{val}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-[#545454] dark:text-neutral-400 mb-1.5">
+                  Weekly Target
+                </p>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[650, 950, 1250, 1500].map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => onUpdateGoals(dailyGoalGbp, val)}
+                      className={`h-8 rounded-lg text-[12px] font-bold tabular-nums transition-colors ${
+                        weeklyGoalGbp === val
+                          ? 'bg-black dark:bg-[#276EF1] text-white'
+                          : 'bg-white dark:bg-white/10 text-black dark:text-white border border-black/10 dark:border-white/10'
+                      }`}
+                    >
+                      £{val}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* UK HMRC Mileage & £0.45/mi Tax Relief Summary */}
+        <div className="rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181E] p-4 space-y-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F] flex items-center justify-center shrink-0">
+                <ReceiptText className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-[14px] font-bold text-black dark:text-white">
+                  HMRC Business Mileage Relief
+                </p>
+                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400">
+                  UK simplified expenses · £0.45/mi tax-free allowance
+                </p>
+              </div>
+            </div>
+            <span className="text-[16px] font-extrabold text-[#05944F] tabular-nums">
+              {mask(`£${mileageStats.totalTaxRelief.toFixed(2)}`)}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-black/5 dark:border-white/10 text-[12px] tabular-nums">
+            <div className="rounded-xl bg-white dark:bg-white/5 px-3 py-2 border border-black/5 dark:border-white/5">
+              <p className="text-[#545454] dark:text-neutral-400">Today</p>
+              <p className="font-bold text-black dark:text-white">
+                {mileageStats.todayMiles} mi · {mask(`£${mileageStats.todayTaxRelief.toFixed(2)}`)}
+              </p>
+            </div>
+            <div className="rounded-xl bg-white dark:bg-white/5 px-3 py-2 border border-black/5 dark:border-white/5">
+              <p className="text-[#545454] dark:text-neutral-400">Logged Ledger Total</p>
+              <p className="font-bold text-black dark:text-white">
+                {mileageStats.totalMiles} mi · {mask(`£${mileageStats.totalTaxRelief.toFixed(2)}`)}
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Recent Trips & Real Daily Activity */}
         <div>
           <div className="flex items-center justify-between mb-3">
@@ -324,9 +513,22 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
                   >
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-[15px] font-bold text-black dark:text-white truncate">
-                          {trip.serviceName} · {trip.riderName}
-                        </p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-[15px] font-bold text-black dark:text-white truncate">
+                            {trip.serviceName} · {trip.riderName}
+                          </p>
+                          {trip.isIntercity && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#7C3AED]/15 text-[#7C3AED] dark:text-[#C4B5FD] text-[10.5px] font-bold">
+                              <Route className="w-3 h-3" />
+                              Intercity
+                            </span>
+                          )}
+                          {trip.isNoShowFee && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[10.5px] font-bold">
+                              No-Show Fee
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[12px] text-[#545454] dark:text-neutral-400 truncate mt-0.5">
                           {trip.pickupArea} → {trip.dropoffArea}
                         </p>
@@ -367,10 +569,22 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
                             <span>£{trip.surchargeAmount!.toFixed(2)}</span>
                           </div>
                         )}
-                        {typeof trip.uberFee === 'number' && (
+                        {typeof trip.uberFee === 'number' && trip.uberFee > 0 && (
                           <div className="flex justify-between">
                             <span>Uber Service Fee (25%)</span>
                             <span>−£{trip.uberFee.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {trip.tags && trip.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {trip.tags.map((tag) => (
+                              <span
+                                key={tag}
+                                className="px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 text-[10.5px] font-semibold text-black dark:text-neutral-200"
+                              >
+                                {tag}
+                              </span>
+                            ))}
                           </div>
                         )}
                       </div>

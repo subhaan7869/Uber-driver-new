@@ -34,6 +34,7 @@ interface MenuViewProps {
   account: DriverAccount;
   proPoints: number;
   walletBalance: number;
+  totalBusinessMiles?: number;
   preferences: DriverPreferences;
   notificationPermission: NotificationPermissionState;
   lastRefreshedAt: number;
@@ -99,6 +100,7 @@ export const MenuView: React.FC<MenuViewProps> = ({
   account,
   proPoints,
   walletBalance,
+  totalBusinessMiles = 0,
   preferences,
   notificationPermission,
   lastRefreshedAt,
@@ -128,6 +130,12 @@ export const MenuView: React.FC<MenuViewProps> = ({
   const [openGuideId, setOpenGuideId] = useState<string | null>('res-1');
   const [profileSection, setProfileSection] = useState<'metrics' | 'perks'>('metrics');
   const [waybillId, setWaybillId] = useState('UK-PHV-994120');
+  const [walkaroundChecks, setWalkaroundChecks] = useState<Record<string, boolean>>({
+    tyres: true,
+    lights: true,
+    roundels: true,
+    kit: false,
+  });
 
   const vehiclesList = [
     {
@@ -377,18 +385,100 @@ export const MenuView: React.FC<MenuViewProps> = ({
               })}
 
               <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181D] space-y-2.5 text-[14px]">
+                <p className="text-[12px] font-bold uppercase tracking-wide text-[#545454] dark:text-neutral-400">
+                  UK Compliance & Expiry Tracker
+                </p>
                 <div className="flex justify-between">
                   <span className="font-medium text-black dark:text-white">UK Driving Licence</span>
-                  <span className="font-bold text-[#05944F]">Verified</span>
+                  <span className="font-bold text-[#05944F]">Verified · No points</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="font-medium text-black dark:text-white">PHV Hire & Reward Insurance</span>
-                  <span className="font-bold text-[#05944F]">Verified</span>
+                  <span className="font-bold text-[#05944F]">142 days left</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-medium text-black dark:text-white">6-Month PHV MOT</span>
+                  <span className="font-bold text-[#276EF1]">Due in 64 days</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="font-medium text-black dark:text-white">PHV Badge ({account.phvBadge})</span>
-                  <span className="font-bold text-[#05944F]">Approved</span>
+                  <span className="font-bold text-[#05944F]">Approved · Nov 2027</span>
                 </div>
+              </div>
+
+              {/* Vehicle Maintenance & Service Health */}
+              <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[14px] font-bold text-black dark:text-white">
+                    Maintenance & Service Health
+                  </p>
+                  <span className="text-[11.5px] font-bold px-2 py-0.5 rounded bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F]">
+                    Roadworthy
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center tabular-nums">
+                  <div className="p-2.5 rounded-xl bg-white dark:bg-white/5 border border-black/5 dark:border-white/5">
+                    <p className="text-[14px] font-extrabold text-black dark:text-white">2,450 mi</p>
+                    <p className="text-[11px] text-[#545454] dark:text-neutral-400">Next Service</p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-white dark:bg-white/5 border border-black/5 dark:border-white/5">
+                    <p className="text-[14px] font-extrabold text-[#05944F]">5.8 mm</p>
+                    <p className="text-[11px] text-[#545454] dark:text-neutral-400">Tyre Tread</p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-white dark:bg-white/5 border border-black/5 dark:border-white/5">
+                    <p className="text-[14px] font-extrabold text-[#276EF1]">78%</p>
+                    <p className="text-[11px] text-[#545454] dark:text-neutral-400">Brake Life</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pre-Shift Walkaround Check */}
+              <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181D] space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-[14px] font-bold text-black dark:text-white">
+                    Daily PHV Walkaround Check
+                  </p>
+                  <span className="text-[11.5px] font-bold text-[#276EF1] tabular-nums">
+                    {Object.values(walkaroundChecks).filter(Boolean).length}/4 checked
+                  </span>
+                </div>
+                {[
+                  { id: 'tyres', label: 'Tyres, tread depth (>1.6mm) & wheel nuts' },
+                  { id: 'lights', label: 'Headlights, brake lights & indicators' },
+                  { id: 'roundels', label: 'Front & rear TfL / Council PHV discs visible' },
+                  { id: 'kit', label: 'First-aid kit, hi-vis vest & phone mount' },
+                ].map((item) => {
+                  const checked = !!walkaroundChecks[item.id];
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setWalkaroundChecks((prev) => ({
+                          ...prev,
+                          [item.id]: !prev[item.id],
+                        }));
+                        onNotifyToast(
+                          checked ? 'Walkaround item unchecked' : 'Walkaround item verified'
+                        );
+                      }}
+                      className="w-full flex items-center justify-between gap-3 py-1.5 text-left"
+                    >
+                      <span className="text-[13px] font-medium text-black dark:text-neutral-200">
+                        {item.label}
+                      </span>
+                      <span
+                        className={`w-6 h-6 rounded-full flex items-center justify-center border shrink-0 transition-colors ${
+                          checked
+                            ? 'bg-[#05944F] border-[#05944F] text-white'
+                            : 'border-[#CCCCCC] dark:border-white/25'
+                        }`}
+                      >
+                        {checked && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -403,6 +493,12 @@ export const MenuView: React.FC<MenuViewProps> = ({
               </div>
 
               <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181D] space-y-2 text-[14px]">
+                <div className="flex justify-between">
+                  <span className="font-bold text-black dark:text-white">HMRC Business Mileage</span>
+                  <span className="font-bold text-[#05944F] tabular-nums">
+                    {totalBusinessMiles.toFixed(1)} mi · £{(totalBusinessMiles * 0.45).toFixed(2)} relief
+                  </span>
+                </div>
                 <div className="flex justify-between">
                   <span className="font-bold text-black dark:text-white">Instant Pay Debit</span>
                   <span className="text-[#545454] dark:text-neutral-400">UK Visa •• 4821</span>
@@ -426,7 +522,11 @@ export const MenuView: React.FC<MenuViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => onNotifyToast('2026 HMRC Self-Assessment Tax Summary ready')}
+                onClick={() =>
+                  onNotifyToast(
+                    `2026 HMRC Summary: £${(totalBusinessMiles * 0.45).toFixed(2)} mileage relief ready`
+                  )
+                }
                 className="w-full h-12 rounded-xl bg-[#F3F3F3] dark:bg-white/10 text-black dark:text-white text-[14px] font-bold hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center gap-2 transition-colors"
               >
                 <Download className="w-4 h-4" />

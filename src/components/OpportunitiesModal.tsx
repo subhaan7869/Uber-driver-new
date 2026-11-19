@@ -1,6 +1,21 @@
 import React, { useState } from 'react';
-import { BarChart3, CalendarClock, Check, Flame, Plane, Trophy, X } from 'lucide-react';
-import { HOURLY_TRENDS, OPPORTUNITIES_LIST, UK_AIRPORT_QUEUES } from '../data/mockDriverData';
+import {
+  BarChart3,
+  CalendarClock,
+  Check,
+  Flame,
+  MapPin,
+  Plane,
+  Route,
+  Trophy,
+  X,
+} from 'lucide-react';
+import {
+  HOURLY_TRENDS,
+  OPPORTUNITIES_LIST,
+  PEAK_EVENTS_SCHEDULE,
+  UK_AIRPORT_QUEUES,
+} from '../data/mockDriverData';
 
 interface OpportunitiesModalProps {
   initialSection?: 'opportunities' | 'trends' | 'airports';
@@ -87,6 +102,8 @@ export const OpportunitiesModal: React.FC<OpportunitiesModalProps> = ({
               const icon =
                 opp.type === 'Quest' ? (
                   <Trophy className="w-5 h-5 text-black dark:text-white" />
+                ) : opp.type === 'Intercity' ? (
+                  <Route className="w-5 h-5 text-[#7C3AED]" />
                 ) : opp.type === 'Boost+' ? (
                   <Flame className="w-5 h-5 text-[#276EF1]" />
                 ) : (
@@ -191,6 +208,31 @@ export const OpportunitiesModal: React.FC<OpportunitiesModalProps> = ({
             <p className="text-[13px] text-[#545454] dark:text-neutral-400 mt-3 leading-relaxed">
               Peak earnings expected between <strong className="text-black dark:text-white">16:00 – 20:00</strong> near Soho, Canary Wharf, and King’s Cross.
             </p>
+
+            <div className="mt-5 space-y-2.5">
+              <p className="text-[13px] font-bold text-black dark:text-white">
+                Upcoming UK Peak Events
+              </p>
+              {PEAK_EVENTS_SCHEDULE.map((ev) => (
+                <div
+                  key={ev.id}
+                  className="p-3.5 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#1B1D22] flex items-start justify-between gap-2.5"
+                >
+                  <div className="min-w-0">
+                    <p className="text-[14px] font-bold text-black dark:text-white truncate">
+                      {ev.venue}
+                    </p>
+                    <p className="text-[12px] text-[#545454] dark:text-neutral-400 flex items-center gap-1 mt-0.5 truncate">
+                      <MapPin className="w-3 h-3 shrink-0" />
+                      {ev.area} · {ev.time}
+                    </p>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md bg-[#7C3AED]/15 text-[#7C3AED] dark:text-[#C4B5FD] text-[11px] font-bold whitespace-nowrap shrink-0">
+                    {ev.surgeEst}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <div className="space-y-3">

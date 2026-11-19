@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Star, User, X } from 'lucide-react';
+import { Route, Star, User, X } from 'lucide-react';
 import { TripOffer } from '../types/driver';
 
 interface TripOfferModalProps {
@@ -48,15 +48,35 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
 
   const progressPct = Math.max(0, (secondsLeft / offer.expiresInSec) * 100);
 
+  const [matchingSecLeft, setMatchingSecLeft] = useState<number>(0);
+
+  useEffect(() => {
+    if (matchingId === null || matchingSecLeft <= 0) return;
+    const t = setInterval(() => {
+      setMatchingSecLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(t);
+          setMatchingId(null);
+          // 70% chance success, 30% chance another driver matched
+          const success = Math.random() < 0.7;
+          const target = radarOffers.find((o) => o.id === matchingId) || offer;
+          if (success) {
+            onAccept(target);
+          } else {
+            if (onDeclineRadarItem) onDeclineRadarItem(target);
+            else onDecline(target);
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [matchingId, matchingSecLeft, offer, radarOffers, onAccept, onDecline, onDeclineRadarItem]);
+
   const handleAction = (targetOffer: TripOffer) => {
-    if (targetOffer.type === 'radar') {
-      setMatchingId(targetOffer.id);
-      setTimeout(() => {
-        onAccept(targetOffer);
-      }, 650);
-    } else {
-      onAccept(targetOffer);
-    }
+    setMatchingId(targetOffer.id);
+    setMatchingSecLeft(10);
   };
 
   if (showRadarList) {
@@ -71,7 +91,7 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
               </span>
             </div>
             <p className="text-[13px] text-[#545454] dark:text-neutral-400">
-              {radarOffers.length} nearby requests sent to multiple drivers
+              {radarOffers.length} nearby & Intercity requests sent to multiple drivers
             </p>
           </div>
           <button
@@ -98,25 +118,49 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                 key={item.id}
                 className="rounded-2xl border border-black/10 dark:border-white/10 p-4 bg-white dark:bg-[#1B1D22] shadow-xs"
               >
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1 bg-black dark:bg-[#276EF1] text-white text-[12px] font-semibold px-2.5 py-0.5 rounded-md">
-                      <User className="w-3.5 h-3.5 fill-white" />
+                <div className="flex items-center justify-between mb-1.5 gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span
+                      className={`inline-flex items-center gap-1 text-white text-[12px] font-semibold px-2.5 py-0.5 rounded-md ${
+                        item.isIntercity ? 'bg-[#7A1C79]' : 'bg-black dark:bg-[#276EF1]'
+                      }`}
+                    >
+                      {item.isIntercity ? (
+                        <Route className="w-3.5 h-3.5" />
+                      ) : (
+                        <User className="w-3.5 h-3.5 fill-white" />
+                      )}
                       {item.serviceName}
                     </span>
+                    {item.isIntercity && (
+                      <span className="bg-[#F3E8FF] dark:bg-purple-950/60 text-[#7A1C79] dark:text-purple-300 text-[11px] font-bold px-2 py-0.5 rounded-md">
+                        Out of City
+                      </span>
+                    )}
+                    {(item.tripMinutes >= 30 || item.tripMiles >= 20) && (
+                      <span className="bg-[#FEF3C7] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[11px] font-bold px-2 py-0.5 rounded-md">
+                        Long Trip · {item.tripMinutes}m
+                      </span>
+                    )}
                     <span className="inline-flex items-center gap-1 bg-[#F3F3F3] dark:bg-white/10 text-black dark:text-white text-[12px] font-semibold px-2 py-0.5 rounded-md tabular-nums">
                       <Star className="w-3 h-3 fill-current" />
                       {item.rating.toFixed(2)}
                     </span>
                   </div>
-                  <span className="text-[22px] font-extrabold text-black dark:text-white tabular-nums">
-                    £{item.fare.toFixed(2)}
-                  </span>
+                  <div className="text-right shrink-0">
+                    <span className="text-[22px] font-extrabold text-black dark:text-white tabular-nums block leading-none">
+                      £{item.fare.toFixed(2)}
+                    </span>
+                    <span className="text-[11px] font-bold text-[#05944F] tabular-nums">
+                      £{((item.fare / Math.max(1, item.tripMinutes + item.pickupMinutes)) * 60).toFixed(0)}/hr est.
+                    </span>
+                  </div>
                 </div>
 
-                {(item.pinCode || item.surchargeLabel) && (
+                {(item.pinCode || item.surchargeLabel || item.intercityCorridor) && (
                   <p className="text-[11.5px] font-medium text-[#545454] dark:text-neutral-400 mt-1">
                     {[
+                      item.intercityCorridor ?? null,
                       item.surchargeLabel && item.surchargeAmount
                         ? `Incl. ${item.surchargeLabel} (£${item.surchargeAmount.toFixed(2)})`
                         : null,
@@ -138,13 +182,17 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                       <p className="font-semibold text-black dark:text-white">
                         {item.pickupMinutes} min ({item.pickupMiles} mi) away
                       </p>
-                      <p className="text-[#545454] dark:text-neutral-400 truncate">{item.pickupAddress}</p>
+                      <p className="text-[#545454] dark:text-neutral-400 truncate">
+                        {item.pickupAddress} · {item.pickupArea}
+                      </p>
                     </div>
                     <div>
                       <p className="font-semibold text-black dark:text-white">
                         {item.tripMinutes} min ({item.tripMiles} mi) trip
                       </p>
-                      <p className="text-[#545454] dark:text-neutral-400 truncate">{item.dropoffAddress}</p>
+                      <p className="text-[#545454] dark:text-neutral-400 truncate">
+                        {item.dropoffAddress} · {item.dropoffArea}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -163,7 +211,7 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                     onClick={() => handleAction(item)}
                     className="col-span-2 h-11 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[15px] font-semibold hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] active:scale-[0.99] transition-all disabled:opacity-70"
                   >
-                    {matchingId === item.id ? 'Matching...' : 'Match'}
+                    {matchingId === item.id ? `Matching... (${matchingSecLeft}s)` : 'Match'}
                   </button>
                 </div>
               </div>
@@ -182,7 +230,11 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
       <div className="w-full h-1 bg-[#EEEEEE] dark:bg-white/10">
         <div
           className={`h-full transition-all duration-1000 ease-linear ${
-            isExclusive ? 'bg-[#276EF1]' : 'bg-black dark:bg-white'
+            offer.isIntercity
+              ? 'bg-[#7A1C79]'
+              : isExclusive
+              ? 'bg-[#276EF1]'
+              : 'bg-black dark:bg-white'
           }`}
           style={{ width: `${progressPct}%` }}
         />
@@ -191,10 +243,33 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
       <div className="p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="inline-flex items-center gap-1.5 bg-black dark:bg-[#276EF1] text-white text-[13px] font-semibold px-2.5 py-1 rounded-md">
-              <User className="w-3.5 h-3.5 fill-white" />
+            <span
+              className={`inline-flex items-center gap-1.5 text-white text-[13px] font-semibold px-2.5 py-1 rounded-md ${
+                offer.isIntercity ? 'bg-[#7A1C79]' : 'bg-black dark:bg-[#276EF1]'
+              }`}
+            >
+              {offer.isIntercity ? (
+                <Route className="w-3.5 h-3.5" />
+              ) : (
+                <User className="w-3.5 h-3.5 fill-white" />
+              )}
               {offer.serviceName}
             </span>
+            {offer.isIntercity && (
+              <span className="inline-flex items-center bg-[#F3E8FF] dark:bg-purple-950/60 text-[#7A1C79] dark:text-purple-300 text-[12px] font-bold px-2.5 py-1 rounded-md">
+                Out of City
+              </span>
+            )}
+            {(offer.tripMinutes >= 30 || offer.tripMiles >= 20) && (
+              <span className="inline-flex items-center bg-[#FEF3C7] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[12px] font-bold px-2.5 py-1 rounded-md">
+                Long Trip · {offer.tripMinutes}m
+              </span>
+            )}
+            {offer.stopAddress && (
+              <span className="inline-flex items-center bg-[#FEF3C7] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[12px] font-bold px-2.5 py-1 rounded-md">
+                Multi-Stop
+              </span>
+            )}
             {isExclusive ? (
               <span className="inline-flex items-center bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] text-[13px] font-semibold px-2.5 py-1 rounded-md">
                 Exclusive
@@ -216,10 +291,13 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
           </button>
         </div>
 
-        {/* Big Bold UK Fare */}
+        {/* Big Bold UK Fare + Upfront £/hr Rate */}
         <div className="mt-1.5 flex items-baseline gap-2.5 flex-wrap">
           <span className="text-[38px] leading-tight font-extrabold tracking-tight text-black dark:text-white tabular-nums">
             £{offer.fare.toFixed(2)}
+          </span>
+          <span className="px-2 py-0.5 rounded-md bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F] text-[12px] font-bold tabular-nums">
+            £{((offer.fare / Math.max(1, offer.tripMinutes + offer.pickupMinutes)) * 60).toFixed(0)}/hr est.
           </span>
           {offer.surgeBonus && (
             <span className="text-[13px] font-semibold text-[#7A1C79] dark:text-[#E879F9] tabular-nums">
@@ -234,9 +312,10 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
             <Star className="w-3.5 h-3.5 fill-current" />
             {offer.rating.toFixed(2)}
           </span>
-          {(offer.pinCode || offer.surchargeLabel) && (
+          {(offer.pinCode || offer.surchargeLabel || offer.intercityCorridor) && (
             <span className="text-[12px] font-medium text-[#545454] dark:text-neutral-400">
               {[
+                offer.intercityCorridor ?? null,
                 offer.surchargeLabel && offer.surchargeAmount
                   ? `${offer.surchargeLabel} £${offer.surchargeAmount.toFixed(2)}`
                   : null,
@@ -253,11 +332,17 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
           <div className="flex items-stretch gap-3">
             <div className="flex flex-col items-center py-1.5">
               <div className="w-2.5 h-2.5 rounded-full bg-black dark:bg-white shrink-0" />
-              <div className="w-[2px] flex-1 bg-black dark:bg-white/50 my-1 min-h-[24px]" />
+              <div className="w-[2px] flex-1 bg-black dark:bg-white/50 my-1 min-h-[20px]" />
+              {offer.stopAddress && (
+                <>
+                  <div className="w-2.5 h-2.5 rounded-full bg-[#F59E0B] shrink-0" />
+                  <div className="w-[2px] flex-1 bg-black dark:bg-white/50 my-1 min-h-[16px]" />
+                </>
+              )}
               <div className="w-2.5 h-2.5 bg-black dark:bg-white shrink-0" />
             </div>
 
-            <div className="flex-1 min-w-0 space-y-3">
+            <div className="flex-1 min-w-0 space-y-2.5">
               <div>
                 <p className="text-[15px] font-bold text-black dark:text-white leading-snug tabular-nums">
                   {offer.pickupMinutes} min ({offer.pickupMiles} mi) away
@@ -266,6 +351,13 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                   {offer.pickupAddress} · {offer.pickupArea}
                 </p>
               </div>
+              {offer.stopAddress && (
+                <div>
+                  <p className="text-[13px] font-bold text-[#B45309] dark:text-amber-300 leading-snug">
+                    Stop 1 · {offer.stopAddress}
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-[15px] font-bold text-black dark:text-white leading-snug tabular-nums">
                   {offer.tripMinutes} min ({offer.tripMiles} mi) trip
@@ -284,9 +376,9 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
             type="button"
             disabled={matchingId === offer.id}
             onClick={() => handleAction(offer)}
-            className="w-full h-12 rounded-xl text-[16px] font-bold text-white bg-[#276EF1] hover:bg-[#1E5CD4] transition-all active:scale-[0.98] disabled:opacity-75"
+            className="w-full h-12 rounded-xl text-[16px] font-bold text-white bg-[#276EF1] hover:bg-[#1E5CD4] transition-all active:scale-[0.98] disabled:opacity-75 tabular-nums"
           >
-            Accept
+            {matchingId === offer.id ? `Matching... (${matchingSecLeft}s)` : (offer.isIntercity ? 'Accept Intercity Ride' : 'Accept')}
           </button>
         ) : (
           <div className="grid grid-cols-3 gap-2.5">
@@ -301,9 +393,9 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
               type="button"
               disabled={matchingId === offer.id}
               onClick={() => handleAction(offer)}
-              className="col-span-2 h-12 rounded-xl text-[16px] font-bold text-white bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] transition-all active:scale-[0.98] disabled:opacity-75"
+              className="col-span-2 h-12 rounded-xl text-[16px] font-bold text-white bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] transition-all active:scale-[0.98] disabled:opacity-75 tabular-nums"
             >
-              {matchingId === offer.id ? 'Matching...' : 'Match'}
+              {matchingId === offer.id ? `Matching... (${matchingSecLeft}s)` : 'Match'}
             </button>
           </div>
         )}

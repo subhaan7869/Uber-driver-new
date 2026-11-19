@@ -2,6 +2,7 @@ import React from 'react';
 import {
   ArrowRight,
   BarChart2,
+  BatteryCharging,
   Bell,
   ChevronLeft,
   Clock,
@@ -12,6 +13,7 @@ import {
   Plane,
   Power,
   Radar,
+  Route,
   Shield,
   ShieldCheck,
   SlidersHorizontal,
@@ -19,7 +21,7 @@ import {
   Sun,
   User,
 } from 'lucide-react';
-import { UK_AIRPORT_QUEUES } from '../data/mockDriverData';
+import { BUSY_SOON_ZONES, UK_AIRPORT_QUEUES } from '../data/mockDriverData';
 import { DriverAccount, DriverOnlineStatus, DriverPreferences } from '../types/driver';
 
 interface HomeMenuViewProps {
@@ -46,6 +48,8 @@ interface HomeMenuViewProps {
   onOpenAccountMenu: () => void;
   onOpenTripRadar: () => void;
   onOpenPermissions: () => void;
+  onDispatchIntercity: () => void;
+  onRechargeVehicle: () => void;
 }
 
 export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
@@ -72,6 +76,8 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
   onOpenAccountMenu,
   onOpenTripRadar,
   onOpenPermissions,
+  onDispatchIntercity,
+  onRechargeVehicle,
 }) => {
   const formatMmSs = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -274,6 +280,82 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
           </p>
         </div>
 
+        {/* EV Battery / Fuel Range Tracker */}
+        {(() => {
+          const batteryPct = account.batteryPct ?? 84;
+          const rangeMiles = Math.round((batteryPct / 100) * 250);
+          return (
+            <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] space-y-2.5">
+              <div className="flex items-center justify-between gap-2 text-[13px]">
+                <span className="font-bold text-black dark:text-white flex items-center gap-1.5">
+                  <BatteryCharging
+                    className={`w-4 h-4 ${
+                      batteryPct <= 25 ? 'text-[#E11900]' : 'text-[#05944F]'
+                    }`}
+                  />
+                  EV Battery / Fuel Range
+                </span>
+                <span className="font-extrabold text-black dark:text-white tabular-nums">
+                  {batteryPct}% · ~{rangeMiles} mi
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-[#E6E6E6] dark:bg-white/10 overflow-hidden">
+                <div
+                  className={`h-full transition-all ${
+                    batteryPct <= 25 ? 'bg-[#E11900]' : 'bg-[#05944F]'
+                  }`}
+                  style={{ width: `${batteryPct}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate">
+                  {batteryPct <= 25
+                    ? 'Low range — rapid charge recommended before Intercity'
+                    : 'Ready for local & Intercity motorway runs'}
+                </p>
+                {batteryPct < 98 && (
+                  <button
+                    type="button"
+                    onClick={onRechargeVehicle}
+                    className="px-2.5 py-1 rounded-full bg-[#05944F] text-white text-[11px] font-bold whitespace-nowrap shrink-0 hover:bg-[#047A40]"
+                  >
+                    Rapid Charge (100%)
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Intercity Out-of-City Quick Dispatch */}
+        <button
+          type="button"
+          onClick={onDispatchIntercity}
+          className="w-full p-4 rounded-2xl border border-[#7C3AED]/35 bg-[#F5F3FF] dark:bg-[#231A38] hover:bg-[#EDE9FE] dark:hover:bg-[#2B2046] flex items-center justify-between gap-3 text-left transition-colors"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-[#7C3AED] text-white flex items-center justify-center shrink-0">
+              <Route className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <p className="text-[14px] font-bold text-black dark:text-white">
+                  Intercity Out-of-City Job
+                </p>
+                <span className="px-1.5 py-0.5 rounded bg-[#7C3AED] text-white text-[10px] font-extrabold uppercase">
+                  UK
+                </span>
+              </div>
+              <p className="text-[12px] text-[#545454] dark:text-neutral-300 truncate">
+                London → Oxford, Brighton, Birmingham & Manchester → Leeds
+              </p>
+            </div>
+          </div>
+          <span className="px-3 py-1 rounded-full bg-black dark:bg-[#7C3AED] text-white text-[12px] font-bold shrink-0 whitespace-nowrap">
+            Get Job
+          </span>
+        </button>
+
         {/* System Permissions Banner */}
         <button
           type="button"
@@ -297,6 +379,48 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
             Manage
           </span>
         </button>
+
+        {/* Busy Soon Predictive UK Hotspots */}
+        <div className="p-4 rounded-2xl border border-[#F59E0B]/30 bg-[#FFFBEB] dark:bg-amber-950/25 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-[#D97706] dark:text-amber-300" />
+              <p className="text-[14px] font-bold text-black dark:text-white">Busy Soon Forecasts</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenOpportunities('trends')}
+              className="text-[12px] font-bold text-[#B45309] dark:text-amber-300 hover:underline"
+            >
+              View Trends
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {BUSY_SOON_ZONES.slice(0, 3).map((bz) => (
+              <button
+                key={bz.id}
+                type="button"
+                onClick={onBackToMap}
+                className="p-2.5 rounded-xl bg-white/85 dark:bg-black/25 border border-black/5 dark:border-white/10 text-left hover:bg-white dark:hover:bg-black/40 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[12px] font-extrabold text-[#B45309] dark:text-amber-300 tabular-nums">
+                    In {bz.minutesUntilBusy}m
+                  </span>
+                  <span className="text-[11px] font-bold text-[#05944F] tabular-nums">
+                    {bz.expectedBoost}
+                  </span>
+                </div>
+                <p className="text-[12.5px] font-bold text-black dark:text-white truncate mt-0.5">
+                  {bz.area}
+                </p>
+                <p className="text-[11px] text-[#545454] dark:text-neutral-400 truncate">
+                  {bz.reason}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* UK Airport FIFO Queue Preview */}
         <button

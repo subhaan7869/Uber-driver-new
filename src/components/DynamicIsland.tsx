@@ -90,65 +90,84 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
       className="fixed top-2.5 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center pointer-events-none"
     >
       {!expanded ? (
-        /* COMPACT DYNAMIC ISLAND PILL */
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          aria-label="Expand Dynamic Island status"
-          className={`pointer-events-auto h-[34px] rounded-full bg-black text-white shadow-[0_8px_24px_rgba(0,0,0,0.32)] border flex items-center justify-between gap-3 px-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] ${
-            isLocationActive ? 'border-[#276EF1]/45' : 'border-white/15'
-          } ${
-            isTripActive || pendingOffer
-              ? 'min-w-[230px] max-w-[300px]'
-              : isLocationActive
-              ? 'min-w-[192px]'
-              : 'min-w-[148px]'
-          }`}
-        >
-          {/* Left slot: Authentic iOS Blue Location Arrow when using GPS */}
-          <div className="flex items-center gap-2 min-w-0">
-            {isLocationActive ? (
-              <span
-                className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
-                  tripStage === 'pickup' || tripStage === 'waiting'
-                    ? 'bg-[#05944F] ring-2 ring-[#05944F]/35'
-                    : 'bg-[#276EF1] ring-2 ring-[#276EF1]/40 shadow-[0_0_10px_rgba(39,110,241,0.6)]'
-                }`}
-              >
-                <Navigation className="w-3 h-3 text-white fill-white -translate-x-[0.5px] translate-y-[0.5px]" />
-              </span>
-            ) : (
-              <span className="w-3 h-3 rounded-full bg-[#2C2C2E] border border-white/25 shrink-0" />
-            )}
+        /* COMPACT DYNAMIC ISLAND PILL + AUTHENTIC iOS BLUE LOCATION ICON PILL */
+        <div className="pointer-events-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            aria-label="Expand Dynamic Island status"
+            className={`h-[34px] rounded-full bg-black text-white shadow-[0_8px_24px_rgba(0,0,0,0.32)] border flex items-center justify-between gap-3 px-3 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] ${
+              isLocationActive ? 'border-[#276EF1]/55' : 'border-white/15'
+            } ${
+              isTripActive || pendingOffer
+                ? 'min-w-[215px] max-w-[280px]'
+                : isLocationActive
+                ? 'min-w-[172px]'
+                : 'min-w-[148px]'
+            }`}
+          >
+            {/* Left slot: Authentic iOS Blue Location Arrow when using GPS */}
+            <div className="flex items-center gap-2 min-w-0">
+              {isLocationActive ? (
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
+                    tripStage === 'pickup' || tripStage === 'waiting'
+                      ? 'bg-[#05944F] ring-2 ring-[#05944F]/35'
+                      : 'bg-[#276EF1] ring-2 ring-[#276EF1]/45 shadow-[0_0_10px_rgba(39,110,241,0.7)]'
+                  }`}
+                >
+                  <Navigation className="w-3 h-3 text-white fill-white -translate-x-[0.5px] translate-y-[0.5px]" />
+                </span>
+              ) : (
+                <span className="w-3 h-3 rounded-full bg-[#2C2C2E] border border-white/25 shrink-0" />
+              )}
 
-            <span className="text-[12px] font-bold tracking-tight truncate">
-              {statusLabel}
-            </span>
-          </div>
-
-          {/* Right slot */}
-          <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
-            {isTripActive && (tripStage === 'pickup' || tripStage === 'enroute') ? (
-              <span
-                className={`text-[12px] font-extrabold ${
-                  liveEtaCountdown === 'Arriving' ? 'text-[#05944F]' : 'text-[#5B9BF8]'
-                }`}
-              >
-                {liveEtaCountdown ?? '...'}
+              <span className="text-[12px] font-bold tracking-tight truncate">
+                {statusLabel}
               </span>
-            ) : pendingOffer ? (
-              <span className="text-[11px] font-extrabold text-[#5B9BF8]">Offer</span>
-            ) : isLocationActive ? (
-              <div className="flex items-end gap-[2px] h-3">
-                <span className="w-[2.5px] h-1.5 bg-[#276EF1] rounded-full" />
-                <span className="w-[2.5px] h-2.5 bg-[#276EF1] rounded-full" />
-                <span className="w-[2.5px] h-2 bg-[#5B9BF8] rounded-full" />
-              </div>
-            ) : (
-              <span className="text-[11px] font-semibold text-white/55">Offline</span>
-            )}
-          </div>
-        </button>
+            </div>
+
+            {/* Right slot */}
+            <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
+              {isTripActive && (tripStage === 'pickup' || tripStage === 'enroute') ? (
+                <span
+                  className={`text-[12px] font-extrabold ${
+                    liveEtaCountdown === 'Arriving' ? 'text-[#05944F]' : 'text-[#5B9BF8]'
+                  }`}
+                >
+                  {liveEtaCountdown ?? '...'}
+                </span>
+              ) : pendingOffer ? (
+                <span className="text-[11px] font-extrabold text-[#5B9BF8]">Offer</span>
+              ) : isLocationActive ? (
+                <div className="flex items-end gap-[2px] h-3">
+                  <span className="w-[2.5px] h-1.5 bg-[#276EF1] rounded-full" />
+                  <span className="w-[2.5px] h-2.5 bg-[#276EF1] rounded-full" />
+                  <span className="w-[2.5px] h-2 bg-[#5B9BF8] rounded-full" />
+                </div>
+              ) : (
+                <span className="text-[11px] font-semibold text-white/55">Offline</span>
+              )}
+            </div>
+          </button>
+
+          {/* Standalone iOS Blue GPS Indicator Pill (Dynamic Island split / iPadOS blue pill) */}
+          {isLocationActive && (
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              aria-label="Blue GPS indicator active"
+              title="Blue GPS Location Active"
+              className={`h-[34px] w-[34px] rounded-full text-white shadow-[0_6px_18px_rgba(39,110,241,0.5)] border border-white/25 flex items-center justify-center transition-transform hover:scale-105 active:scale-95 ${
+                tripStage === 'pickup' || tripStage === 'waiting'
+                  ? 'bg-[#05944F]'
+                  : 'bg-[#276EF1]'
+              }`}
+            >
+              <Navigation className="w-4 h-4 text-white fill-white -translate-x-[0.5px] translate-y-[0.5px]" />
+            </button>
+          )}
+        </div>
       ) : (
         /* EXPANDED DYNAMIC ISLAND LIVE ACTIVITY CARD */
         <div className="pointer-events-auto w-[348px] max-w-[calc(100vw-24px)] rounded-[28px] bg-[#0B0B0C] text-white p-4 shadow-[0_18px_48px_rgba(0,0,0,0.45)] border border-white/15">

@@ -32,7 +32,10 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
   onClose,
 }) => {
   const notifGranted =
-    notificationsEnabled && notificationPermission === 'granted';
+    notificationsEnabled &&
+    (notificationPermission === 'granted' ||
+      notificationPermission === 'denied' ||
+      notificationPermission === 'unsupported');
   const locationGranted =
     hasRealCoords || gpsPermissionState === 'active' || gpsExplicitlyAccepted;
 
@@ -108,8 +111,8 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
                   Trip & Surge Notifications
                 </p>
                 <p className="text-[12px] text-[#545454] dark:text-neutral-400 leading-snug mt-0.5">
-                  {notificationPermission === 'denied'
-                    ? 'Blocked by browser settings · in-app banner enabled'
+                  {notificationPermission === 'denied' || notificationPermission === 'unsupported'
+                    ? 'In-app alert banner enabled'
                     : 'Receive instant Trip Radar, Exclusive & payout alerts'}
                 </p>
               </div>
@@ -117,7 +120,7 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
             {notifGranted ? (
               <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F] text-[12px] font-bold shrink-0">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                Allowed
+                {notificationPermission === 'granted' ? 'Allowed' : 'In-App On'}
               </span>
             ) : (
               <button
@@ -125,7 +128,7 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
                 onClick={onAcceptNotifications}
                 className="px-3.5 py-2 rounded-xl bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] text-white text-[12.5px] font-bold shrink-0"
               >
-                {notificationPermission === 'denied' ? 'In-App On' : 'Allow'}
+                Allow
               </button>
             )}
           </div>

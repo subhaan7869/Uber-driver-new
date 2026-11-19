@@ -3,6 +3,7 @@ import {
   ArrowUp,
   BarChart2,
   Bell,
+  Camera,
   CheckCircle2,
   Compass,
   CornerUpLeft,
@@ -18,6 +19,7 @@ import {
   Moon,
   Radar,
   RefreshCw,
+  Route,
   Search,
   Shield,
   SlidersHorizontal,
@@ -47,14 +49,17 @@ import { SafetyToolkitModal } from './components/SafetyToolkitModal';
 import { TripOfferModal } from './components/TripOfferModal';
 import { UberMap } from './components/UberMap';
 import {
+  BUSY_SOON_ZONES,
   DEFAULT_DESTINATION,
   INITIAL_INBOX_THREADS,
   INITIAL_PREFERENCES,
   INITIAL_SURGE_ZONES,
+  INTERCITY_TRIP_OFFERS,
   SAMPLE_TRIP_OFFERS,
 } from './data/mockDriverData';
 import { useBackgroundRefresh } from './hooks/useBackgroundRefresh';
 import {
+  BusySoonZone,
   CompletedTrip,
   ComputedRoute,
   Coordinates,
@@ -67,6 +72,7 @@ import {
   MapReportCategory,
   MapReportPin,
   NavManeuverKind,
+  NavProvider,
   SurgeZone,
   TripOffer,
   TripStage,
@@ -97,6 +103,7 @@ import {
   isWithinUKBounds,
   nearestUKCity,
   projectLatLngToMap,
+  UK_SPEED_CAMERAS,
 } from './utils/ukGeo';
 import {
   buildFallbackUKRoute,
@@ -145,14 +152,29 @@ export default function App() {
     saveAccounts(accounts);
   }, [accounts]);
 
+  const SESSION_STORAGE_KEY = 'uber_driver_session_v6';
+  const savedSession = useMemo(() => {
+    try {
+      const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   // Primary navigation & online status
   const [activeTab, setActiveTab] = useState<MainTab>('home');
-  const [onlineStatus, setOnlineStatus] = useState<DriverOnlineStatus>('offline');
-  const [tripStage, setTripStage] = useState<TripStage>('idle');
+  const [onlineStatus, setOnlineStatus] = useState<DriverOnlineStatus>(
+    () => savedSession?.onlineStatus ?? 'offline'
+  );
+  const [tripStage, setTripStage] = useState<TripStage>(
+    () => savedSession?.tripStage ?? 'idle'
+  );
+
 
   // Map & Driver GPS state (defaults to active account's UK city)
   const [driverPos, setDriverPos] = useState<Coordinates>(() =>
-    getCityStartCoords(activeAccount?.city ?? 'London')
+    savedSession?.driverPos ?? getCityStartCoords(activeAccount?.city ?? 'London')
   );
   const [driverHeading, setDriverHeading] = useState<number>(0);
   const [liveSpeedMph, setLiveSpeedMph] = useState<number | null>(null);
@@ -183,27 +205,53 @@ export default function App() {
   // Offers, Trip Radar, and Working Turn-by-Turn UK Route state
   const [offerIndex, setOfferIndex] = useState<number>(0);
   const [pendingOffer, setPendingOffer] = useState<TripOffer | null>(null);
-  const [activeTrip, setActiveTrip] = useState<TripOffer | null>(null);
+  const [activeTrip, setActiveTrip] = useState<TripOffer | null>(
+    () => savedSession?.activeTrip ?? null
+  );
   const [activeRoute, setActiveRoute] = useState<ComputedRoute | null>(null);
   const [routeWpIdx, setRouteWpIdx] = useState<number>(0);
   const [currentStepIdx, setCurrentStepIdx] = useState<number>(0);
   const [tripWaitFee, setTripWaitFee] = useState<number>(0);
+  const [stopVisited, setStopVisited] = useState<boolean>(false);
+  const [queuedOffer, setQueuedOffer] = useState<TripOffer | null>(
+    () => savedSession?.queuedOffer ?? null
+  );
+  const [acceptedNextOffer, setAcceptedNextOffer] = useState<TripOffer | null>(null);
+  const [intercityIdx, setIntercityIdx] = useState<number>(0);
+  const [showMapLayersPopover, setShowMapLayersPopover] = useState<boolean>(false);
   const [showRadarList, setShowRadarList] = useState<boolean>(false);
+  const [showStopMenu, setShowStopMenu] = useState<boolean>(false);
   const [radarBatchIdx, setRadarBatchIdx] = useState<number>(0);
   const [radarOffers, setRadarOffers] = useState<TripOffer[]>(() =>
-    ALL_RADAR_POOL.slice(0, 2)
+    savedSession?.onlineStatus === 'online' ? ALL_RADAR_POOL.slice(0, 2) : []
   );
   const [radarRefreshSecLeft, setRadarRefreshSecLeft] = useState<number>(60);
   const [nextOfferSecLeft, setNextOfferSecLeft] = useState<number | null>(null);
 
   const [legStartDistPx, setLegStartDistPx] = useState<number>(150);
+  const [navProgress, setNavProgress] = useState<number>(0);
+  const [simSpeedMph, setSimSpeedMph] = useState<number>(0);
   const [navNowMs, setNavNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    try {
+      const payload = {
+        onlineStatus,
+        tripStage,
+        activeTrip,
+        driverPos,
+        navProgress,
+        queuedOffer,
+      };
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+    } catch {}
+  }, [onlineStatus, tripStage, activeTrip, driverPos, navProgress, queuedOffer]);
   const [gpsPermissionState, setGpsPermissionState] = useState<'idle' | 'active' | 'denied'>('idle');
   const [gpsExplicitlyAccepted, setGpsExplicitlyAccepted] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('uber_driver_gps_accepted_v1') === 'true';
+      return localStorage.getItem('uber_driver_gps_accepted_v1') !== 'false';
     } catch {
-      return false;
+      return true;
     }
   });
   const [realCoords, setRealCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -383,7 +431,14 @@ export default function App() {
     if (realCoords !== null || gpsPermissionState === 'active' || gpsExplicitlyAccepted) {
       count += 1;
     }
-    if (preferences.notificationsEnabled && notificationPermission === 'granted') count += 1;
+    if (
+      preferences.notificationsEnabled &&
+      (notificationPermission === 'granted' ||
+        notificationPermission === 'denied' ||
+        notificationPermission === 'unsupported')
+    ) {
+      count += 1;
+    }
     if (preferences.backgroundAppRefresh) count += 1;
     return count;
   }, [
@@ -476,7 +531,7 @@ export default function App() {
   // Play looping Uber Driver dispatch ping while an offer is on screen
   useEffect(() => {
     if (pendingOffer && tripStage === 'idle') {
-      uberSounds.startDispatchLoop();
+      uberSounds.startDispatchLoop(pendingOffer.type === 'radar' ? 'radar' : 'exclusive');
     } else {
       uberSounds.stopDispatchLoop();
     }
@@ -532,11 +587,18 @@ export default function App() {
         if (prev === null) return null;
         if (prev <= 1) {
           clearInterval(countdownInterval);
-          const next = SAMPLE_TRIP_OFFERS[offerIndex % SAMPLE_TRIP_OFFERS.length];
+          const pool = preferences.intercity
+            ? SAMPLE_TRIP_OFFERS
+            : SAMPLE_TRIP_OFFERS.filter((o) => !o.isIntercity);
+          const activePool = pool.length > 0 ? pool : SAMPLE_TRIP_OFFERS;
+          const next = activePool[offerIndex % activePool.length];
           setPendingOffer(next);
+          setRadarOffers([next, ...ALL_RADAR_POOL.filter((o) => o.id !== next.id).slice(0, 2)]);
           setOfferIndex((i) => i + 1);
           pushDriverAlert(
-            `${next.type === 'radar' ? 'Trip Radar' : 'Exclusive'} · £${next.fare.toFixed(2)}`,
+            `${
+              next.isIntercity ? 'Intercity' : next.type === 'radar' ? 'Trip Radar' : 'Exclusive'
+            } · £${next.fare.toFixed(2)}`,
             `${next.serviceName} · ${next.riderName} (${next.pickupMinutes} min away)`,
             `offer-${next.id}`,
             () => setActiveTab('home')
@@ -548,7 +610,15 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(countdownInterval);
-  }, [onlineStatus, tripStage, pendingOffer, showRadarList, offerIndex, pushDriverAlert]);
+  }, [
+    onlineStatus,
+    tripStage,
+    pendingOffer,
+    showRadarList,
+    offerIndex,
+    preferences.intercity,
+    pushDriverAlert,
+  ]);
 
   // Compute road-snapped UK turn-by-turn route (OSRM with instant fallback)
   const driverPosRef = useRef<Coordinates>(driverPos);
@@ -564,10 +634,23 @@ export default function App() {
       return;
     }
 
-    const isDropoffLeg = tripStage === 'enroute' || tripStage === 'dropoff_arrived';
-    const start = isDropoffLeg ? trip.pickupCoords : driverPosRef.current;
-    const end = isDropoffLeg ? trip.dropoffCoords : trip.pickupCoords;
-    const label = isDropoffLeg ? trip.dropoffAddress : trip.pickupAddress;
+    const isDropoffPhase =
+      tripStage === 'enroute' || tripStage === 'stop_wait' || tripStage === 'dropoff_arrived';
+    let start: Coordinates = driverPosRef.current;
+    let end: Coordinates = trip.pickupCoords;
+    let label: string = trip.pickupAddress;
+
+    if (isDropoffPhase) {
+      if (trip.stopCoords && !stopVisited) {
+        start = trip.pickupCoords;
+        end = trip.stopCoords;
+        label = trip.stopAddress || 'Stop 1';
+      } else {
+        start = trip.stopCoords && stopVisited ? trip.stopCoords : trip.pickupCoords;
+        end = trip.dropoffCoords;
+        label = trip.dropoffAddress;
+      }
+    }
 
     let cancelled = false;
     const fallback = buildFallbackUKRoute(start, end, label);
@@ -586,7 +669,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeTrip, pendingOffer, tripStage]);
+  }, [activeTrip, pendingOffer, tripStage, stopVisited]);
 
   // Speak turn-by-turn instruction aloud whenever current step advances during active nav
   useEffect(() => {
@@ -601,114 +684,175 @@ export default function App() {
     }
   }, [activeTrip, tripStage, activeRoute, currentStepIdx, preferences.voiceNavigation]);
 
-  // Smooth 60fps requestAnimationFrame polyline navigation during pickup & enroute
+  // Smooth 60fps arc-length polyline navigation with lookahead steering & cornering speed
   const headingRef = useRef<number>(driverHeading);
   headingRef.current = driverHeading;
-  const routeWpIdxRef = useRef<number>(routeWpIdx);
-  routeWpIdxRef.current = routeWpIdx;
+  const navProgressRef = useRef<number>(0);
+
+  useEffect(() => {
+    navProgressRef.current = 0;
+    setNavProgress(0);
+    setSimSpeedMph(0);
+  }, [activeRoute, tripStage, stopVisited]);
 
   useEffect(() => {
     if (!activeTrip) return;
     if (tripStage !== 'pickup' && tripStage !== 'enroute') return;
 
+    const fallbackTarget =
+      tripStage === 'pickup'
+        ? activeTrip.pickupCoords
+        : activeTrip.stopCoords && !stopVisited
+        ? activeTrip.stopCoords
+        : activeTrip.dropoffCoords;
     const poly =
       activeRoute && activeRoute.polyline.length >= 2
         ? activeRoute.polyline
-        : [
-            driverPosRef.current,
-            tripStage === 'pickup' ? activeTrip.pickupCoords : activeTrip.dropoffCoords,
-          ];
+        : [driverPosRef.current, fallbackTarget];
+
+    // Precompute cumulative arc-length along the smoothed UK polyline
+    const cumDist: number[] = [0];
+    let totalLen = 0;
+    for (let i = 1; i < poly.length; i++) {
+      totalLen += Math.hypot(poly[i].x - poly[i - 1].x, poly[i].y - poly[i - 1].y);
+      cumDist.push(totalLen);
+    }
+    if (totalLen < 0.05) return;
+
+    const sampleAt = (prog: number): { x: number; y: number; wpIdx: number } => {
+      const clamped = Math.max(0, Math.min(1, prog));
+      const targetD = clamped * totalLen;
+      let seg = 0;
+      while (seg < cumDist.length - 2 && cumDist[seg + 1] < targetD) {
+        seg++;
+      }
+      const span = Math.max(0.0001, cumDist[seg + 1] - cumDist[seg]);
+      const t = Math.max(0, Math.min(1, (targetD - cumDist[seg]) / span));
+      return {
+        x: poly[seg].x + (poly[seg + 1].x - poly[seg].x) * t,
+        y: poly[seg].y + (poly[seg + 1].y - poly[seg].y) * t,
+        wpIdx: seg,
+      };
+    };
+
+    const isPickup = tripStage === 'pickup';
+    const legDurationSec = isPickup
+      ? Math.max(10, Math.min(15, activeTrip.pickupMinutes * 2.4))
+      : Math.max(
+          13,
+          Math.min(22, (activeTrip.isIntercity ? 17 : 12.5) + activeTrip.tripMinutes * 0.06)
+        );
 
     let rafId = 0;
     let lastTime = performance.now();
-    let lastClockUpdate = lastTime;
+    let lastUiSync = lastTime;
+    let lastWpSynced = -1;
+    let currentSpeedMph = 0;
 
     const stepFrame = (now: number) => {
       const dtSec = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
       lastTime = now;
 
-      if (now - lastClockUpdate > 250) {
-        lastClockUpdate = now;
-        setNavNowMs(Date.now());
-      }
+      const prog = navProgressRef.current;
+      if (prog < 1) {
+        const curSample = sampleAt(prog);
+        const lookSample = sampleAt(Math.min(1, prog + 0.032));
+        const dx = lookSample.x - curSample.x;
+        const dy = lookSample.y - curSample.y;
+        const lookDist = Math.hypot(dx, dy);
 
-      setDriverPos((prev) => {
-        let wpIdx = Math.min(routeWpIdxRef.current, poly.length - 1);
-        let wp = poly[wpIdx];
-        let dx = wp.x - prev.x;
-        let dy = wp.y - prev.y;
-        let dist = Math.hypot(dx, dy);
-
-        while (dist < 1.8 && wpIdx < poly.length - 1) {
-          wpIdx += 1;
-          wp = poly[wpIdx];
-          dx = wp.x - prev.x;
-          dy = wp.y - prev.y;
-          dist = Math.hypot(dx, dy);
+        let cornerFactor = 1;
+        if (lookDist > 0.001) {
+          const targetAngle = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+          const angDiff = Math.abs((((targetAngle - headingRef.current) % 360) + 540) % 360 - 180);
+          cornerFactor = Math.max(0.52, 1 - (angDiff / 90) * 0.45);
+          const smoothHeading = lerpAngle(
+            headingRef.current,
+            targetAngle,
+            1 - Math.exp(-dtSec * 7.5)
+          );
+          headingRef.current = smoothHeading;
+          setDriverHeading(smoothHeading);
         }
 
-        if (wpIdx !== routeWpIdxRef.current) {
-          routeWpIdxRef.current = wpIdx;
-          setRouteWpIdx(wpIdx);
+        // Gentle launch & arrival braking profile
+        const launchRamp = prog < 0.08 ? 0.38 + (prog / 0.08) * 0.62 : 1;
+        const arriveRamp = prog > 0.9 ? Math.max(0.28, (1 - prog) / 0.1) : 1;
+        const speedMult = launchRamp * arriveRamp * cornerFactor;
 
-          if (activeRoute && activeRoute.steps.length > 0) {
-            let nextStepIdx = 0;
-            for (let i = 0; i < activeRoute.steps.length; i++) {
-              if (wpIdx >= activeRoute.steps[i].waypointIndex) {
-                nextStepIdx = i;
-              }
-            }
-            setCurrentStepIdx(nextStepIdx);
+        const nextProg = Math.min(1, prog + (dtSec / legDurationSec) * speedMult);
+        navProgressRef.current = nextProg;
+
+        const nextSample = sampleAt(nextProg);
+        setDriverPos({ x: nextSample.x, y: nextSample.y });
+
+        // Determine active route step + realistic UK speedometer mph
+        const steps = activeRoute?.steps ?? [];
+        let activeStepIdx = 0;
+        for (let i = 0; i < steps.length; i++) {
+          if (nextSample.wpIdx >= steps[i].waypointIndex) {
+            activeStepIdx = i;
+          }
+        }
+        const limitMph =
+          activeTrip.isIntercity && !isPickup
+            ? 70
+            : steps[activeStepIdx]?.speedLimitMph ?? 30;
+        const targetMph = nextProg >= 0.995 ? 0 : limitMph * (0.94 * speedMult);
+        currentSpeedMph += (targetMph - currentSpeedMph) * (1 - Math.exp(-dtSec * 4.5));
+
+        if (nextSample.wpIdx !== lastWpSynced) {
+          lastWpSynced = nextSample.wpIdx;
+          setRouteWpIdx(nextSample.wpIdx);
+          if (steps.length > 0) {
+            setCurrentStepIdx(activeStepIdx);
           }
         }
 
-        if (wpIdx === poly.length - 1 && dist < 1.8) {
-          return prev;
+        if (now - lastUiSync > 180 || nextProg >= 1) {
+          lastUiSync = now;
+          setNavProgress(nextProg);
+          setSimSpeedMph(Math.max(0, Math.round(currentSpeedMph)));
+          setNavNowMs(Date.now());
         }
+      }
 
-        const targetAngle = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
-        const smoothHeading = lerpAngle(headingRef.current, targetAngle, Math.min(1, dtSec * 7));
-        headingRef.current = smoothHeading;
-        setDriverHeading(smoothHeading);
-
-        // Smooth continuous UK road speed
-        const totalPolyDist = Math.max(20, legStartDistPx);
-        const speedMapUnits = Math.max(4.5, Math.min(18, totalPolyDist * 0.14));
-        const moveDist = Math.min(dist, speedMapUnits * dtSec);
-        return {
-          x: prev.x + (dx / dist) * moveDist,
-          y: prev.y + (dy / dist) * moveDist,
-        };
-      });
-
-      rafId = requestAnimationFrame(stepFrame);
+      if (navProgressRef.current < 1) {
+        rafId = requestAnimationFrame(stepFrame);
+      }
     };
 
     rafId = requestAnimationFrame(stepFrame);
     return () => cancelAnimationFrame(rafId);
-  }, [activeTrip, tripStage, activeRoute, legStartDistPx]);
+  }, [activeTrip, tripStage, activeRoute, stopVisited]);
 
-  // Real-time dynamic ETA, turn-by-turn instruction, next-step preview & UK speed limit
+  // Real-time dynamic ETA, turn-by-turn instruction, distance-to-turn, lanes & UK speed limit
   const liveNav = useMemo(() => {
     if (!activeTrip || (tripStage !== 'pickup' && tripStage !== 'enroute')) {
       return null;
     }
 
     const isPickup = tripStage === 'pickup';
-    const target = isPickup ? activeTrip.pickupCoords : activeTrip.dropoffCoords;
-    const totalMiles = isPickup ? activeTrip.pickupMiles : activeTrip.tripMiles;
-    const totalMinutes = isPickup ? activeTrip.pickupMinutes : activeTrip.tripMinutes;
+    const isHeadingToStop = !isPickup && Boolean(activeTrip.stopCoords) && !stopVisited;
+    const totalMiles = isPickup
+      ? activeTrip.pickupMiles
+      : isHeadingToStop
+      ? Number((activeTrip.tripMiles * 0.45).toFixed(1))
+      : activeTrip.tripMiles;
+    const totalMinutes = isPickup
+      ? activeTrip.pickupMinutes
+      : isHeadingToStop
+      ? Math.max(2, Math.round(activeTrip.tripMinutes * 0.45))
+      : activeTrip.tripMinutes;
     const totalSeconds = Math.max(30, totalMinutes * 60);
 
-    const currentDistPx = Math.hypot(target.x - driverPos.x, target.y - driverPos.y);
-    const ratioRemaining =
-      legStartDistPx > 0 ? Math.min(1, Math.max(0, currentDistPx / legStartDistPx)) : 0;
-    const progressPct = Math.round((1 - ratioRemaining) * 100);
+    const ratioRemaining = Math.max(0, Math.min(1, 1 - navProgress));
+    const progressPct = Math.round(navProgress * 100);
 
     const remainingSeconds = Math.max(0, Math.round(totalSeconds * ratioRemaining));
     const remainingMiles = Math.max(0, totalMiles * ratioRemaining);
 
-    const isArriving = currentDistPx < 4.5 || remainingSeconds <= 4;
+    const isArriving = navProgress >= 0.97 || remainingSeconds <= 4;
 
     const etaCountdown = isArriving
       ? 'Arriving'
@@ -724,7 +868,7 @@ export default function App() {
       ? 'Arrived'
       : remainingMiles >= 0.2
       ? `${remainingMiles.toFixed(1)} mi`
-      : `${Math.max(50, Math.round((remainingMiles * 5280) / 50) * 50)} ft`;
+      : `${Math.max(50, Math.round((remainingMiles * 1760) / 20) * 20)} yds`;
 
     const etaClockTime = new Date(navNowMs + remainingSeconds * 1000).toLocaleTimeString(
       'en-GB',
@@ -732,66 +876,156 @@ export default function App() {
     );
 
     const steps = activeRoute?.steps ?? [];
+    const polyCount = Math.max(2, activeRoute?.polyline.length ?? 2);
     const currentStep = steps[Math.min(currentStepIdx, Math.max(0, steps.length - 1))];
     const nextStep =
       currentStepIdx + 1 < steps.length ? steps[currentStepIdx + 1] : null;
+
+    // Calculate distance-to-next-turn in UK yards / miles
+    const nextTurnProg = nextStep
+      ? Math.min(1, nextStep.waypointIndex / (polyCount - 1))
+      : 1;
+    const milesToTurn = Math.max(0, totalMiles * Math.max(0, nextTurnProg - navProgress));
+    const distanceToTurnLabel = isArriving
+      ? 'Now'
+      : milesToTurn >= 0.35
+      ? `${milesToTurn.toFixed(1)} mi`
+      : `${Math.max(40, Math.round((milesToTurn * 1760) / 20) * 20)} yds`;
 
     const maneuverKind: NavManeuverKind = isArriving
       ? 'arrive'
       : currentStep?.maneuver ?? 'straight';
 
+    const targetAddressLabel = isPickup
+      ? activeTrip.pickupAddress
+      : isHeadingToStop
+      ? activeTrip.stopAddress || 'Stop 1'
+      : activeTrip.dropoffAddress;
+
     const maneuverTitle = isArriving
       ? isPickup
         ? 'Arrived at pickup'
+        : isHeadingToStop
+        ? 'Arrived at Stop 1'
         : 'Arrived at dropoff'
-      : currentStep?.instruction ||
-        `Continue toward ${isPickup ? activeTrip.pickupAddress : activeTrip.dropoffAddress}`;
+      : currentStep?.instruction || `Continue toward ${targetAddressLabel}`;
 
     const maneuverSubtitle = isArriving
-      ? isPickup
-        ? activeTrip.pickupAddress
-        : activeTrip.dropoffAddress
+      ? targetAddressLabel
       : nextStep
       ? `Then · ${nextStep.instruction}`
       : isPickup
       ? `Pickup · ${activeTrip.pickupAddress}`
+      : isHeadingToStop
+      ? `Stop 1 · ${activeTrip.stopAddress}`
       : `Dropoff · ${activeTrip.dropoffAddress}`;
 
-    const speedLimitMph = currentStep?.speedLimitMph ?? 30;
+    const speedLimitMph = activeTrip.isIntercity && !isPickup ? 70 : currentStep?.speedLimitMph ?? 30;
 
     return {
       isPickup,
+      isHeadingToStop,
       isArriving,
       etaCountdown,
       etaMinLabel,
       distanceRemaining,
+      distanceToTurnLabel,
       etaClockTime,
       progressPct,
       maneuverKind,
       maneuverTitle,
       maneuverSubtitle,
       speedLimitMph,
+      lanes: isArriving ? undefined : currentStep?.lanes,
     };
   }, [
     activeTrip,
     tripStage,
-    driverPos,
-    legStartDistPx,
+    stopVisited,
+    navProgress,
     navNowMs,
     activeRoute,
     currentStepIdx,
   ]);
+
+  // Auto-queue Back-to-Back Next Ride when 75% into final dropoff leg
+  const queuedForTripIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !activeTrip ||
+      tripStage !== 'enroute' ||
+      !liveNav ||
+      liveNav.progressPct < 75 ||
+      queuedOffer ||
+      acceptedNextOffer ||
+      preferences.stopNewRequests ||
+      (activeTrip.stopCoords && !stopVisited) ||
+      queuedForTripIdRef.current === activeTrip.id
+    ) {
+      return;
+    }
+
+    queuedForTripIdRef.current = activeTrip.id;
+    const candidate =
+      SAMPLE_TRIP_OFFERS.find(
+        (o) =>
+          o.id !== activeTrip.id &&
+          (preferences.intercity || !o.isIntercity)
+      ) ?? SAMPLE_TRIP_OFFERS[0];
+    setQueuedOffer(candidate);
+    uberSounds.play(candidate.type === 'exclusive' ? 'exclusiveDispatch' : 'dispatch');
+  }, [
+    activeTrip,
+    tripStage,
+    liveNav,
+    queuedOffer,
+    acceptedNextOffer,
+    preferences.stopNewRequests,
+    preferences.intercity,
+    stopVisited,
+  ]);
+
+  // Speed & Bus-Lane Camera proximity warning during active UK navigation
+  const nearbySpeedCamera = useMemo(() => {
+    if (
+      !activeTrip ||
+      (tripStage !== 'pickup' && tripStage !== 'enroute') ||
+      !preferences.speedCameraWarnings
+    ) {
+      return null;
+    }
+    let best: (typeof UK_SPEED_CAMERAS)[number] | null = null;
+    let bestDist = 26;
+    for (const cam of UK_SPEED_CAMERAS) {
+      const d = Math.hypot(cam.coords.x - driverPos.x, cam.coords.y - driverPos.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = cam;
+      }
+    }
+    return best;
+  }, [activeTrip, tripStage, preferences.speedCameraWarnings, driverPos]);
+
+  const totalBusinessMiles = useMemo(
+    () =>
+      Number(
+        ledger.completedTrips
+          .reduce((sum, trip) => sum + trip.distanceMiles, 0)
+          .toFixed(1)
+      ),
+    [ledger.completedTrips]
+  );
 
   // Complete going online (after passing or already having Face Verification)
   const completeGoOnline = useCallback(() => {
     uberSounds.unlock();
     uberSounds.play('online');
     setOnlineStatus('online');
-    rotateRadarOffers(radarBatchIdx);
+    setRadarOffers([]); // Trip Radar shows no job and is hidden until timer triggers
     setRadarRefreshSecLeft(60);
     setActiveTab('home');
-    showToast("You're online — Trip Radar & auto-dispatch active");
-  }, [radarBatchIdx, rotateRadarOffers, showToast]);
+    showToast("You're online — Trip Radar active");
+  }, [showToast]);
 
   const handleToggleOnline = () => {
     uberSounds.unlock();
@@ -812,31 +1046,95 @@ export default function App() {
     }
   };
 
-  const handleAcceptOffer = (offer: TripOffer) => {
-    uberSounds.unlock();
-    uberSounds.play('accept');
-    setPendingOffer(null);
+  const handleAcceptOffer = useCallback(
+    (offer: TripOffer) => {
+      uberSounds.unlock();
+      uberSounds.play('accept');
+      setPendingOffer(null);
+      setShowRadarList(false);
+      setQueuedOffer(null);
+      setAcceptedNextOffer(null);
+      setStopVisited(false);
+      setActiveTrip(offer);
+      setTripWaitFee(0);
+
+      // Slightly improve Acceptance Rate when accepting Exclusive offers
+      if (offer.type === 'exclusive' && activeAccount?.id) {
+        setAccounts((prev) =>
+          prev.map((acct) =>
+            acct.id === activeAccount.id
+              ? { ...acct, acceptanceRate: Math.min(100, acct.acceptanceRate + 1) }
+              : acct
+          )
+        );
+      }
+
+      const initialDist = Math.max(
+        20,
+        Math.hypot(offer.pickupCoords.x - driverPosRef.current.x, offer.pickupCoords.y - driverPosRef.current.y)
+      );
+      setLegStartDistPx(initialDist);
+      setNavNowMs(Date.now());
+      setTripStage('pickup');
+      setActiveTab('home');
+      setRecenterSignal((s) => s + 1);
+    },
+    [activeAccount?.id]
+  );
+
+  const handleDispatchIntercity = useCallback(() => {
+    if (!preferences.intercity) {
+      setPreferences((p) => ({ ...p, intercity: true }));
+    }
+    const offer = INTERCITY_TRIP_OFFERS[intercityIdx % INTERCITY_TRIP_OFFERS.length];
+    setIntercityIdx((i) => i + 1);
+    if (onlineStatus === 'offline') {
+      setOnlineStatus('online');
+    }
     setShowRadarList(false);
-    setActiveTrip(offer);
-    setTripWaitFee(0);
-    const initialDist = Math.max(
-      20,
-      Math.hypot(offer.pickupCoords.x - driverPos.x, offer.pickupCoords.y - driverPos.y)
-    );
-    setLegStartDistPx(initialDist);
-    setNavNowMs(Date.now());
-    setTripStage('pickup');
+    setPendingOffer(offer);
     setActiveTab('home');
     setRecenterSignal((s) => s + 1);
-  };
+    uberSounds.unlock();
+    showToast(
+      `Intercity dispatch: ${offer.pickupArea} → ${offer.dropoffArea.split('·')[0].trim()}`
+    );
+  }, [intercityIdx, onlineStatus, preferences.intercity, showToast]);
+
+  const handleRechargeVehicle = useCallback(() => {
+    if (!activeAccount?.id) return;
+    setAccounts((prev) =>
+      prev.map((acct) =>
+        acct.id === activeAccount.id ? { ...acct, batteryPct: 100 } : acct
+      )
+    );
+    showToast('EV battery rapid-charged to 100% (~250 mi range)');
+  }, [activeAccount?.id, showToast]);
 
   const handleDeclineOffer = useCallback(
-    (_offer: TripOffer) => {
+    (offer: TripOffer) => {
       uberSounds.play('decline');
       setPendingOffer(null);
-      showToast('Request declined');
+      const pool = SAMPLE_TRIP_OFFERS.filter((o) => o.id !== offer.id);
+      const next = pool[Math.floor(Math.random() * pool.length)] || SAMPLE_TRIP_OFFERS[1];
+      setTimeout(() => {
+        setPendingOffer(next);
+      }, 1500);
+
+      if (offer.type === 'exclusive' && activeAccount?.id) {
+        setAccounts((prev) =>
+          prev.map((acct) =>
+            acct.id === activeAccount.id
+              ? { ...acct, acceptanceRate: Math.max(50, acct.acceptanceRate - 1) }
+              : acct
+          )
+        );
+        showToast('Outmatched / declined · Finding next request...');
+      } else {
+        showToast('Outmatched · Finding next request...');
+      }
     },
-    [showToast]
+    [activeAccount?.id, showToast]
   );
 
   const handleDeclineRadarItem = useCallback(
@@ -859,16 +1157,45 @@ export default function App() {
     uberSounds.play('startTrip');
     setTripWaitFee(waitFeeAccrued);
     if (activeTrip) {
+      const nextTarget =
+        activeTrip.stopCoords && !stopVisited
+          ? activeTrip.stopCoords
+          : activeTrip.dropoffCoords;
       const initialDropoffDist = Math.max(
         20,
         Math.hypot(
-          activeTrip.dropoffCoords.x - activeTrip.pickupCoords.x,
-          activeTrip.dropoffCoords.y - activeTrip.pickupCoords.y
+          nextTarget.x - activeTrip.pickupCoords.x,
+          nextTarget.y - activeTrip.pickupCoords.y
         )
       );
       setLegStartDistPx(initialDropoffDist);
       setNavNowMs(Date.now());
     }
+    setTripStage('enroute');
+    setRecenterSignal((s) => s + 1);
+  };
+
+  const handleArriveStop = () => {
+    if (!activeTrip?.stopCoords) return;
+    setDriverPos(activeTrip.stopCoords);
+    setStopVisited(true);
+    setTripStage('stop_wait');
+    showToast('Arrived at Stop 1 · Waiting for rider');
+  };
+
+  const handleContinueFromStop = () => {
+    if (!activeTrip) return;
+    uberSounds.play('startTrip');
+    const fromCoords = activeTrip.stopCoords ?? activeTrip.pickupCoords;
+    const remainingDist = Math.max(
+      20,
+      Math.hypot(
+        activeTrip.dropoffCoords.x - fromCoords.x,
+        activeTrip.dropoffCoords.y - fromCoords.y
+      )
+    );
+    setLegStartDistPx(remainingDist);
+    setNavNowMs(Date.now());
     setTripStage('enroute');
     setRecenterSignal((s) => s + 1);
   };
@@ -886,7 +1213,7 @@ export default function App() {
     const currentKey = getLocalDateKey();
     setTodayDateKey(currentKey);
 
-    const tipAmt = activeTrip.riderName === 'Joséfina' ? 2.5 : 0;
+    const tipAmt = activeTrip.riderName === 'Joséfina' ? 2.5 : activeTrip.isIntercity ? 5.0 : 0;
     const surcharge = activeTrip.surchargeAmount ?? 0;
     const waitFee = tripWaitFee;
     const uberFee = Number((Math.max(0, activeTrip.fare - surcharge) * 0.25).toFixed(2));
@@ -912,9 +1239,10 @@ export default function App() {
       distanceMiles: activeTrip.tripMiles,
       durationMin: activeTrip.tripMinutes,
       pickupArea: activeTrip.pickupArea.split(',')[0],
-      dropoffArea: activeTrip.dropoffArea.split(',')[0],
+      dropoffArea: activeTrip.dropoffArea.split('·')[0].split(',')[0].trim(),
       completedAt: `Today, ${timeLabel}`,
       dateKey: currentKey,
+      isIntercity: activeTrip.isIntercity,
     };
 
     setLedger((prev) => ({
@@ -925,10 +1253,22 @@ export default function App() {
         ),
       },
       walletBalance: Number((prev.walletBalance + netPayout).toFixed(2)),
-      proPoints: prev.proPoints + 12,
+      proPoints: prev.proPoints + (activeTrip.isIntercity ? 30 : 12),
       questCompletedCount: prev.questCompletedCount + 1,
       completedTrips: [newRecord, ...prev.completedTrips],
     }));
+
+    // Drain EV battery / fuel based on trip distance
+    if (activeAccount?.id) {
+      const drainPct = Math.max(1, Math.round(activeTrip.tripMiles / 2.5));
+      setAccounts((prev) =>
+        prev.map((acct) =>
+          acct.id === activeAccount.id
+            ? { ...acct, batteryPct: Math.max(5, (acct.batteryPct ?? 84) - drainPct) }
+            : acct
+        )
+      );
+    }
 
     pushDriverAlert(
       `Trip complete · +£${netPayout.toFixed(2)} net`,
@@ -940,28 +1280,129 @@ export default function App() {
     setTripStage('completed');
   };
 
-  const handleSubmitRating = (_stars: number) => {
+  const handleSubmitRating = (_stars: number, tags: string[] = []) => {
+    if (tags.length > 0) {
+      setLedger((prev) => {
+        const [latest, ...rest] = prev.completedTrips;
+        if (!latest) return prev;
+        return {
+          ...prev,
+          completedTrips: [{ ...latest, tags }, ...rest],
+        };
+      });
+    }
+
+    if (tags.includes('Left item') && activeTrip) {
+      const lostThread: InboxThread = {
+        id: `thread-lost-${Date.now()}`,
+        tab: 'support',
+        title: `Lost item return (${activeTrip.riderName})`,
+        preview: 'Return item for £15.00 UK return fee',
+        timeAgo: 'Just now',
+        statusText: 'Action required',
+        unread: true,
+        iconType: 'chat',
+        messages: [
+          {
+            id: `msg-lost-${Date.now()}`,
+            sender: 'agent',
+            text: `You flagged a left item from your ${activeTrip.serviceName} trip with ${activeTrip.riderName}. Coordinate return in-app to receive the £15.00 UK returned-item fee.`,
+            timestamp: 'Just now',
+          },
+        ],
+      };
+      setInboxThreads((prev) => [lostThread, ...prev]);
+      showToast('Lost item thread opened in Inbox (+£15.00 return fee eligible)');
+    }
+
+    const nextQueued = acceptedNextOffer;
     setActiveTrip(null);
     setActiveRoute(null);
     setTripWaitFee(0);
+    setStopVisited(false);
+    setQueuedOffer(null);
+    setAcceptedNextOffer(null);
     setTripStage('idle');
+
     if (preferences.stopNewRequests) {
       uberSounds.play('offline');
       setOnlineStatus('offline');
       setPreferences((p) => ({ ...p, stopNewRequests: false }));
       showToast('Trip completed · You are now offline');
-    } else {
+    } else if (nextQueued) {
+      handleAcceptOffer(nextQueued);
+      showToast(`Starting queued ride · ${nextQueued.riderName}`);
+    } else if (!tags.includes('Left item')) {
       showToast('Trip completed · Saved to Earnings');
     }
   };
 
-  const handleCancelTrip = () => {
-    uberSounds.play('decline');
+  const handleNoShowCancel = (fee: number) => {
+    if (!activeTrip) return;
+    uberSounds.play('completeTrip');
+    const currentKey = getLocalDateKey();
+    setTodayDateKey(currentKey);
+    const timeLabel = new Date().toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const noShowRecord: CompletedTrip = {
+      id: `noshow-${Date.now()}`,
+      riderName: activeTrip.riderName,
+      serviceName: activeTrip.serviceName,
+      fare: fee,
+      tip: 0,
+      waitFee: 0,
+      netPayout: fee,
+      distanceMiles: 0,
+      durationMin: 5,
+      pickupArea: activeTrip.pickupArea.split(',')[0],
+      dropoffArea: 'Rider No-Show Fee',
+      completedAt: `Today, ${timeLabel}`,
+      dateKey: currentKey,
+      isNoShowFee: true,
+    };
+
+    setLedger((prev) => ({
+      ...prev,
+      dailyTotals: {
+        ...prev.dailyTotals,
+        [currentKey]: Number(((prev.dailyTotals[currentKey] ?? 0) + fee).toFixed(2)),
+      },
+      walletBalance: Number((prev.walletBalance + fee).toFixed(2)),
+      completedTrips: [noShowRecord, ...prev.completedTrips],
+    }));
+
     setActiveTrip(null);
     setActiveRoute(null);
     setTripWaitFee(0);
+    setStopVisited(false);
+    setQueuedOffer(null);
+    setAcceptedNextOffer(null);
     setTripStage('idle');
-    showToast('Trip cancelled');
+    showToast(`Rider no-show fee +£${fee.toFixed(2)} added (0% cancel impact)`);
+  };
+
+  const handleCancelTrip = () => {
+    uberSounds.play('decline');
+    if (activeAccount?.id) {
+      setAccounts((prev) =>
+        prev.map((acct) =>
+          acct.id === activeAccount.id
+            ? { ...acct, cancellationRate: Math.min(25, acct.cancellationRate + 1) }
+            : acct
+        )
+      );
+    }
+    setActiveTrip(null);
+    setActiveRoute(null);
+    setTripWaitFee(0);
+    setStopVisited(false);
+    setQueuedOffer(null);
+    setAcceptedNextOffer(null);
+    setTripStage('idle');
+    showToast('Trip cancelled · Cancellation rate updated');
   };
 
   const handleAddMapReport = (category: MapReportCategory, label: string) => {
@@ -1049,6 +1490,7 @@ export default function App() {
       city: payload.city,
       lastFaceVerifiedAt: null,
       drivingMinutesUsedToday: 0,
+      batteryPct: 100,
     };
     const nextList = [newAcct, ...accounts];
     setAccounts(nextList);
@@ -1258,6 +1700,12 @@ export default function App() {
     }
   };
 
+  const handleSelectBusySoonZone = (zone: BusySoonZone) => {
+    showToast(
+      `Busy Soon (${zone.area}): ${zone.expectedBoost} expected in ${zone.minutesUntilBusy} min · ${zone.reason}`
+    );
+  };
+
   const formatSecMmSs = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = sec % 60;
@@ -1381,7 +1829,9 @@ export default function App() {
             activeTrip={activeTrip}
             pendingOffer={pendingOffer}
             routePolyline={remainingRoutePolyline}
+            fullRoutePolyline={activeRoute?.polyline}
             surgeZones={INITIAL_SURGE_ZONES}
+            busySoonZones={BUSY_SOON_ZONES}
             mapReports={mapReports}
             destination={destination}
             showSurgeHeatmap={tripStage === 'idle'}
@@ -1394,8 +1844,72 @@ export default function App() {
               onlineStatus === 'online'
             }
             nightMode={preferences.nightMode}
+            showTrafficLayer={preferences.showTrafficLayer}
+            showUKZones={preferences.showUKZones}
+            showSpeedCameras={preferences.speedCameraWarnings}
+            showBusySoonZones={preferences.showBusySoonZones}
             onSelectSurgeZone={handleSelectSurgeZone}
+            onSelectBusySoonZone={handleSelectBusySoonZone}
+            onToggleMapLayers={() => setShowMapLayersPopover((v) => !v)}
           />
+
+          {/* Compact UK Map Layers Popover */}
+          {showMapLayersPopover && (
+            <div className="absolute right-16 bottom-[236px] z-30 w-56 rounded-2xl bg-white/95 dark:bg-[#16181E]/95 backdrop-blur-md p-3 shadow-2xl border border-black/10 dark:border-white/10 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-extrabold text-black dark:text-white">
+                  UK Map Layers
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowMapLayersPopover(false)}
+                  className="text-[11px] font-bold text-[#276EF1]"
+                >
+                  Done
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleTogglePreference('showTrafficLayer')}
+                className="w-full flex items-center justify-between text-[12px] font-semibold text-black dark:text-neutral-200 py-1"
+              >
+                <span>Live Motorway Traffic</span>
+                <span className={preferences.showTrafficLayer ? 'text-[#05944F]' : 'text-neutral-400'}>
+                  {preferences.showTrafficLayer ? 'ON' : 'OFF'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTogglePreference('showUKZones')}
+                className="w-full flex items-center justify-between text-[12px] font-semibold text-black dark:text-neutral-200 py-1"
+              >
+                <span>London CC & ULEZ Zones</span>
+                <span className={preferences.showUKZones ? 'text-[#7C3AED]' : 'text-neutral-400'}>
+                  {preferences.showUKZones ? 'ON' : 'OFF'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTogglePreference('speedCameraWarnings')}
+                className="w-full flex items-center justify-between text-[12px] font-semibold text-black dark:text-neutral-200 py-1"
+              >
+                <span>Speed & Bus Cameras</span>
+                <span className={preferences.speedCameraWarnings ? 'text-[#E11900]' : 'text-neutral-400'}>
+                  {preferences.speedCameraWarnings ? 'ON' : 'OFF'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTogglePreference('showBusySoonZones')}
+                className="w-full flex items-center justify-between text-[12px] font-semibold text-black dark:text-neutral-200 py-1"
+              >
+                <span>Busy Soon Forecasts</span>
+                <span className={preferences.showBusySoonZones ? 'text-[#D97706]' : 'text-neutral-400'}>
+                  {preferences.showBusySoonZones ? 'ON' : 'OFF'}
+                </span>
+              </button>
+            </div>
+          )}
 
           {/* TOP BAR OVERLAY ON MAP */}
           {tripStage === 'idle' ? (
@@ -1499,21 +2013,36 @@ export default function App() {
             /* ACTIVE TRIP TURN-BY-TURN TOP NAVIGATION BANNER */
             activeTrip &&
             liveNav && (
-              <div className="absolute top-[54px] inset-x-4 z-20 flex justify-center pointer-events-none">
+              <div className="absolute top-[54px] inset-x-4 z-20 flex flex-col items-center gap-2 pointer-events-none">
                 <div className="pointer-events-auto w-full max-w-[490px] rounded-2xl bg-[#111111] text-white shadow-2xl overflow-hidden border border-white/10">
                   <div className="px-4 py-3 flex items-center gap-3.5">
                     <div
                       className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-                        liveNav.isPickup ? 'bg-[#05944F]' : 'bg-[#276EF1]'
+                        liveNav.isPickup
+                          ? 'bg-[#05944F]'
+                          : activeTrip.isIntercity
+                          ? 'bg-[#7C3AED]'
+                          : 'bg-[#276EF1]'
                       }`}
                     >
                       {renderManeuverIcon(liveNav.maneuverKind)}
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <p className="text-[16px] font-extrabold leading-tight truncate tabular-nums">
-                        {liveNav.maneuverTitle}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[12px] font-extrabold text-[#5B9BF8] tabular-nums shrink-0">
+                          {liveNav.distanceToTurnLabel}
+                        </span>
+                        <span className="text-white/35">·</span>
+                        <p className="text-[15.5px] font-extrabold leading-tight truncate tabular-nums">
+                          {liveNav.maneuverTitle}
+                        </p>
+                        {preferences.recordAudio && (
+                          <span className="px-1.5 py-0.5 rounded bg-[#E11900] text-white text-[9.5px] font-extrabold uppercase shrink-0">
+                            REC · Audio
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[12px] text-white/75 truncate mt-0.5">
                         {liveNav.maneuverSubtitle}
                       </p>
@@ -1536,16 +2065,57 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* UK Lane Guidance Strip */}
+                  {liveNav.lanes && liveNav.lanes.length > 0 && (
+                    <div className="px-4 py-1.5 bg-white/5 border-t border-white/10 flex items-center justify-between gap-2">
+                      <span className="text-[10.5px] font-bold uppercase tracking-wider text-white/55">
+                        Lane guidance
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {liveNav.lanes.map((lane, idx) => (
+                          <div
+                            key={`lane-${idx}`}
+                            className={`w-6 h-6 rounded-md flex items-center justify-center ${
+                              lane.recommended
+                                ? 'bg-[#276EF1]/30 border border-[#5B9BF8]/60 text-white'
+                                : 'bg-white/5 text-white/30'
+                            }`}
+                          >
+                            {lane.direction === 'left' ? (
+                              <CornerUpLeft className="w-3.5 h-3.5 stroke-[2.5]" />
+                            ) : lane.direction === 'right' ? (
+                              <CornerUpRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                            ) : (
+                              <ArrowUp className="w-3.5 h-3.5 stroke-[2.5]" />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Live Route Completion Progress Strip */}
                   <div className="w-full h-1 bg-white/10">
                     <div
                       className={`h-full ${
-                        liveNav.isPickup ? 'bg-[#05944F]' : 'bg-[#276EF1]'
+                        liveNav.isPickup
+                          ? 'bg-[#05944F]'
+                          : activeTrip.isIntercity
+                          ? 'bg-[#7C3AED]'
+                          : 'bg-[#276EF1]'
                       }`}
                       style={{ width: `${Math.max(4, liveNav.progressPct)}%` }}
                     />
                   </div>
                 </div>
+
+                {/* Live UK Speed Camera Proximity Alert */}
+                {nearbySpeedCamera && (
+                  <div className="pointer-events-auto px-3.5 py-1.5 rounded-full bg-[#111111]/95 text-white border border-[#E11900]/70 shadow-lg flex items-center gap-2 text-[12px] font-bold">
+                    <Camera className="w-3.5 h-3.5 text-[#E11900]" />
+                    <span>{nearbySpeedCamera.label}</span>
+                  </div>
+                )}
               </div>
             )
           )}
@@ -1570,6 +2140,16 @@ export default function App() {
               )}
 
               <div className="pointer-events-auto flex items-center gap-2 flex-wrap justify-center">
+                {!pendingOffer && !showRadarList && (
+                  <button
+                    type="button"
+                    onClick={handleDispatchIntercity}
+                    className="h-9 px-3.5 rounded-full bg-[#7C3AED] hover:bg-[#6D28D9] text-white text-[12px] font-bold shadow-lg flex items-center gap-1.5 active:scale-95 transition-all whitespace-nowrap"
+                  >
+                    <Route className="w-3.5 h-3.5" />
+                    <span>Intercity Job</span>
+                  </button>
+                )}
                 {permissionsReadyCount < 3 && (
                   <button
                     type="button"
@@ -1598,9 +2178,15 @@ export default function App() {
                     {liveNav?.speedLimitMph ?? 30}
                   </span>
                 </div>
-                {liveSpeedMph !== null && (
-                  <div className="px-2 py-0.5 rounded-full bg-black text-white text-[11px] font-extrabold shadow-md tabular-nums">
-                    {liveSpeedMph} mph
+                {(liveSpeedMph !== null || tripStage === 'pickup' || tripStage === 'enroute') && (
+                  <div
+                    className={`px-2.5 py-0.5 rounded-full text-white text-[11px] font-extrabold shadow-md tabular-nums ${
+                      (liveSpeedMph ?? simSpeedMph) > (liveNav?.speedLimitMph ?? 30)
+                        ? 'bg-[#E11900]'
+                        : 'bg-black'
+                    }`}
+                  >
+                    {liveSpeedMph ?? simSpeedMph} mph
                   </div>
                 )}
               </div>
@@ -1640,7 +2226,12 @@ export default function App() {
               type="button"
               onClick={() => {
                 uberSounds.unlock();
+                const willEnable = !preferences.soundEffects;
                 handleTogglePreference('soundEffects');
+                if (willEnable) {
+                  uberSounds.setEnabled(true);
+                  uberSounds.play('exclusiveDispatch');
+                }
               }}
               className="w-12 h-12 rounded-full bg-white dark:bg-[#18191D] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all"
               aria-label={preferences.soundEffects ? 'Mute driver sounds' : 'Unmute driver sounds'}
@@ -1741,11 +2332,29 @@ export default function App() {
                 routeSteps={activeRoute?.steps}
                 currentStepIdx={currentStepIdx}
                 waitFeeAccrued={tripWaitFee}
+                stopVisited={stopVisited}
+                queuedOffer={queuedOffer}
+                navProvider={preferences.navProvider}
                 onArrivePickup={handleArrivePickup}
                 onStartTrip={handleStartTrip}
+                onArriveStop={handleArriveStop}
+                onContinueFromStop={handleContinueFromStop}
                 onArriveDropoff={handleArriveDropoff}
                 onCompleteTrip={handleCompleteTrip}
                 onSubmitRating={handleSubmitRating}
+                onNoShowCancel={handleNoShowCancel}
+                onAcceptQueued={() => {
+                  if (!queuedOffer) return;
+                  uberSounds.play('accept');
+                  setAcceptedNextOffer(queuedOffer);
+                  setQueuedOffer(null);
+                  showToast(`Next ride queued (${queuedOffer.serviceName}) · Starts after dropoff`);
+                }}
+                onDeclineQueued={() => {
+                  uberSounds.play('decline');
+                  setQueuedOffer(null);
+                  showToast('Queued ride declined');
+                }}
                 onCancelTrip={handleCancelTrip}
                 onOpenPreferences={() => setShowPreferencesModal(true)}
               />
@@ -1771,13 +2380,15 @@ export default function App() {
                     <SlidersHorizontal className="w-5 h-5 text-black dark:text-white" />
                   </button>
 
-                  <button
+                   <button
                     type="button"
-                    onClick={() =>
-                      onlineStatus === 'offline'
-                        ? setActiveTab('hub')
-                        : handleToggleOnline()
-                    }
+                    onClick={() => {
+                      if (onlineStatus === 'offline') {
+                        setActiveTab('hub');
+                      } else {
+                        setShowStopMenu(true);
+                      }
+                    }}
                     className="flex-1 text-center py-1 min-w-0"
                   >
                     <p className="text-[18px] font-extrabold text-black dark:text-white truncate">
@@ -1806,8 +2417,8 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Centered Trip Radar Pill */}
-                {onlineStatus === 'online' && (
+                {/* Centered Trip Radar Pill - only shown when radar offers/jobs arrive */}
+                {onlineStatus === 'online' && radarOffers.length > 0 && (
                   <div className="px-4 pb-3 flex items-center justify-center">
                     <button
                       type="button"
@@ -1863,6 +2474,8 @@ export default function App() {
                 setShowRadarList(true);
               }}
               onOpenPermissions={() => setShowPermissionsModal(true)}
+              onDispatchIntercity={handleDispatchIntercity}
+              onRechargeVehicle={handleRechargeVehicle}
             />
           )}
 
@@ -1874,6 +2487,16 @@ export default function App() {
               dailyTotals={ledger.dailyTotals}
               completedTrips={ledger.completedTrips}
               questCompletedCount={ledger.questCompletedCount}
+              dailyGoalGbp={preferences.dailyGoalGbp}
+              weeklyGoalGbp={preferences.weeklyGoalGbp}
+              onUpdateGoals={(daily, weekly) => {
+                setPreferences((prev) => ({
+                  ...prev,
+                  dailyGoalGbp: daily,
+                  weeklyGoalGbp: weekly,
+                }));
+                showToast(`Goals updated: £${daily}/day · £${weekly}/wk`);
+              }}
               privacyHidden={privacyHidden}
               onTogglePrivacy={() => setPrivacyHidden((v) => !v)}
               onBack={() => setActiveTab('home')}
@@ -1896,6 +2519,7 @@ export default function App() {
               account={activeAccount}
               proPoints={ledger.proPoints}
               walletBalance={ledger.walletBalance}
+              totalBusinessMiles={totalBusinessMiles}
               preferences={preferences}
               notificationPermission={notificationPermission}
               lastRefreshedAt={lastRefreshedAt}
@@ -2022,6 +2646,20 @@ export default function App() {
         <PreferencesSheet
           preferences={preferences}
           onTogglePreference={handleTogglePreference}
+          onSetNavProvider={(provider: NavProvider) => {
+            setPreferences((prev) => ({ ...prev, navProvider: provider }));
+            showToast(
+              `Navigation set to ${
+                provider === 'uber'
+                  ? 'Uber In-App Nav'
+                  : provider === 'google'
+                  ? 'Google Maps'
+                  : provider === 'waze'
+                  ? 'Waze'
+                  : 'Apple Maps'
+              }`
+            );
+          }}
           onResetDefaults={() => setPreferences(INITIAL_PREFERENCES)}
           onClose={() => setShowPreferencesModal(false)}
         />
@@ -2033,6 +2671,45 @@ export default function App() {
           questCompletedCount={ledger.questCompletedCount}
           onClose={() => setOpportunitiesModalMode(null)}
         />
+      )}
+
+      {showStopMenu && (
+        <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-end justify-center">
+          <div className="w-full max-w-[540px] bg-white dark:bg-[#141416] rounded-t-3xl p-6 space-y-4 shadow-2xl animate-in slide-in-from-bottom">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[20px] font-extrabold text-black dark:text-white">Go offline?</h3>
+              <button
+                type="button"
+                onClick={() => setShowStopMenu(false)}
+                className="w-10 h-10 rounded-xl bg-[#F3F3F3] dark:bg-white/10 flex items-center justify-center font-bold text-black dark:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-[14px] text-[#545454] dark:text-neutral-400">
+              You will stop receiving trip requests and Trip Radar offers.
+            </p>
+            <div className="space-y-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStopMenu(false);
+                  handleToggleOnline();
+                }}
+                className="w-full h-14 rounded-2xl bg-[#E11900] hover:bg-[#C51500] text-white text-[16px] font-bold shadow-lg transition-all active:scale-[0.98]"
+              >
+                Stop & Go Offline
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowStopMenu(false)}
+                className="w-full h-14 rounded-2xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-black dark:text-white text-[16px] font-bold transition-all active:scale-[0.98]"
+              >
+                Resume Driving
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

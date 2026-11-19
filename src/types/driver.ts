@@ -7,6 +7,7 @@ export type TripStage =
   | 'pickup'
   | 'waiting'
   | 'enroute'
+  | 'stop_wait'
   | 'dropoff_arrived'
   | 'completed';
 
@@ -33,6 +34,10 @@ export interface RouteStep {
   distanceMeters: number;
   speedLimitMph: 20 | 30 | 50 | 70;
   waypointIndex: number;
+  lanes?: Array<{
+    direction: 'left' | 'straight' | 'right';
+    recommended: boolean;
+  }>;
 }
 
 export interface ComputedRoute {
@@ -60,12 +65,13 @@ export interface DriverAccount {
   city: string;
   lastFaceVerifiedAt: number | null;
   drivingMinutesUsedToday: number;
+  batteryPct?: number;
 }
 
 export interface TripOffer {
   id: string;
   type: OfferType;
-  serviceName: string; // e.g. 'UberX', 'Comfort', 'UberXL'
+  serviceName: string; // e.g. 'UberX', 'Comfort', 'UberXL', 'Intercity'
   fare: number;
   rating: number;
   riderName: string;
@@ -84,6 +90,11 @@ export interface TripOffer {
   pinCode?: string;
   surchargeLabel?: string;
   surchargeAmount?: number;
+  isIntercity?: boolean;
+  intercityCorridor?: string;
+  stopAddress?: string;
+  stopCoords?: Coordinates;
+  riderNote?: string;
   expiresInSec: number;
 }
 
@@ -112,6 +123,18 @@ export interface SurgeZone {
   radius: number;
 }
 
+export interface BusySoonZone {
+  id: string;
+  area: string;
+  city: string;
+  minutesUntilBusy: number;
+  expectedBoost: string;
+  reason: string;
+  coords: Coordinates;
+}
+
+export type NavProvider = 'uber' | 'google' | 'waze' | 'apple';
+
 export interface CompletedTrip {
   id: string;
   riderName: string;
@@ -129,6 +152,9 @@ export interface CompletedTrip {
   dropoffArea: string;
   completedAt: string;
   dateKey?: string;
+  isIntercity?: boolean;
+  isNoShowFee?: boolean;
+  tags?: string[];
 }
 
 export interface InboxMessage {
@@ -165,6 +191,7 @@ export interface DriverPreferences {
   comfort: boolean;
   uberPet: boolean;
   deliveries: boolean;
+  intercity: boolean;
   autoAccept: boolean;
   stopNewRequests: boolean;
   speedLimitAlerts: boolean;
@@ -175,4 +202,12 @@ export interface DriverPreferences {
   backgroundAppRefresh: boolean;
   nightMode: boolean;
   voiceNavigation: boolean;
+  showTrafficLayer: boolean;
+  showUKZones: boolean;
+  speedCameraWarnings: boolean;
+  showBusySoonZones: boolean;
+  navProvider: NavProvider;
+  dailyGoalGbp: number;
+  weeklyGoalGbp: number;
+  rushNav: boolean;
 }

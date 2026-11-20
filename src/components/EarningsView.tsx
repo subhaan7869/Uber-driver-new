@@ -17,8 +17,11 @@ import {
 import { CompletedTrip } from '../types/driver';
 import {
   formatWeekRangeLabel,
+  getAllTimeTotalFromLedger,
   getCurrentWeekDays,
   getLocalDateKey,
+  getOffsetDateKey,
+  getWeeklyTotalFromLedger,
 } from '../utils/earningsStorage';
 import { uberSounds } from '../utils/uberSounds';
 
@@ -37,6 +40,32 @@ interface EarningsViewProps {
   onBack: () => void;
   onCashOut: (amount: number, method: 'instant' | 'bank') => void;
   onOpenOpportunities: () => void;
+}
+
+function formatDynamicTripTime(
+  trip: CompletedTrip,
+  todayKey: string,
+  yesterdayKey: string
+): string {
+  const timePart = trip.completedAt.includes(',')
+    ? trip.completedAt.split(',').slice(1).join(',').trim()
+    : trip.completedAt;
+
+  if (!trip.dateKey || trip.dateKey === todayKey) {
+    return `Today, ${timePart}`;
+  }
+  if (trip.dateKey === yesterdayKey) {
+    return `Yesterday, ${timePart}`;
+  }
+  const parsed = new Date(`${trip.dateKey}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return trip.completedAt;
+  }
+  const dateLabel = parsed.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+  });
+  return `${dateLabel}, ${timePart}`;
 }
 
 export const EarningsView: React.FC<EarningsViewProps> = ({
@@ -61,13 +90,31 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
   const [showAllTrips, setShowAllTrips] = useState(false);
   const [expandedTripId, setExpandedTripId] = useState<string | null>(null);
   const [editingGoals, setEditingGoals] = useState(false);
+  const [weekOffset, setWeekOffset] = useState<number>(0);
+  const [tripDayFilter, setTripDayFilter] = useState<'all' | 'today' | 'yesterday'>('all');
+
+  const todayKey = getLocalDateKey();
+  const yesterdayKey = getOffsetDateKey(-1);
+  const yesterdayEarnings = dailyTotals[yesterdayKey] ?? 0;
+  const allSavedEarnings = useMemo(
+    () => getAllTimeTotalFromLedger(dailyTotals),
+    [dailyTotals]
+  );
 
   const weekDays = useMemo(() => {
-    return getCurrentWeekDays().map((d) => ({
+    return getCurrentWeekDays(weekOffset).map((d) => ({
       ...d,
       amount: dailyTotals[d.dateKey] ?? 0,
     }));
-  }, [dailyTotals]);
+  }, [dailyTotals, weekOffset]);
+
+  const displayedWeekTotal = useMemo(
+    () =>
+      weekOffset === 0
+        ? weeklyEarnings
+        : getWeeklyTotalFromLedger(dailyTotals, weekOffset),
+    [weekOffset, weeklyEarnings, dailyTotals]
+  );
 
   const todayIdx = Math.max(
     0,
@@ -76,7 +123,10 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
   const [selectedDayIdx, setSelectedDayIdx] = useState<number>(todayIdx);
 
   const maxDayAmount = Math.max(...weekDays.map((d) => d.amount), 25);
-  const weekRangeLabel = useMemo(() => formatWeekRangeLabel(), []);
+  const weekRangeLabel = useMemo(
+    () => formatWeekRangeLabel(weekOffset),
+    [weekOffset]
+  );
 
   const mask = (val: string) => (privacyHidden ? '£••••' : val);
 
@@ -99,10 +149,19 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
     }, 1500);
   };
 
-  const visibleTrips = showAllTrips ? completedTrips : completedTrips.slice(0, 6);
-  const selectedDay = weekDays[selectedDayIdx] || weekDays[todayIdx];
+  const filteredTrips = useMemo(() => {
+    if (tripDayFilter === 'today') {
+      return completedTrips.filter((t) => !t.dateKey || t.dateKey === todayKey);
+    }
+    if (tripDayFilter === 'yesterday') {
+      return completedTrips.filter((t) => t.dateKey === yesterdayKey);
+    }
+    return completedTrips;
+  }, [completedTrips, tripDayFilter, todayKey, yesterdayKey]);
 
-  const todayKey = useMemo(() => getLocalDateKey(), []);
+  const visibleTrips = showAllTrips ? filteredTrips : filteredTrips.slice(0, 6);
+  const selectedDay = weekDays[selectedDayIdx] || weekDays[todayIdx] || weekDays[0];
+
   const mileageStats = useMemo(() => {
     let todayMiles = 0;
     let totalMiles = 0;
@@ -158,26 +217,61 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
       </div>
 
       <div className="px-5 space-y-5 max-w-[680px] mx-auto">
-        {/* Weekly Earnings Card */}
+        {/* Weekly & Saved Earnings Card */}
         <div className="rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181E] p-5 shadow-2xs">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[14px] font-medium text-[#545454] dark:text-neutral-400">
-                {weekRangeLabel}
-              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWeekOffset((w) => w - 1);
+                    setSelectedDayIdx(6);
+                  }}
+                  className="w-7 h-7 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center transition-colors"
+                  aria-label="Previous week"
+                  title="Previous week"
+                >
+                  <ChevronLeft className="w-4 h-4 text-black dark:text-white" />
+                </button>
+                <p className="text-[14px] font-medium text-[#545454] dark:text-neutral-400">
+                  {weekRangeLabel}
+                  {weekOffset === -1 ? ' (Last week)' : weekOffset < -1 ? ` (${Math.abs(weekOffset)}w ago)` : ''}
+                </p>
+                {weekOffset < 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = Math.min(0, weekOffset + 1);
+                      setWeekOffset(next);
+                      setSelectedDayIdx(next === 0 ? todayIdx : 0);
+                    }}
+                    className="w-7 h-7 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center transition-colors"
+                    aria-label="Next week"
+                    title="Next week"
+                  >
+                    <ChevronRight className="w-4 h-4 text-black dark:text-white" />
+                  </button>
+                )}
+              </div>
               <p className="text-[36px] font-extrabold tracking-tight text-black dark:text-white mt-0.5 tabular-nums">
-                {mask(`£${weeklyEarnings.toFixed(2)}`)}
+                {mask(`£${displayedWeekTotal.toFixed(2)}`)}
               </p>
-              <div className="mt-2 inline-flex items-center gap-1.5 bg-[#05944F] text-white text-[13px] font-bold px-2.5 py-1 rounded-md tabular-nums">
-                <span>{mask(`£${todayEarnings.toFixed(2)}`)} today</span>
-                <span className="text-white/75 text-[11px] font-semibold">· Resets 00:00</span>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <div className="inline-flex items-center gap-1.5 bg-[#05944F] text-white text-[13px] font-bold px-2.5 py-1 rounded-md tabular-nums">
+                  <span>{mask(`£${todayEarnings.toFixed(2)}`)} today</span>
+                  <span className="text-white/75 text-[11px] font-semibold">· Home resets 00:00</span>
+                </div>
+                <div className="inline-flex items-center gap-1.5 bg-[#F3F3F3] dark:bg-white/10 text-black dark:text-white text-[12.5px] font-bold px-2.5 py-1 rounded-md tabular-nums">
+                  <span>Yesterday: {mask(`£${yesterdayEarnings.toFixed(2)}`)}</span>
+                </div>
               </div>
             </div>
-            <div className="text-right text-[12px] text-[#545454] dark:text-neutral-400 tabular-nums">
+            <div className="text-right text-[12px] text-[#545454] dark:text-neutral-400 tabular-nums shrink-0">
               <p className="font-semibold text-black dark:text-white">
                 {completedTrips.length} {completedTrips.length === 1 ? 'trip' : 'trips'} saved
               </p>
-              <p>Real daily ledger</p>
+              <p>Total: {mask(`£${allSavedEarnings.toFixed(2)}`)}</p>
             </div>
           </div>
 
@@ -224,7 +318,13 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
             </div>
             <div className="mt-3 flex items-center justify-between text-[13px] text-[#545454] dark:text-neutral-400 tabular-nums">
               <span>
-                {selectedDay.day} ({selectedDay.isToday ? 'Today' : selectedDay.dateKey}) real total
+                {selectedDay.day} (
+                {selectedDay.isToday
+                  ? 'Today'
+                  : selectedDay.isYesterday
+                  ? 'Yesterday'
+                  : selectedDay.dateKey}
+                ) saved total
               </span>
               <span className="font-bold text-black dark:text-white">
                 {mask(`£${selectedDay.amount.toFixed(2)}`)}
@@ -475,11 +575,11 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
           </div>
         </div>
 
-        {/* Recent Trips & Real Daily Activity */}
+        {/* Recent Trips & Saved Daily History */}
         <div>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-2.5 gap-2">
             <h2 className="text-[18px] font-bold text-black dark:text-white">Completed trips</h2>
-            {completedTrips.length > 6 && (
+            {filteredTrips.length > 6 && (
               <button
                 type="button"
                 onClick={() => setShowAllTrips((v) => !v)}
@@ -490,13 +590,40 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
             )}
           </div>
 
+          <div className="flex items-center gap-1.5 mb-3">
+            {(
+              [
+                { id: 'all', label: 'All saved' },
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+              ] as const
+            ).map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setTripDayFilter(f.id)}
+                className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition-colors ${
+                  tripDayFilter === f.id
+                    ? 'bg-black dark:bg-[#276EF1] text-white'
+                    : 'bg-[#F3F3F3] dark:bg-white/10 text-black dark:text-neutral-300 hover:bg-[#E5E5E5] dark:hover:bg-white/15'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
           {visibleTrips.length === 0 ? (
             <div className="p-6 rounded-2xl border border-dashed border-[#D8D8D8] dark:border-white/15 bg-[#FAFAFA] dark:bg-[#16181E] text-center">
               <p className="text-[14px] font-bold text-black dark:text-white">
-                No trips completed today yet
+                {tripDayFilter === 'yesterday'
+                  ? 'No trips logged yesterday'
+                  : tripDayFilter === 'today'
+                  ? 'No trips completed today yet'
+                  : 'No trips completed yet'}
               </p>
               <p className="text-[12.5px] text-[#545454] dark:text-neutral-400 mt-1">
-                Go online and complete a ride — your real earnings save automatically until midnight.
+                Main screen earnings reset at midnight, while this page keeps every past day saved.
               </p>
             </div>
           ) : (
@@ -534,7 +661,7 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
                         </p>
                         <p className="text-[12px] text-[#757575] dark:text-neutral-500 flex items-center gap-1 mt-0.5 tabular-nums">
                           <Clock className="w-3 h-3" />
-                          {trip.completedAt} · {trip.distanceMiles} mi
+                          {formatDynamicTripTime(trip, todayKey, yesterdayKey)} · {trip.distanceMiles} mi
                         </p>
                       </div>
                       <div className="text-right shrink-0">
@@ -692,4 +819,3 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
     </div>
   );
 };
-

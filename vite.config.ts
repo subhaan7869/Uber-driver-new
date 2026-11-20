@@ -6,10 +6,35 @@ import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
+  const buildId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
   return {
+    define: {
+      __APP_BUILD_ID__: JSON.stringify(buildId),
+    },
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 'vercel-version-manifest',
+        configureServer(server) {
+          server.middlewares.use('/version.json', (_req, res) => {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.end(JSON.stringify({buildId, builtAt: new Date().toISOString()}));
+          });
+        },
+        closeBundle(error?: Error) {
+          if (error) return;
+          const distDir = path.resolve(__dirname, 'dist');
+          if (fs.existsSync(distDir)) {
+            fs.writeFileSync(
+              path.join(distDir, 'version.json'),
+              JSON.stringify({buildId, builtAt: new Date().toISOString()}, null, 2)
+            );
+          }
+        },
+      },
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: [
@@ -53,9 +78,32 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,mp3}'],
-          globIgnores: ['**/assets/aistudio/**'],
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
+          globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff,woff2,mp3}'],
+          globIgnores: ['**/assets/aistudio/**', 'version.json'],
+          navigateFallbackDenylist: [/^\/version\.json/],
           runtimeCaching: [
+            {
+              urlPattern: /\/version\.json(\?.*)?$/i,
+              handler: 'NetworkOnly',
+            },
+            {
+              urlPattern: /^https:\/\/tiles\.openfreemap\.org\/.*/i,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'openfreemap-cache',
+                expiration: {
+                  maxEntries: 500,
+                  maxAgeSeconds: 60 * 60 * 24 * 7,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',

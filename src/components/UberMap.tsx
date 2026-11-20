@@ -1,18 +1,10 @@
-import React, { useMemo, useRef, useState } from 'react';
-import {
-  AlertTriangle,
-  Camera,
-  Car,
-  Clock,
-  Construction,
-  Flame,
-  GitMerge,
-  Layers,
-  MinusCircle,
-  Plane,
-  Route as RouteIcon,
-  ShieldAlert,
-} from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import * as maplibregl from 'maplibre-gl';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { Layers, Route as RouteIcon } from 'lucide-react';
+
+maplibregl.setWorkerUrl(maplibreWorkerUrl);
 import {
   BusySoonZone,
   Coordinates,
@@ -24,11 +16,11 @@ import {
   TripStage,
 } from '../types/driver';
 import {
+  mapToLatLng,
   nearestUKCity,
   UK_AIRPORT_MAP_PINS,
-  UK_CITIES,
   UK_SPEED_CAMERAS,
-  UK_SVG_PATHS,
+  UK_TRAFFIC_SEGMENTS_LATLNG,
 } from '../utils/ukGeo';
 
 interface UberMapProps {
@@ -59,23 +51,366 @@ interface UberMapProps {
   onToggleMapLayers?: () => void;
 }
 
-function buildSurgePolygonPoints(
-  cx: number,
-  cy: number,
-  radius: number,
+// Keyless OpenFreeMap Carto-style vector tiles (full global coverage, zero API key required)
+const OPENFREEMAP_DAY_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const OPENFREEMAP_NIGHT_STYLE = 'https://tiles.openfreemap.org/styles/dark';
+
+const INITIAL_DARK_STUB: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {},
+  layers: [
+    {
+      id: 'background',
+      type: 'background',
+      paint: { 'background-color': '#151C26' },
+    },
+  ],
+};
+
+let cachedLibertyStylePromise: Promise<maplibregl.StyleSpecification> | null = null;
+
+function fetchLibertyStyle(): Promise<maplibregl.StyleSpecification> {
+  if (!cachedLibertyStylePromise) {
+    cachedLibertyStylePromise = fetch(OPENFREEMAP_DAY_STYLE).then((res) => {
+      if (!res.ok) throw new Error(`Style fetch failed: ${res.status}`);
+      return res.json() as Promise<maplibregl.StyleSpecification>;
+    });
+  }
+  return cachedLibertyStylePromise;
+}
+
+async function getUberNightStyle(): Promise<maplibregl.StyleSpecification | string> {
+  try {
+    const base = await fetchLibertyStyle();
+    const cloned = JSON.parse(JSON.stringify(base)) as maplibregl.StyleSpecification;
+    cloned.layers = cloned.layers.map((layer) => {
+      const id = layer.id.toLowerCase();
+      const paint = { ...((layer.paint as Record<string, unknown>) || {}) };
+
+      if (layer.type === 'background') {
+        paint['background-color'] = '#151C26';
+      } else if (layer.type === 'raster') {
+        paint['raster-brightness-max'] = 0.25;
+        paint['raster-saturation'] = -0.65;
+      } else if (layer.type === 'fill') {
+        if (id.includes('water')) {
+          paint['fill-color'] = '#0C1522';
+        } else if (id.includes('park') || id.includes('wood') || id.includes('grass') || id.includes('cemetery')) {
+          paint['fill-color'] = '#162624';
+          if ('fill-outline-color' in paint) paint['fill-outline-color'] = '#1E3330';
+        } else if (id.includes('building')) {
+          paint['fill-color'] = '#1F2A3A';
+          if ('fill-outline-color' in paint) paint['fill-outline-color'] = '#2A394E';
+        } else if (id.includes('landuse') || id.includes('landcover') || id.includes('aeroway') || id.includes('road_area')) {
+          paint['fill-color'] = '#192230';
+        }
+      } else if (layer.type === 'fill-extrusion') {
+        paint['fill-extrusion-color'] = '#212D3E';
+        paint['fill-extrusion-opacity'] = 0.85;
+      } else if (layer.type === 'line') {
+        if (id.includes('water')) {
+          paint['line-color'] = '#0D1827';
+        } else if (id.includes('casing')) {
+          paint['line-color'] = '#0F1520';
+        } else if (id.includes('motorway')) {
+          paint['line-color'] = '#4E6586';
+        } else if (id.includes('trunk') || id.includes('primary') || id.includes('secondary') || id.includes('tertiary') || id.includes('link')) {
+          paint['line-color'] = '#3C4E67';
+        } else if (id.includes('rail')) {
+          paint['line-color'] = '#2B3544';
+        } else if (id.includes('boundary')) {
+          paint['line-color'] = '#475569';
+        } else if (id.includes('road') || id.includes('bridge') || id.includes('tunnel')) {
+          paint['line-color'] = '#2B3749';
+        }
+      } else if (layer.type === 'symbol') {
+        if ('text-color' in paint || id.includes('label') || id.includes('name') || id.includes('poi') || id.includes('place')) {
+          paint['text-color'] = '#CBD5E1';
+          paint['text-halo-color'] = '#0B111A';
+          paint['text-halo-width'] = 1.5;
+        }
+      }
+
+      return { ...layer, paint } as typeof layer;
+    });
+    return cloned;
+  } catch {
+    return OPENFREEMAP_NIGHT_STYLE;
+  }
+}
+
+type GeoJSONData = Parameters<maplibregl.GeoJSONSource['setData']>[0];
+type GeoJSONFeatureItem = {
+  type: 'Feature';
+  properties: Record<string, string | number | boolean>;
+  geometry:
+    | { type: 'Polygon'; coordinates: Array<Array<[number, number]>> }
+    | { type: 'LineString'; coordinates: Array<[number, number]> };
+};
+
+const EMPTY_FC: GeoJSONData = {
+  type: 'FeatureCollection',
+  features: [],
+};
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function createGeoCircleRing(
+  lat: number,
+  lng: number,
+  radiusMeters: number,
+  steps = 48
+): Array<[number, number]> {
+  const coords: Array<[number, number]> = [];
+  const earthRadius = 6378137;
+  const latRad = (lat * Math.PI) / 180;
+  const dLat = (radiusMeters / earthRadius) * (180 / Math.PI);
+  const dLng = dLat / Math.max(0.15, Math.cos(latRad));
+
+  for (let i = 0; i <= steps; i++) {
+    const theta = (i / steps) * Math.PI * 2;
+    coords.push([lng + Math.cos(theta) * dLng, lat + Math.sin(theta) * dLat]);
+  }
+  return coords;
+}
+
+function buildSurgePolygonRing(
+  center: Coordinates,
+  radiusPx: number,
   seed: number
-): string {
-  const sides = 8;
-  const pts: string[] = [];
+): Array<[number, number]> {
+  const sides = 12;
+  const pts: Array<[number, number]> = [];
   for (let i = 0; i < sides; i++) {
     const angle = (i / sides) * Math.PI * 2 + seed * 0.35;
     const wobble = 0.84 + 0.18 * Math.sin(i * 2.1 + seed * 1.7);
-    const r = radius * wobble;
-    const x = (cx + Math.cos(angle) * r).toFixed(1);
-    const y = (cy + Math.sin(angle) * r).toFixed(1);
-    pts.push(`${x},${y}`);
+    const r = radiusPx * wobble;
+    const x = center.x + Math.cos(angle) * r;
+    const y = center.y + Math.sin(angle) * r;
+    const ll = mapToLatLng({ x, y });
+    pts.push([ll.lng, ll.lat]);
   }
-  return pts.join(' ');
+  if (pts.length > 0) {
+    pts.push(pts[0]);
+  }
+  return pts;
+}
+
+function getReportBadgeHtml(category: MapReportPin['category']): string {
+  const styles: Record<
+    MapReportPin['category'],
+    { bg: string; text: string; symbol: string; round?: boolean }
+  > = {
+    traffic: { bg: '#FFC043', text: '#000000', symbol: '🚗' },
+    crash: { bg: '#FF6937', text: '#000000', symbol: '⚠' },
+    roadwork: { bg: '#FF8038', text: '#000000', symbol: '🚧' },
+    road_closed: { bg: '#E11900', text: '#FFFFFF', symbol: '⛔', round: true },
+    police: { bg: '#276EF1', text: '#FFFFFF', symbol: '🛡' },
+    lane_closure: { bg: '#E2E2E2', text: '#000000', symbol: '⑂', round: true },
+  };
+  const cfg = styles[category];
+  if (cfg.round) {
+    return `<div style="width:28px;height:28px;border-radius:9999px;background:${cfg.bg};color:${cfg.text};border:2px solid #fff;box-shadow:0 4px 10px rgba(0,0,0,0.28);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;">${cfg.symbol}</div>`;
+  }
+  return `<div style="width:28px;height:28px;transform:rotate(45deg);border-radius:6px;background:${cfg.bg};color:${cfg.text};border:2px solid #fff;box-shadow:0 4px 10px rgba(0,0,0,0.28);display:flex;align-items:center;justify-content:center;"><span style="transform:rotate(-45deg);font-size:12px;font-weight:800;">${cfg.symbol}</span></div>`;
+}
+
+function ensureVectorLayers(map: maplibregl.Map) {
+  const ensureSource = (id: string) => {
+    if (!map.getSource(id)) {
+      map.addSource(id, { type: 'geojson', data: EMPTY_FC });
+    }
+  };
+
+  ensureSource('uk-zones-source');
+  ensureSource('traffic-source');
+  ensureSource('surge-zones-source');
+  ensureSource('busy-soon-source');
+  ensureSource('full-route-source');
+  ensureSource('dest-route-source');
+  ensureSource('active-route-source');
+
+  if (!map.getLayer('uk-zones-fill')) {
+    map.addLayer({
+      id: 'uk-zones-fill',
+      type: 'fill',
+      source: 'uk-zones-source',
+      paint: {
+        'fill-color': ['get', 'fillColor'],
+        'fill-opacity': ['get', 'fillOpacity'],
+      },
+    });
+  }
+
+  if (!map.getLayer('uk-zones-line-solid')) {
+    map.addLayer({
+      id: 'uk-zones-line-solid',
+      type: 'line',
+      source: 'uk-zones-source',
+      filter: ['==', ['get', 'dashed'], false],
+      paint: {
+        'line-color': ['get', 'strokeColor'],
+        'line-width': ['get', 'lineWidth'],
+      },
+    });
+  }
+
+  if (!map.getLayer('uk-zones-line-dashed')) {
+    map.addLayer({
+      id: 'uk-zones-line-dashed',
+      type: 'line',
+      source: 'uk-zones-source',
+      filter: ['==', ['get', 'dashed'], true],
+      paint: {
+        'line-color': ['get', 'strokeColor'],
+        'line-width': ['get', 'lineWidth'],
+        'line-dasharray': [4, 3],
+      },
+    });
+  }
+
+  if (!map.getLayer('traffic-line')) {
+    map.addLayer({
+      id: 'traffic-line',
+      type: 'line',
+      source: 'traffic-source',
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': ['get', 'color'],
+        'line-width': 5,
+        'line-opacity': 0.84,
+      },
+    });
+  }
+
+  if (!map.getLayer('surge-zones-fill')) {
+    map.addLayer({
+      id: 'surge-zones-fill',
+      type: 'fill',
+      source: 'surge-zones-source',
+      paint: {
+        'fill-color': ['get', 'fillColor'],
+        'fill-opacity': ['get', 'fillOpacity'],
+      },
+    });
+  }
+
+  if (!map.getLayer('surge-zones-outline')) {
+    map.addLayer({
+      id: 'surge-zones-outline',
+      type: 'line',
+      source: 'surge-zones-source',
+      filter: ['==', ['get', 'hasStroke'], true],
+      paint: {
+        'line-color': ['get', 'fillColor'],
+        'line-width': 1.5,
+        'line-opacity': ['get', 'strokeOpacity'],
+      },
+    });
+  }
+
+  if (!map.getLayer('busy-soon-fill')) {
+    map.addLayer({
+      id: 'busy-soon-fill',
+      type: 'fill',
+      source: 'busy-soon-source',
+      paint: {
+        'fill-color': '#F59E0B',
+        'fill-opacity': ['get', 'fillOpacity'],
+      },
+    });
+  }
+
+  if (!map.getLayer('busy-soon-line')) {
+    map.addLayer({
+      id: 'busy-soon-line',
+      type: 'line',
+      source: 'busy-soon-source',
+      paint: {
+        'line-color': '#F59E0B',
+        'line-width': 1.6,
+        'line-dasharray': [3, 3],
+      },
+    });
+  }
+
+  if (!map.getLayer('full-route-line')) {
+    map.addLayer({
+      id: 'full-route-line',
+      type: 'line',
+      source: 'full-route-source',
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': ['get', 'color'],
+        'line-width': 6,
+        'line-opacity': 0.2,
+      },
+    });
+  }
+
+  if (!map.getLayer('dest-route-line')) {
+    map.addLayer({
+      id: 'dest-route-line',
+      type: 'line',
+      source: 'dest-route-source',
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': '#276EF1',
+        'line-width': 3.5,
+        'line-dasharray': [3, 3],
+        'line-opacity': 0.9,
+      },
+    });
+  }
+
+  if (!map.getLayer('active-route-casing')) {
+    map.addLayer({
+      id: 'active-route-casing',
+      type: 'line',
+      source: 'active-route-source',
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': ['get', 'casingColor'],
+        'line-width': 11,
+        'line-opacity': 1,
+      },
+    });
+  }
+
+  if (!map.getLayer('active-route-core')) {
+    map.addLayer({
+      id: 'active-route-core',
+      type: 'line',
+      source: 'active-route-source',
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round',
+      },
+      paint: {
+        'line-color': ['get', 'mainColor'],
+        'line-width': 6,
+        'line-opacity': 0.96,
+      },
+    });
+  }
 }
 
 export const UberMap: React.FC<UberMapProps> = ({
@@ -105,227 +440,859 @@ export const UberMap: React.FC<UberMapProps> = ({
   onSelectBusySoonZone,
   onToggleMapLayers,
 }) => {
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(compact ? 0.9 : 1.05);
-  const [isPanning, setIsPanning] = useState(false);
-  const [navCamera3D, setNavCamera3D] = useState(true);
-  const [routeOverviewMode, setRouteOverviewMode] = useState(false);
-  const lastPointerRef = useRef({ x: 0, y: 0 });
-  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const lastPinchDistRef = useRef<number | null>(null);
-  const lastRecenterRef = useRef(recenterSignal);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
 
-  const clampZoom = (value: number) =>
-    Math.max(0.65, Math.min(4.8, Number(value.toFixed(2))));
+  const zoneMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const routeMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const pinMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const driverMarkerRef = useRef<maplibregl.Marker | null>(null);
 
-  const clampPan = (x: number, y: number, currentZoom: number) => {
-    const limit = Math.round(440 * Math.max(1, currentZoom));
-    return {
-      x: Math.max(-limit, Math.min(limit, x)),
-      y: Math.max(-limit, Math.min(limit, y)),
-    };
-  };
-
-  if (lastRecenterRef.current !== recenterSignal) {
-    lastRecenterRef.current = recenterSignal;
-    if (pan.x !== 0 || pan.y !== 0) {
-      setPan({ x: 0, y: 0 });
-    }
-    const isIntercityActive = Boolean((activeTrip || pendingOffer)?.isIntercity);
-    setZoom(tripStage !== 'idle' ? (isIntercityActive ? 1.55 : 2.75) : 1.05);
-  }
-
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('button')) return;
-    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    e.currentTarget.setPointerCapture(e.pointerId);
-
-    if (activePointersRef.current.size === 1) {
-      setIsPanning(true);
-      lastPointerRef.current = { x: e.clientX, y: e.clientY };
-      lastPinchDistRef.current = null;
-    } else if (activePointersRef.current.size === 2) {
-      setIsPanning(true);
-      const pts = Array.from(activePointersRef.current.values());
-      lastPinchDistRef.current = Math.hypot(
-        pts[0].x - pts[1].x,
-        pts[0].y - pts[1].y
-      );
-    }
-  };
-
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!activePointersRef.current.has(e.pointerId)) return;
-    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-    if (activePointersRef.current.size === 2) {
-      const pts = Array.from(activePointersRef.current.values());
-      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      if (lastPinchDistRef.current && lastPinchDistRef.current > 0) {
-        const ratio = dist / lastPinchDistRef.current;
-        setZoom((z) => clampZoom(z * ratio));
-      }
-      lastPinchDistRef.current = dist;
-      return;
-    }
-
-    if (!isPanning || activePointersRef.current.size !== 1) return;
-    const dx = e.clientX - lastPointerRef.current.x;
-    const dy = e.clientY - lastPointerRef.current.y;
-    lastPointerRef.current = { x: e.clientX, y: e.clientY };
-    setPan((prev) => clampPan(prev.x + dx, prev.y + dy, zoom));
-  };
-
-  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    activePointersRef.current.delete(e.pointerId);
-    if (activePointersRef.current.size < 2) {
-      lastPinchDistRef.current = null;
-    }
-    if (activePointersRef.current.size === 1) {
-      const remaining = Array.from(activePointersRef.current.values())[0];
-      lastPointerRef.current = { x: remaining.x, y: remaining.y };
-      setIsPanning(true);
-    } else if (activePointersRef.current.size === 0) {
-      setIsPanning(false);
-    }
-  };
-
-  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (compact) return;
-    const delta = -e.deltaY * 0.0022;
-    setZoom((z) => clampZoom(z + delta));
-  };
-
-  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('button')) return;
-    setZoom((z) => (z >= 2.8 ? 1.05 : clampZoom(z + 0.55)));
-  };
-
-  const routePoints = useMemo(() => {
-    const trip = activeTrip || pendingOffer;
-    if (!trip) return null;
-
-    const isDropoff =
-      tripStage === 'enroute' || tripStage === 'stop_wait' || tripStage === 'dropoff_arrived';
-    const endCoord = isDropoff ? trip.dropoffCoords : trip.pickupCoords;
-    const pinLabel = isDropoff
-      ? trip.isIntercity
-        ? `${trip.dropoffArea.split('·')[0].trim()} (Intercity)`
-        : 'Dropoff'
-      : `Pickup ${trip.riderName}`;
-
-    const fullPathD =
-      fullRoutePolyline && fullRoutePolyline.length >= 2
-        ? fullRoutePolyline
-            .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x} ${p.y}`)
-            .join(' ')
-        : null;
-
-    if (routePolyline && routePolyline.length >= 2) {
-      const dPath = [driverPos, ...routePolyline.slice(1)]
-        .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x} ${p.y}`)
-        .join(' ');
-      return {
-        start: driverPos,
-        end: routePolyline[routePolyline.length - 1] ?? endCoord,
-        stop: trip.stopCoords ?? null,
-        stopLabel: trip.stopAddress ? 'Stop 1' : null,
-        pathD: dPath,
-        fullPathD,
-        pinLabel,
-        isDropoff,
-        isIntercity: Boolean(trip.isIntercity),
-      };
-    }
-
-    const midX = (driverPos.x + endCoord.x) / 2 + (isDropoff ? 6 : -4);
-    const midY = (driverPos.y + endCoord.y) / 2 - (isDropoff ? 5 : 0);
-    return {
-      start: driverPos,
-      end: endCoord,
-      stop: trip.stopCoords ?? null,
-      stopLabel: trip.stopAddress ? 'Stop 1' : null,
-      pathD: `M ${driverPos.x} ${driverPos.y} Q ${midX} ${midY} ${endCoord.x} ${endCoord.y}`,
-      fullPathD,
-      pinLabel,
-      isDropoff,
-      isIntercity: Boolean(trip.isIntercity),
-    };
-  }, [activeTrip, pendingOffer, tripStage, driverPos, routePolyline, fullRoutePolyline]);
-
-  const renderReportIcon = (category: MapReportPin['category']) => {
-    switch (category) {
-      case 'traffic':
-        return (
-          <div className="w-7 h-7 rotate-45 rounded-md bg-[#FFC043] border-2 border-white shadow-md flex items-center justify-center">
-            <Car className="w-3.5 h-3.5 text-black -rotate-45" />
-          </div>
-        );
-      case 'crash':
-        return (
-          <div className="w-7 h-7 rotate-45 rounded-md bg-[#FF6937] border-2 border-white shadow-md flex items-center justify-center">
-            <AlertTriangle className="w-3.5 h-3.5 text-black -rotate-45" />
-          </div>
-        );
-      case 'roadwork':
-        return (
-          <div className="w-7 h-7 rotate-45 rounded-md bg-[#FF8038] border-2 border-white shadow-md flex items-center justify-center">
-            <Construction className="w-3.5 h-3.5 text-black -rotate-45" />
-          </div>
-        );
-      case 'road_closed':
-        return (
-          <div className="w-7 h-7 rounded-full bg-[#E11900] border-2 border-white shadow-md flex items-center justify-center">
-            <MinusCircle className="w-4 h-4 text-white" />
-          </div>
-        );
-      case 'police':
-        return (
-          <div className="w-7 h-7 rotate-45 rounded-md bg-[#276EF1] border-2 border-white shadow-md flex items-center justify-center">
-            <ShieldAlert className="w-3.5 h-3.5 text-white -rotate-45" />
-          </div>
-        );
-      case 'lane_closure':
-        return (
-          <div className="w-7 h-7 rounded-full bg-[#E2E2E2] border-2 border-white shadow-md flex items-center justify-center">
-            <GitMerge className="w-3.5 h-3.5 text-black" />
-          </div>
-        );
-    }
-  };
+  const [styleEpoch, setStyleEpoch] = useState<number>(0);
+  const [zoomLevel, setZoomLevel] = useState<number>(compact ? 11 : 13);
+  const [hasManualPan, setHasManualPan] = useState<boolean>(false);
+  const [navCamera3D, setNavCamera3D] = useState<boolean>(true);
+  const [routeOverviewMode, setRouteOverviewMode] = useState<boolean>(false);
 
   const isNavigatingActive = tripStage === 'pickup' || tripStage === 'enroute';
   const isNav3DActive = !compact && isNavigatingActive && navCamera3D && !routeOverviewMode;
-  const hasManualPan = Math.abs(pan.x) > 10 || Math.abs(pan.y) > 10;
+  const isIntercityActive = Boolean((activeTrip || pendingOffer)?.isIntercity);
+  const defaultZoom = tripStage !== 'idle' ? (isIntercityActive ? 11.5 : 15.75) : 13;
 
-  const cameraFollowWeight = isNavigatingActive ? (routeOverviewMode ? 0.65 : 1.0) : zoom > 1.3 ? 0.85 : 0.22;
-  const offsetX = (500 - driverPos.x) * cameraFollowWeight;
-  const offsetY = (500 - driverPos.y) * cameraFollowWeight;
-
-  const mapRotationDeg = isNav3DActive ? -driverHeading : 0;
-  const counterRotationDeg = -mapRotationDeg;
-
-  const defaultZoom =
-    tripStage !== 'idle'
-      ? (activeTrip || pendingOffer)?.isIntercity
-        ? 1.55
-        : 2.75
-      : 1.05;
   const nearCityLabel = useMemo(() => nearestUKCity(driverPos), [driverPos]);
-  const invScale = Math.max(0.36, Math.min(1.15, 1 / Math.sqrt(zoom)));
+
+  const onSelectSurgeRef = useRef(onSelectSurgeZone);
+  onSelectSurgeRef.current = onSelectSurgeZone;
+  const onSelectBusySoonRef = useRef(onSelectBusySoonZone);
+  onSelectBusySoonRef.current = onSelectBusySoonZone;
+
+  const manualPanRef = useRef(hasManualPan);
+  manualPanRef.current = hasManualPan;
+
+  const currentNightModeRef = useRef(nightMode);
+  const driverHeadingRef = useRef(driverHeading);
+  driverHeadingRef.current = driverHeading;
+
+  const prevTripStageRef = useRef(tripStage);
+  const prevRecenterRef = useRef(recenterSignal);
+  const prevNav3DRef = useRef(isNav3DActive);
+  const isEasingUntilRef = useRef<number>(0);
+
+  const styleReqIdRef = useRef(0);
+
+  // Initialize MapLibre GL JS World Map with keyless OpenFreeMap Carto-style vector basemap
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+
+    const initialLatLng = mapToLatLng(driverPos);
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style: nightMode ? INITIAL_DARK_STUB : OPENFREEMAP_DAY_STYLE,
+      center: [initialLatLng.lng, initialLatLng.lat],
+      zoom: compact ? 11 : 13,
+      minZoom: 1.5,
+      maxZoom: 19,
+      attributionControl: compact ? false : { compact: true },
+      interactive: !compact,
+      dragRotate: !compact,
+      pitchWithRotate: !compact,
+    });
+
+    mapRef.current = map;
+    currentNightModeRef.current = nightMode;
+
+    if (nightMode) {
+      const reqId = ++styleReqIdRef.current;
+      getUberNightStyle().then((nightSpec) => {
+        if (mapRef.current === map && styleReqIdRef.current === reqId) {
+          map.setStyle(nightSpec);
+        }
+      });
+    }
+
+    map.on('error', (evt) => {
+      if (evt?.error) {
+        console.warn('[UberMap] MapLibre error:', evt.error);
+      }
+    });
+
+    map.on('style.load', () => {
+      ensureVectorLayers(map);
+      setStyleEpoch((v) => v + 1);
+    });
+
+    map.on('dragstart', () => {
+      setHasManualPan(true);
+    });
+
+    map.on('zoomend', () => {
+      setZoomLevel(Number(map.getZoom().toFixed(2)));
+    });
+
+    map.on('rotate', () => {
+      const el = driverMarkerRef.current?.getElement();
+      const rotator = el?.querySelector('[data-driver-rotator]') as HTMLElement | null;
+      if (rotator) {
+        rotator.style.transform = `rotate(${driverHeadingRef.current - map.getBearing()}deg)`;
+      }
+    });
+
+    const ro = new ResizeObserver(() => {
+      map.resize();
+    });
+    ro.observe(containerRef.current);
+
+    return () => {
+      styleReqIdRef.current += 1;
+      ro.disconnect();
+      zoneMarkersRef.current.forEach((m) => m.remove());
+      routeMarkersRef.current.forEach((m) => m.remove());
+      pinMarkersRef.current.forEach((m) => m.remove());
+      driverMarkerRef.current?.remove();
+      zoneMarkersRef.current = [];
+      routeMarkersRef.current = [];
+      pinMarkersRef.current = [];
+      driverMarkerRef.current = null;
+      map.remove();
+      mapRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Seamlessly switch OpenFreeMap Liberty (day) <-> High-contrast Uber Dark (night)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (currentNightModeRef.current === nightMode) return;
+    currentNightModeRef.current = nightMode;
+    const reqId = ++styleReqIdRef.current;
+    if (nightMode) {
+      getUberNightStyle().then((nightSpec) => {
+        if (mapRef.current === map && styleReqIdRef.current === reqId) {
+          map.setStyle(nightSpec);
+        }
+      });
+    } else {
+      map.setStyle(OPENFREEMAP_DAY_STYLE);
+    }
+  }, [nightMode]);
+
+  // Handle recenter signal, tripStage transitions & 2D/3D camera toggle
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const stageChanged = prevTripStageRef.current !== tripStage;
+    const recenterChanged = prevRecenterRef.current !== recenterSignal;
+    const nav3DChanged = prevNav3DRef.current !== isNav3DActive;
+    prevTripStageRef.current = tripStage;
+    prevRecenterRef.current = recenterSignal;
+    prevNav3DRef.current = isNav3DActive;
+
+    if (recenterChanged || stageChanged) {
+      setHasManualPan(false);
+      setRouteOverviewMode(false);
+      const ll = mapToLatLng(driverPos);
+      const targetZoom = tripStage !== 'idle' ? (isIntercityActive ? 11.5 : 15.75) : 13;
+      isEasingUntilRef.current = performance.now() + 480;
+      map.easeTo({
+        center: [ll.lng, ll.lat],
+        zoom: targetZoom,
+        pitch: isNav3DActive ? 52 : 0,
+        bearing: isNav3DActive ? driverHeading : 0,
+        padding: isNav3DActive
+          ? { top: 210, bottom: 110, left: 0, right: 0 }
+          : { top: 0, bottom: 0, left: 0, right: 0 },
+        duration: 450,
+      });
+    } else if (nav3DChanged && !manualPanRef.current && !routeOverviewMode) {
+      const ll = mapToLatLng(driverPos);
+      isEasingUntilRef.current = performance.now() + 410;
+      map.easeTo({
+        center: [ll.lng, ll.lat],
+        pitch: isNav3DActive ? 52 : 0,
+        bearing: isNav3DActive ? driverHeading : 0,
+        padding: isNav3DActive
+          ? { top: 210, bottom: 110, left: 0, right: 0 }
+          : { top: 0, bottom: 0, left: 0, right: 0 },
+        duration: 380,
+      });
+    }
+  }, [
+    recenterSignal,
+    tripStage,
+    driverPos,
+    driverHeading,
+    isIntercityActive,
+    isNav3DActive,
+    routeOverviewMode,
+  ]);
+
+  // Smooth camera tracking along real streets during active navigation
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (manualPanRef.current) return;
+
+    if (routeOverviewMode && (fullRoutePolyline?.length || routePolyline?.length)) {
+      const pts = (fullRoutePolyline && fullRoutePolyline.length >= 2
+        ? fullRoutePolyline
+        : routePolyline || []
+      ).map((p) => {
+        const ll = mapToLatLng(p);
+        return [ll.lng, ll.lat] as [number, number];
+      });
+      if (pts.length >= 2) {
+        const bounds = new maplibregl.LngLatBounds(pts[0], pts[0]);
+        pts.forEach((pt) => bounds.extend(pt));
+        isEasingUntilRef.current = performance.now() + 480;
+        map.fitBounds(bounds, {
+          padding: 72,
+          maxZoom: 15,
+          pitch: 0,
+          bearing: 0,
+          duration: 450,
+        });
+      }
+      return;
+    }
+
+    if (performance.now() < isEasingUntilRef.current) return;
+
+    if (isNavigatingActive) {
+      const ll = mapToLatLng(driverPos);
+      map.jumpTo({
+        center: [ll.lng, ll.lat],
+        bearing: isNav3DActive ? driverHeading : 0,
+        pitch: isNav3DActive ? 52 : 0,
+        padding: isNav3DActive
+          ? { top: 210, bottom: 110, left: 0, right: 0 }
+          : { top: 0, bottom: 0, left: 0, right: 0 },
+      });
+    } else if (compact) {
+      const ll = mapToLatLng(driverPos);
+      map.jumpTo({ center: [ll.lng, ll.lat], pitch: 0, bearing: 0 });
+    }
+  }, [
+    driverPos,
+    driverHeading,
+    isNavigatingActive,
+    isNav3DActive,
+    routeOverviewMode,
+    fullRoutePolyline,
+    routePolyline,
+    compact,
+  ]);
+
+  // Update London Zones, Traffic Corridors, Surge Heat Polygons & Busy Soon Rings
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || styleEpoch === 0) return;
+    ensureVectorLayers(map);
+
+    zoneMarkersRef.current.forEach((m) => m.remove());
+    zoneMarkersRef.current = [];
+
+    // 1. UK Zones (ULEZ & Congestion Charge)
+    const zonesSource = map.getSource('uk-zones-source') as maplibregl.GeoJSONSource | undefined;
+    if (zonesSource) {
+      if (showUKZones) {
+        const ulezRing = createGeoCircleRing(51.5074, -0.1278, 16500);
+        const ccRing = createGeoCircleRing(51.509, -0.128, 2600);
+        zonesSource.setData({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {
+                fillColor: '#05944F',
+                fillOpacity: nightMode ? 0.08 : 0.06,
+                strokeColor: '#05944F',
+                lineWidth: 1.5,
+                dashed: true,
+              },
+              geometry: { type: 'Polygon', coordinates: [ulezRing] },
+            },
+            {
+              type: 'Feature',
+              properties: {
+                fillColor: '#E11900',
+                fillOpacity: nightMode ? 0.13 : 0.09,
+                strokeColor: '#E11900',
+                lineWidth: 1.8,
+                dashed: false,
+              },
+              geometry: { type: 'Polygon', coordinates: [ccRing] },
+            },
+          ],
+        });
+
+        if (zoomLevel >= 11) {
+          const ccEl = document.createElement('div');
+          ccEl.innerHTML = `<div style="background:#E11900;color:#fff;font-size:9px;font-weight:800;padding:1px 5px;border-radius:4px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.25);pointer-events:none;">CC</div>`;
+          const ccMarker = new maplibregl.Marker({ element: ccEl, anchor: 'center' })
+            .setLngLat([-0.128, 51.524])
+            .addTo(map);
+          zoneMarkersRef.current.push(ccMarker);
+        }
+      } else {
+        zonesSource.setData(EMPTY_FC);
+      }
+    }
+
+    // 2. Traffic Corridors
+    const trafficSource = map.getSource('traffic-source') as maplibregl.GeoJSONSource | undefined;
+    if (trafficSource) {
+      if (showTrafficLayer) {
+        trafficSource.setData({
+          type: 'FeatureCollection',
+          features: UK_TRAFFIC_SEGMENTS_LATLNG.map((seg) => ({
+            type: 'Feature',
+            properties: {
+              color:
+                seg.level === 'heavy'
+                  ? '#E11900'
+                  : seg.level === 'moderate'
+                  ? '#F59E0B'
+                  : '#05944F',
+            },
+            geometry: {
+              type: 'LineString',
+              coordinates: seg.points.map(([lat, lng]) => [lng, lat]),
+            },
+          })),
+        });
+      } else {
+        trafficSource.setData(EMPTY_FC);
+      }
+    }
+
+    // 3. Surge Heat Polygons
+    const surgeSource = map.getSource('surge-zones-source') as maplibregl.GeoJSONSource | undefined;
+    if (surgeSource) {
+      if (showSurgeHeatmap) {
+        const features: GeoJSONFeatureItem[] = [];
+        surgeZones.forEach((zone, idx) => {
+          if (zone.kind === 'busy' || zone.kind === 'event') return;
+          const fillColor =
+            zone.intensity === 'high'
+              ? '#D91B5C'
+              : zone.intensity === 'medium'
+              ? '#A020F0'
+              : '#F59E0B';
+          features.push(
+            {
+              type: 'Feature',
+              properties: {
+                fillColor,
+                fillOpacity: nightMode ? 0.25 : 0.19,
+                hasStroke: false,
+                strokeOpacity: 0,
+              },
+              geometry: {
+                type: 'Polygon',
+                coordinates: [buildSurgePolygonRing(zone.coords, zone.radius, idx + 1)],
+              },
+            },
+            {
+              type: 'Feature',
+              properties: {
+                fillColor,
+                fillOpacity: nightMode ? 0.34 : 0.25,
+                hasStroke: true,
+                strokeOpacity: nightMode ? 0.5 : 0.38,
+              },
+              geometry: {
+                type: 'Polygon',
+                coordinates: [buildSurgePolygonRing(zone.coords, zone.radius * 0.56, idx + 4)],
+              },
+            }
+          );
+        });
+        surgeSource.setData({ type: 'FeatureCollection', features });
+      } else {
+        surgeSource.setData(EMPTY_FC);
+      }
+    }
+
+    // 4. Busy Soon Rings
+    const busySoonSource = map.getSource('busy-soon-source') as maplibregl.GeoJSONSource | undefined;
+    if (busySoonSource) {
+      if (showBusySoonZones && tripStage === 'idle') {
+        busySoonSource.setData({
+          type: 'FeatureCollection',
+          features: busySoonZones.map((bz) => {
+            const ll = mapToLatLng(bz.coords);
+            return {
+              type: 'Feature',
+              properties: {
+                fillOpacity: nightMode ? 0.1 : 0.12,
+              },
+              geometry: {
+                type: 'Polygon',
+                coordinates: [createGeoCircleRing(ll.lat, ll.lng, 1900)],
+              },
+            };
+          }),
+        });
+      } else {
+        busySoonSource.setData(EMPTY_FC);
+      }
+    }
+  }, [
+    styleEpoch,
+    showUKZones,
+    showTrafficLayer,
+    showSurgeHeatmap,
+    showBusySoonZones,
+    surgeZones,
+    busySoonZones,
+    tripStage,
+    nightMode,
+    zoomLevel,
+  ]);
+
+  // Update Route Lines, Stop Pin, Endpoint Badge & Destination Line
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || styleEpoch === 0) return;
+    ensureVectorLayers(map);
+
+    routeMarkersRef.current.forEach((m) => m.remove());
+    routeMarkersRef.current = [];
+
+    const fullSource = map.getSource('full-route-source') as maplibregl.GeoJSONSource | undefined;
+    const activeSource = map.getSource('active-route-source') as maplibregl.GeoJSONSource | undefined;
+    const destSource = map.getSource('dest-route-source') as maplibregl.GeoJSONSource | undefined;
+
+    const trip = activeTrip || pendingOffer;
+    if (trip) {
+      const isDropoff =
+        tripStage === 'enroute' || tripStage === 'stop_wait' || tripStage === 'dropoff_arrived';
+      const endCoord = isDropoff ? trip.dropoffCoords : trip.pickupCoords;
+      const pinLabel = isDropoff
+        ? trip.isIntercity
+          ? `${trip.dropoffArea.split('·')[0].trim()} (Intercity)`
+          : 'Dropoff'
+        : `Pickup ${trip.riderName}`;
+
+      if (fullSource) {
+        if (fullRoutePolyline && fullRoutePolyline.length >= 2) {
+          fullSource.setData({
+            type: 'FeatureCollection',
+            features: [
+              {
+                type: 'Feature',
+                properties: { color: nightMode ? '#FFFFFF' : '#0F172A' },
+                geometry: {
+                  type: 'LineString',
+                  coordinates: fullRoutePolyline.map((p) => {
+                    const ll = mapToLatLng(p);
+                    return [ll.lng, ll.lat];
+                  }),
+                },
+              },
+            ],
+          });
+        } else {
+          fullSource.setData(EMPTY_FC);
+        }
+      }
+
+      const activePts: Coordinates[] =
+        routePolyline && routePolyline.length >= 2
+          ? [driverPos, ...routePolyline.slice(1)]
+          : [driverPos, endCoord];
+
+      const activeLngLats = activePts.map((p) => {
+        const ll = mapToLatLng(p);
+        return [ll.lng, ll.lat] as [number, number];
+      });
+
+      const isIntercity = Boolean(trip.isIntercity);
+      const mainColor = isIntercity
+        ? '#9333EA'
+        : isDropoff
+        ? nightMode
+          ? '#5B9BF8'
+          : '#000000'
+        : '#276EF1';
+      const casingColor = isIntercity
+        ? 'rgba(122,28,121,0.34)'
+        : nightMode
+        ? 'rgba(91,155,248,0.34)'
+        : 'rgba(0,0,0,0.22)';
+
+      if (activeSource) {
+        activeSource.setData({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: { mainColor, casingColor },
+              geometry: { type: 'LineString', coordinates: activeLngLats },
+            },
+          ],
+        });
+      }
+
+      if (destSource) destSource.setData(EMPTY_FC);
+
+      if (trip.stopCoords) {
+        const stopLL = mapToLatLng(trip.stopCoords);
+        const stopEl = document.createElement('div');
+        stopEl.style.pointerEvents = 'none';
+        stopEl.innerHTML = `
+          <div style="position:relative;display:flex;flex-direction:column;align-items:center;">
+            <div style="position:absolute;bottom:20px;background:#F59E0B;color:#000;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:6px;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,0.25);">Stop 1</div>
+            <div style="width:14px;height:14px;border-radius:9999px;background:#F59E0B;border:2.5px solid #FFFFFF;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>
+          </div>
+        `;
+        routeMarkersRef.current.push(
+          new maplibregl.Marker({ element: stopEl, anchor: 'center' })
+            .setLngLat([stopLL.lng, stopLL.lat])
+            .addTo(map)
+        );
+      }
+
+      const endLngLat = activeLngLats[activeLngLats.length - 1];
+      const dotColor = isIntercity ? '#9333EA' : isDropoff ? '#000000' : '#05944F';
+      const endEl = document.createElement('div');
+      endEl.style.pointerEvents = 'none';
+      endEl.innerHTML = `
+        <div style="position:relative;display:flex;flex-direction:column;align-items:center;">
+          <div style="position:absolute;bottom:22px;background:${
+            isIntercity ? '#7A1C79' : '#000000'
+          };color:#fff;font-size:11px;font-weight:700;padding:3px 9px;border-radius:8px;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.3);">${escapeHtml(
+            pinLabel
+          )}</div>
+          <div style="width:16px;height:16px;border-radius:9999px;background:${dotColor};border:2.5px solid #FFFFFF;box-shadow:0 2px 8px rgba(0,0,0,0.34);"></div>
+        </div>
+      `;
+      routeMarkersRef.current.push(
+        new maplibregl.Marker({ element: endEl, anchor: 'center' })
+          .setLngLat(endLngLat)
+          .addTo(map)
+      );
+    } else if (destination.active) {
+      if (fullSource) fullSource.setData(EMPTY_FC);
+      if (activeSource) activeSource.setData(EMPTY_FC);
+
+      const startLL = mapToLatLng(driverPos);
+      const destLL = mapToLatLng(destination.coords);
+      if (destSource) {
+        destSource.setData({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: [
+                  [startLL.lng, startLL.lat],
+                  [destLL.lng, destLL.lat],
+                ],
+              },
+            },
+          ],
+        });
+      }
+
+      const destEl = document.createElement('div');
+      destEl.style.pointerEvents = 'none';
+      destEl.innerHTML = `<div style="width:14px;height:14px;border-radius:9999px;background:#276EF1;border:2.5px solid #FFFFFF;box-shadow:0 2px 8px rgba(0,0,0,0.32);"></div>`;
+      routeMarkersRef.current.push(
+        new maplibregl.Marker({ element: destEl, anchor: 'center' })
+          .setLngLat([destLL.lng, destLL.lat])
+          .addTo(map)
+      );
+    } else {
+      if (fullSource) fullSource.setData(EMPTY_FC);
+      if (activeSource) activeSource.setData(EMPTY_FC);
+      if (destSource) destSource.setData(EMPTY_FC);
+    }
+  }, [
+    styleEpoch,
+    activeTrip,
+    pendingOffer,
+    tripStage,
+    routePolyline,
+    fullRoutePolyline,
+    driverPos,
+    destination,
+    nightMode,
+  ]);
+
+  // Render Interactive Surge Pills, Busy Soon Chips, Airports, Speed Cameras & Map Reports
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    pinMarkersRef.current.forEach((m) => m.remove());
+    pinMarkersRef.current = [];
+
+    if (tripStage === 'idle') {
+      surgeZones.forEach((zone) => {
+        const ll = mapToLatLng(zone.coords);
+        const bg =
+          zone.kind === 'surge'
+            ? '#7A1C79'
+            : zone.kind === 'wait'
+            ? zone.intensity === 'high'
+              ? '#D6223A'
+              : '#DE8300'
+            : zone.kind === 'event'
+            ? '#276EF1'
+            : '#8F9AA6';
+        const prefix =
+          zone.kind === 'wait'
+            ? zone.intensity === 'high'
+              ? '» '
+              : '› '
+            : zone.kind === 'event'
+            ? '🔥 '
+            : '';
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.style.cssText = `background:${bg};color:#fff;padding:2px 9px;border-radius:9999px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,0.28);border:1px solid rgba(255,255,255,0.2);cursor:pointer;`;
+        btn.textContent = `${prefix}${zone.label}`;
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onSelectSurgeRef.current?.(zone);
+        });
+
+        pinMarkersRef.current.push(
+          new maplibregl.Marker({ element: btn, anchor: 'center' })
+            .setLngLat([ll.lng, ll.lat])
+            .addTo(map)
+        );
+      });
+
+      if (showBusySoonZones && !pendingOffer) {
+        busySoonZones.forEach((bz) => {
+          const ll = mapToLatLng(bz.coords);
+          const wrap = document.createElement('div');
+          wrap.style.cssText = 'position:relative;pointer-events:auto;';
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.style.cssText =
+            'transform:translateY(-18px);background:#FEF3C7;color:#92400E;border:1px solid rgba(245,158,11,0.55);padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);cursor:pointer;';
+          btn.textContent = `⏱ ${bz.area.split(' ')[0]} · ${bz.minutesUntilBusy}m`;
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onSelectBusySoonRef.current?.(bz);
+          });
+          wrap.appendChild(btn);
+
+          pinMarkersRef.current.push(
+            new maplibregl.Marker({ element: wrap, anchor: 'center' })
+              .setLngLat([ll.lng, ll.lat])
+              .addTo(map)
+          );
+        });
+      }
+    }
+
+    if (zoomLevel >= 9) {
+      UK_AIRPORT_MAP_PINS.forEach((ap) => {
+        const ll = mapToLatLng(ap.coords);
+        const el = document.createElement('div');
+        el.style.cssText =
+          'background:rgba(0,0,0,0.82);color:#fff;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:5px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.25);pointer-events:none;';
+        el.textContent = `✈ ${ap.code}`;
+        pinMarkersRef.current.push(
+          new maplibregl.Marker({ element: el, anchor: 'center' })
+            .setLngLat([ll.lng, ll.lat])
+            .addTo(map)
+        );
+      });
+    }
+
+    if (showSpeedCameras && zoomLevel >= 11) {
+      UK_SPEED_CAMERAS.forEach((cam) => {
+        const ll = mapToLatLng(cam.coords);
+        const el = document.createElement('div');
+        el.title = `${cam.label} (${cam.limitMph} mph)`;
+        el.style.cssText =
+          'width:22px;height:22px;border-radius:9999px;background:#fff;border:2px solid #E11900;box-shadow:0 2px 6px rgba(0,0,0,0.28);display:flex;align-items:center;justify-content:center;font-size:11px;pointer-events:none;';
+        el.textContent = '📷';
+        pinMarkersRef.current.push(
+          new maplibregl.Marker({ element: el, anchor: 'center' })
+            .setLngLat([ll.lng, ll.lat])
+            .addTo(map)
+        );
+      });
+    }
+
+    mapReports.forEach((pin) => {
+      const ll = mapToLatLng(pin.coords);
+      const el = document.createElement('div');
+      el.style.pointerEvents = 'none';
+      el.innerHTML = getReportBadgeHtml(pin.category);
+      pinMarkersRef.current.push(
+        new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([ll.lng, ll.lat])
+          .addTo(map)
+      );
+    });
+  }, [
+    tripStage,
+    surgeZones,
+    busySoonZones,
+    showBusySoonZones,
+    pendingOffer,
+    zoomLevel,
+    showSpeedCameras,
+    mapReports,
+  ]);
+
+  // Persistent 60fps Driver Puck Marker
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const ll = mapToLatLng(driverPos);
+    const gpsBlue = isLiveGps || blueGpsActive;
+    const ringBorder = gpsBlue ? '#276EF1' : nightMode ? '#FFFFFF' : '#000000';
+    const arrowFill = gpsBlue ? '#276EF1' : nightMode ? '#FFFFFF' : '#000000';
+    const bgPuck = nightMode ? '#1E2028' : '#FFFFFF';
+    const relativeRotation = driverHeading - map.getBearing();
+
+    const pulseHtml =
+      (onlineStatus === 'online' || gpsBlue) && tripStage === 'idle'
+        ? `<div class="animate-go-pulse" style="position:absolute;inset:-14px;border-radius:9999px;background:rgba(39,110,241,0.28);"></div>`
+        : '';
+    const coneHtml = isNavigatingActive
+      ? `<svg width="92" height="92" viewBox="0 0 92 92" style="position:absolute;top:-50px;left:50%;transform:translateX(-50%);pointer-events:none;">
+          <defs>
+            <linearGradient id="mlNavBeamGrad" x1="50%" y1="100%" x2="50%" y2="0%">
+              <stop offset="0%" stop-color="#276EF1" stop-opacity="0.45" />
+              <stop offset="100%" stop-color="#276EF1" stop-opacity="0" />
+            </linearGradient>
+          </defs>
+          <path d="M46 72 L14 8 Q46 0 78 8 Z" fill="url(#mlNavBeamGrad)" />
+        </svg>`
+      : '';
+    const badgeHtml =
+      tripStage === 'idle'
+        ? `<div style="position:absolute;top:46px;left:50%;transform:translateX(-50%);background:${
+            nightMode ? 'rgba(24,26,32,0.92)' : 'rgba(255,255,255,0.94)'
+          };color:${
+            nightMode ? '#fff' : '#1F2937'
+          };padding:2px 9px;border-radius:9999px;font-size:10.5px;font-weight:700;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.18);border:1px solid rgba(0,0,0,0.08);display:flex;align-items:center;gap:5px;">
+            ${
+              gpsBlue
+                ? '<span style="width:7px;height:7px;border-radius:9999px;background:#276EF1;display:inline-block;"></span>'
+                : ''
+            }
+            <span>${escapeHtml(
+              isLiveGps
+                ? `Live GPS · ${nearCityLabel}`
+                : gpsBlue
+                ? `GPS Active · ${nearCityLabel}`
+                : `Near ${nearCityLabel} · UK`
+            )}</span>
+          </div>`
+        : '';
+
+    const innerHtml = `
+      <div style="position:relative;width:40px;height:40px;pointer-events:none;">
+        ${pulseHtml}
+        <div data-driver-rotator style="position:relative;width:40px;height:40px;transform:rotate(${relativeRotation}deg);display:flex;align-items:center;justify-content:center;">
+          ${coneHtml}
+          <div style="position:relative;width:40px;height:40px;border-radius:9999px;background:${bgPuck};border:3px solid ${ringBorder};box-shadow:0 6px 18px rgba(0,0,0,0.34);display:flex;align-items:center;justify-content:center;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M12 3L4.5 19.5L12 16L19.5 19.5L12 3Z" fill="${arrowFill}" />
+            </svg>
+          </div>
+        </div>
+        ${badgeHtml}
+      </div>
+    `;
+
+    const stateSig = `${onlineStatus}|${tripStage}|${gpsBlue}|${nightMode}|${isLiveGps}|${nearCityLabel}`;
+
+    if (!driverMarkerRef.current) {
+      const el = document.createElement('div');
+      el.style.zIndex = '20';
+      el.style.pointerEvents = 'none';
+      el.dataset.stateSig = stateSig;
+      el.innerHTML = innerHtml;
+
+      driverMarkerRef.current = new maplibregl.Marker({
+        element: el,
+        anchor: 'center',
+        rotationAlignment: 'viewport',
+        pitchAlignment: 'viewport',
+      })
+        .setLngLat([ll.lng, ll.lat])
+        .addTo(map);
+    } else {
+      driverMarkerRef.current.setLngLat([ll.lng, ll.lat]);
+      const el = driverMarkerRef.current.getElement();
+      if (el.dataset.stateSig !== stateSig) {
+        el.dataset.stateSig = stateSig;
+        el.innerHTML = innerHtml;
+      } else {
+        const rotator = el.querySelector('[data-driver-rotator]') as HTMLElement | null;
+        if (rotator) {
+          rotator.style.transform = `rotate(${relativeRotation}deg)`;
+        }
+      }
+    }
+  }, [
+    driverPos,
+    driverHeading,
+    onlineStatus,
+    tripStage,
+    isLiveGps,
+    blueGpsActive,
+    nightMode,
+    isNavigatingActive,
+    nearCityLabel,
+  ]);
+
+  const handleZoomIn = () => {
+    isEasingUntilRef.current = performance.now() + 250;
+    mapRef.current?.zoomIn({ duration: 220 });
+  };
+
+  const handleZoomOut = () => {
+    isEasingUntilRef.current = performance.now() + 250;
+    mapRef.current?.zoomOut({ duration: 220 });
+  };
+
+  const handleRecenter = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    setHasManualPan(false);
+    setRouteOverviewMode(false);
+    const ll = mapToLatLng(driverPos);
+    const use3D = !compact && isNavigatingActive && navCamera3D;
+    isEasingUntilRef.current = performance.now() + 430;
+    map.easeTo({
+      center: [ll.lng, ll.lat],
+      zoom: defaultZoom,
+      pitch: use3D ? 52 : 0,
+      bearing: use3D ? driverHeading : 0,
+      padding: use3D
+        ? { top: 210, bottom: 110, left: 0, right: 0 }
+        : { top: 0, bottom: 0, left: 0, right: 0 },
+      duration: 400,
+    });
+  };
 
   return (
     <div
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
-      onWheel={handleWheel}
-      onDoubleClick={handleDoubleClick}
-      className={`relative w-full h-full overflow-hidden select-none touch-none cursor-grab active:cursor-grabbing transition-colors duration-300 ${
-        nightMode ? 'bg-[#09131D]' : 'bg-[#B4D1EC]'
+      className={`relative w-full h-full overflow-hidden select-none transition-colors duration-300 ${
+        nightMode ? 'bg-[#09131D]' : 'bg-[#E5E3DF]'
       }`}
     >
+      {/* Keyless MapLibre GL + OpenFreeMap Carto-Style Global Vector Map */}
+      <div ref={containerRef} className="w-full h-full z-0 isolate" />
+
       {/* Zoom In / Zoom Out + 3D Camera + Map Layers Controls */}
       {!compact && (
         <div
@@ -335,7 +1302,7 @@ export const UberMap: React.FC<UberMapProps> = ({
         >
           <button
             type="button"
-            onClick={() => setZoom((z) => clampZoom(z + 0.35))}
+            onClick={handleZoomIn}
             className="w-11 h-11 rounded-full bg-white dark:bg-[#1E2028] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center text-[20px] font-bold text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38] active:scale-95 transition-all"
             aria-label="Zoom in map"
             title="Zoom in"
@@ -344,7 +1311,7 @@ export const UberMap: React.FC<UberMapProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setZoom((z) => clampZoom(z - 0.35))}
+            onClick={handleZoomOut}
             className="w-11 h-11 rounded-full bg-white dark:bg-[#1E2028] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center text-[20px] font-bold text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38] active:scale-95 transition-all"
             aria-label="Zoom out map"
             title="Zoom out"
@@ -364,8 +1331,8 @@ export const UberMap: React.FC<UberMapProps> = ({
                     ? 'bg-[#276EF1] border-[#276EF1] text-white'
                     : 'bg-white dark:bg-[#1E2028] border-black/5 dark:border-white/10 text-black dark:text-white'
                 }`}
-                aria-label={navCamera3D ? 'Switch to North-Up 2D map' : 'Switch to 3D Heading-Up nav'}
-                title={navCamera3D ? '3D Heading-Up Nav' : '2D North-Up Map'}
+                aria-label={navCamera3D ? 'Switch to flat 2D map' : 'Switch to 3D chase cam'}
+                title={navCamera3D ? '3D Chase Cam' : '2D Flat Map'}
               >
                 {navCamera3D && !routeOverviewMode ? '3D' : '2D'}
               </button>
@@ -374,11 +1341,21 @@ export const UberMap: React.FC<UberMapProps> = ({
                 onClick={() => {
                   const next = !routeOverviewMode;
                   setRouteOverviewMode(next);
-                  setPan({ x: 0, y: 0 });
-                  if (next) {
-                    setZoom(1.45);
-                  } else {
-                    setZoom(defaultZoom);
+                  setHasManualPan(false);
+                  if (!next) {
+                    const ll = mapToLatLng(driverPos);
+                    const use3D = !compact && isNavigatingActive && navCamera3D;
+                    isEasingUntilRef.current = performance.now() + 430;
+                    mapRef.current?.easeTo({
+                      center: [ll.lng, ll.lat],
+                      zoom: defaultZoom,
+                      pitch: use3D ? 52 : 0,
+                      bearing: use3D ? driverHeading : 0,
+                      padding: use3D
+                        ? { top: 210, bottom: 110, left: 0, right: 0 }
+                        : { top: 0, bottom: 0, left: 0, right: 0 },
+                      duration: 400,
+                    });
                   }
                 }}
                 className={`w-11 h-11 rounded-full shadow-lg border flex items-center justify-center active:scale-95 transition-all ${
@@ -386,7 +1363,7 @@ export const UberMap: React.FC<UberMapProps> = ({
                     ? 'bg-black dark:bg-[#276EF1] border-black dark:border-[#276EF1] text-white'
                     : 'bg-white dark:bg-[#1E2028] border-black/5 dark:border-white/10 text-black dark:text-white'
                 }`}
-                aria-label={routeOverviewMode ? 'Return to Turn-by-Turn Chase Cam' : 'Show Full Route Overview'}
+                aria-label={routeOverviewMode ? 'Return to Turn-by-Turn' : 'Show Full Route Overview'}
                 title={routeOverviewMode ? 'Back to Turn-by-Turn' : 'Route Overview'}
               >
                 <RouteIcon className="w-4 h-4" />
@@ -408,714 +1385,19 @@ export const UberMap: React.FC<UberMapProps> = ({
               <Layers className="w-4 h-4" />
             </button>
           )}
-          {(Math.abs(zoom - defaultZoom) > 0.08 || hasManualPan) && (
+          {(Math.abs(zoomLevel - defaultZoom) > 0.75 || hasManualPan) && (
             <button
               type="button"
-              onClick={() => {
-                setZoom(defaultZoom);
-                setPan({ x: 0, y: 0 });
-              }}
-              className="px-2 py-1 rounded-full bg-black/85 dark:bg-[#276EF1] text-white text-[10px] font-bold tabular-nums shadow-md hover:bg-black active:scale-95 transition-all whitespace-nowrap"
+              onClick={handleRecenter}
+              className="px-2.5 py-1 rounded-full bg-black/85 dark:bg-[#276EF1] text-white text-[10px] font-bold tabular-nums shadow-md hover:bg-black active:scale-95 transition-all whitespace-nowrap"
               aria-label="Re-center map"
               title="Re-center & reset zoom"
             >
-              {hasManualPan ? 'Re-center' : `${zoom.toFixed(1)}×`}
+              {hasManualPan ? 'Re-center' : `z${zoomLevel.toFixed(1)}`}
             </button>
           )}
         </div>
       )}
-
-      {/* Transformable Whole-UK Map World (supports 3D Heading-Up Chase Cam during Nav) */}
-      <div
-        className="absolute inset-0 flex items-center justify-center"
-        style={{
-          transform: `perspective(950px) rotateX(${isNav3DActive ? 24 : 0}deg) translate3d(${pan.x}px, ${
-            pan.y + (isNav3DActive ? 54 : 0)
-          }px, 0) scale(${zoom})`,
-          transition: isPanning
-            ? 'none'
-            : 'transform 340ms cubic-bezier(0.16, 1, 0.3, 1)',
-        }}
-      >
-        <div
-          className="relative w-[1000px] h-[1000px] shrink-0"
-          style={{
-            transformOrigin: '500px 500px',
-            transform: `rotate(${mapRotationDeg}deg)`,
-            transition: isNavigatingActive
-              ? 'none'
-              : 'transform 450ms cubic-bezier(0.16, 1, 0.3, 1)',
-          }}
-        >
-          <div
-            className="relative w-[1000px] h-[1000px]"
-            style={{
-              transform: `translate3d(${offsetX}px, ${offsetY}px, 0)`,
-              transition: isNavigatingActive
-                ? 'none'
-                : 'transform 450ms cubic-bezier(0.16, 1, 0.3, 1)',
-            }}
-          >
-            {/* Whole UK Vector Map in Uber Vector Style */}
-            <svg
-              viewBox="0 0 1000 1000"
-              className="w-full h-full block"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-            <defs>
-              <radialGradient id="seaDepth" cx="52%" cy="55%" r="60%">
-                <stop offset="0%" stopColor={nightMode ? '#0F1F2E' : '#C6DFF4'} />
-                <stop offset="100%" stopColor={nightMode ? '#08111B' : '#A9CAE7'} />
-              </radialGradient>
-              <radialGradient id="surgeHigh" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#D91B5C" stopOpacity="0.46" />
-                <stop offset="50%" stopColor="#EE4B2B" stopOpacity="0.24" />
-                <stop offset="100%" stopColor="#FF8800" stopOpacity="0" />
-              </radialGradient>
-              <radialGradient id="surgeMed" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#A020F0" stopOpacity="0.34" />
-                <stop offset="60%" stopColor="#F59E0B" stopOpacity="0.16" />
-                <stop offset="100%" stopColor="#F59E0B" stopOpacity="0" />
-              </radialGradient>
-              <radialGradient id="surgeLow" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#F59E0B" stopOpacity="0.28" />
-                <stop offset="100%" stopColor="#F59E0B" stopOpacity="0" />
-              </radialGradient>
-            </defs>
-
-            {/* Surrounding Seas */}
-            <rect width="1000" height="1000" fill="url(#seaDepth)" />
-
-            {/* Subtle Coastal Shelf Glow */}
-            <path
-              d={UK_SVG_PATHS.greatBritain}
-              fill="none"
-              stroke={nightMode ? '#142A3E' : '#D4E7F7'}
-              strokeWidth="12"
-              strokeLinejoin="round"
-              opacity="0.65"
-            />
-
-            {/* Neighboring Landmasses */}
-            <path
-              d={UK_SVG_PATHS.irelandMuted}
-              fill={nightMode ? '#10151C' : '#DFE3E7'}
-              stroke={nightMode ? '#1B232E' : '#CFD5DC'}
-              strokeWidth="1.5"
-            />
-            <path
-              d={UK_SVG_PATHS.franceMuted}
-              fill={nightMode ? '#10151C' : '#DFE3E7'}
-              stroke={nightMode ? '#1B232E' : '#CFD5DC'}
-              strokeWidth="1.5"
-            />
-
-            {/* Great Britain, Northern Ireland & UK Islands */}
-            {[
-              UK_SVG_PATHS.greatBritain,
-              UK_SVG_PATHS.northernIreland,
-              UK_SVG_PATHS.isleOfWight,
-              UK_SVG_PATHS.isleOfMan,
-              UK_SVG_PATHS.anglesey,
-              UK_SVG_PATHS.skye,
-            ].map((d, idx) => (
-              <path
-                key={`land-${idx}`}
-                d={d}
-                fill={nightMode ? '#151D26' : '#ECEFF2'}
-                stroke={nightMode ? '#243140' : '#CFD7E0'}
-                strokeWidth="1.8"
-                strokeLinejoin="round"
-              />
-            ))}
-
-            {/* UK National Parks & Green Belts */}
-            <g fill={nightMode ? '#13271D' : '#CFE6D2'} opacity="0.92">
-              {UK_SVG_PATHS.parks.map((pk, idx) => (
-                <ellipse
-                  key={`park-${idx}`}
-                  cx={pk.x}
-                  cy={pk.y}
-                  rx={pk.rx}
-                  ry={pk.ry}
-                />
-              ))}
-            </g>
-
-            {/* Urban City Shading */}
-            <g fill={nightMode ? '#1B2430' : '#E0E4E9'} opacity="0.8">
-              {UK_SVG_PATHS.urbanAreas.map((u, idx) => (
-                <ellipse key={`urban-${idx}`} cx={u.x} cy={u.y} rx={u.rx} ry={u.ry} />
-              ))}
-            </g>
-
-            {/* Major UK Rivers (Thames, Severn, Trent, Clyde, Tyne) */}
-            <g
-              fill="none"
-              stroke={nightMode ? '#0D2238' : '#B4D1EC'}
-              strokeWidth="2.6"
-              strokeLinecap="round"
-            >
-              {UK_SVG_PATHS.rivers.map((d, idx) => (
-                <path key={`river-${idx}`} d={d} />
-              ))}
-            </g>
-
-            {/* Urban City Street Grids around London & Manchester */}
-            <g
-              stroke={nightMode ? '#24303E' : '#FFFFFF'}
-              strokeWidth="1.25"
-              opacity={nightMode ? '0.85' : '0.75'}
-              fill="none"
-            >
-              {[-18, -12, -6, 0, 6, 12, 18].map((d) => (
-                <React.Fragment key={`lon-grid-${d}`}>
-                  <line x1={646 + d} y1={752} x2={646 + d} y2={792} />
-                  <line x1={624} y1={772 + d} x2={668} y2={772 + d} />
-                  <line x1={523 + d * 0.7} y1={565} x2={523 + d * 0.7} y2={592} />
-                  <line x1={510} y1={578 + d * 0.7} x2={536} y2={578 + d * 0.7} />
-                </React.Fragment>
-              ))}
-            </g>
-
-            {/* Primary A-Roads */}
-            <g
-              stroke={nightMode ? '#1F2B38' : '#F8FAFC'}
-              strokeWidth="2.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              fill="none"
-            >
-              {UK_SVG_PATHS.primaryARoads.map((d, idx) => (
-                <path key={`aroad-${idx}`} d={d} />
-              ))}
-            </g>
-
-            {/* UK Motorway Network (White/Slate Casing + Motorway Blue Core) */}
-            <g
-              stroke={nightMode ? '#253445' : '#FFFFFF'}
-              strokeWidth="4.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              fill="none"
-            >
-              {UK_SVG_PATHS.motorways.map((d, idx) => (
-                <path key={`mw-${idx}`} d={d} />
-              ))}
-            </g>
-            <g
-              stroke={nightMode ? '#3C69AD' : '#8DB1E3'}
-              strokeWidth="1.6"
-              strokeOpacity={nightMode ? '0.85' : '0.75'}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              fill="none"
-            >
-              {UK_SVG_PATHS.motorways.map((d, idx) => (
-                <path key={`mwb-${idx}`} d={d} />
-              ))}
-            </g>
-
-            {/* Live UK Motorway Traffic Segments */}
-            {showTrafficLayer &&
-              UK_SVG_PATHS.trafficSegments.map((seg, idx) => (
-                <path
-                  key={`traf-${idx}`}
-                  d={seg.d}
-                  fill="none"
-                  stroke={
-                    seg.level === 'heavy'
-                      ? '#E11900'
-                      : seg.level === 'moderate'
-                      ? '#F59E0B'
-                      : '#05944F'
-                  }
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  opacity="0.85"
-                />
-              ))}
-
-            {/* London ULEZ & Congestion Charge Zone Rings */}
-            {showUKZones && (
-              <g>
-                <circle
-                  cx={UK_SVG_PATHS.londonZones.ulezCenter.x}
-                  cy={UK_SVG_PATHS.londonZones.ulezCenter.y}
-                  r="19"
-                  fill={nightMode ? 'rgba(5,148,79,0.08)' : 'rgba(5,148,79,0.07)'}
-                  stroke="#05944F"
-                  strokeWidth="1.1"
-                  strokeDasharray="3 2"
-                />
-                <circle
-                  cx={UK_SVG_PATHS.londonZones.congestionCenter.x}
-                  cy={UK_SVG_PATHS.londonZones.congestionCenter.y}
-                  r="8.5"
-                  fill={nightMode ? 'rgba(225,25,0,0.12)' : 'rgba(225,25,0,0.09)'}
-                  stroke="#E11900"
-                  strokeWidth="1.2"
-                />
-                {zoom >= 1.3 && (
-                  <g fontFamily="Plus Jakarta Sans, sans-serif" fontWeight="800" fontSize="5">
-                    <rect
-                      x={UK_SVG_PATHS.londonZones.congestionCenter.x - 7}
-                      y={UK_SVG_PATHS.londonZones.congestionCenter.y - 13}
-                      width="14"
-                      height="7"
-                      rx="2"
-                      fill="#E11900"
-                    />
-                    <text
-                      x={UK_SVG_PATHS.londonZones.congestionCenter.x}
-                      y={UK_SVG_PATHS.londonZones.congestionCenter.y - 8}
-                      textAnchor="middle"
-                      fill="#FFFFFF"
-                    >
-                      CC
-                    </text>
-                  </g>
-                )}
-              </g>
-            )}
-
-            {/* Surge Heatmap Polygons with Subtle Heat Shimmer Pulse */}
-            {showSurgeHeatmap &&
-              surgeZones.map((zone, idx) => {
-                if (zone.kind === 'busy' || zone.kind === 'event') return null;
-                const fillId =
-                  zone.intensity === 'high'
-                    ? 'url(#surgeHigh)'
-                    : zone.intensity === 'medium'
-                    ? 'url(#surgeMed)'
-                    : 'url(#surgeLow)';
-                const strokeColor =
-                  zone.intensity === 'high'
-                    ? '#D91B5C'
-                    : zone.intensity === 'medium'
-                    ? '#A020F0'
-                    : '#F59E0B';
-                const outerPoly = buildSurgePolygonPoints(
-                  zone.coords.x,
-                  zone.coords.y,
-                  zone.radius,
-                  idx + 1
-                );
-                const innerPoly = buildSurgePolygonPoints(
-                  zone.coords.x,
-                  zone.coords.y,
-                  zone.radius * 0.56,
-                  idx + 4
-                );
-                const delay = `${(idx * 0.55).toFixed(2)}s`;
-
-                return (
-                  <g key={`heat-${zone.id}`} className="pointer-events-none">
-                    <polygon
-                      points={outerPoly}
-                      fill={fillId}
-                      className="animate-surge-shimmer"
-                      style={{ animationDelay: delay }}
-                    />
-                    <polygon
-                      points={innerPoly}
-                      fill={fillId}
-                      stroke={strokeColor}
-                      strokeOpacity={nightMode ? 0.34 : 0.24}
-                      strokeWidth="1.2"
-                      strokeLinejoin="round"
-                      className="animate-surge-ripple"
-                      style={{ animationDelay: delay }}
-                    />
-                  </g>
-                );
-              })}
-
-            {/* Busy Soon Predictive Rings */}
-            {showBusySoonZones &&
-              tripStage === 'idle' &&
-              busySoonZones.map((bz) => (
-                <g key={`busy-soon-${bz.id}`} className="pointer-events-none">
-                  <circle
-                    cx={bz.coords.x}
-                    cy={bz.coords.y}
-                    r={22}
-                    fill={nightMode ? 'rgba(245,158,11,0.08)' : 'rgba(245,158,11,0.1)'}
-                    stroke="#F59E0B"
-                    strokeWidth="1.3"
-                    strokeDasharray="3.5 3"
-                    opacity="0.85"
-                  />
-                </g>
-              ))}
-
-            {/* UK City Labels */}
-            <g
-              fill={nightMode ? '#9BB0C9' : '#55606C'}
-              fontFamily="Plus Jakarta Sans, sans-serif"
-              letterSpacing="0.03em"
-            >
-              {UK_CITIES.map((city) => {
-                if (!city.major && zoom < 1.2) return null;
-                return (
-                  <g key={city.name}>
-                    <circle
-                      cx={city.coords.x}
-                      cy={city.coords.y}
-                      r={city.major ? 2.4 : 1.7}
-                      fill={nightMode ? '#9BB0C9' : '#55606C'}
-                      opacity="0.6"
-                    />
-                    <text
-                      x={city.coords.x + 5}
-                      y={city.coords.y + 3}
-                      fontSize={city.major ? '8.5' : '6.6'}
-                      fontWeight={city.major ? '700' : '600'}
-                    >
-                      {city.name}
-                    </text>
-                  </g>
-                );
-              })}
-            </g>
-
-            {/* UK Motorway Shields */}
-            <g fontFamily="Plus Jakarta Sans, sans-serif" fontSize="6.2" fontWeight="700">
-              {UK_SVG_PATHS.shields.map((s) => (
-                <g key={s.label}>
-                  <rect
-                    x={s.x - 10}
-                    y={s.y - 6}
-                    width="20"
-                    height="11"
-                    rx="2.5"
-                    fill="#276EF1"
-                    stroke={nightMode ? '#151D26' : '#FFFFFF'}
-                    strokeWidth="0.9"
-                  />
-                  <text x={s.x} y={s.y + 1.8} textAnchor="middle" fill="#FFFFFF">
-                    {s.label}
-                  </text>
-                </g>
-              ))}
-            </g>
-
-            {/* Active Trip / Pending Offer Route Line (faded traveled path + vibrant ahead path) */}
-            {routePoints && (
-              <g>
-                {routePoints.fullPathD && (
-                  <path
-                    d={routePoints.fullPathD}
-                    fill="none"
-                    stroke={nightMode ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.16)'}
-                    strokeWidth={4.5 * invScale}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                )}
-                <path
-                  d={routePoints.pathD}
-                  fill="none"
-                  stroke={
-                    routePoints.isIntercity
-                      ? 'rgba(122,28,121,0.3)'
-                      : nightMode
-                      ? 'rgba(91,155,248,0.28)'
-                      : 'rgba(0,0,0,0.18)'
-                  }
-                  strokeWidth={6.8 * invScale}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d={routePoints.pathD}
-                  fill="none"
-                  stroke={
-                    routePoints.isIntercity
-                      ? '#9333EA'
-                      : routePoints.isDropoff
-                      ? nightMode
-                        ? '#5B9BF8'
-                        : '#000000'
-                      : '#276EF1'
-                  }
-                  strokeWidth={3.8 * invScale}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                {routePoints.stop && (
-                  <circle
-                    cx={routePoints.stop.x}
-                    cy={routePoints.stop.y}
-                    r={4.5 * invScale}
-                    fill="#F59E0B"
-                    stroke="#FFFFFF"
-                    strokeWidth={1.6 * invScale}
-                  />
-                )}
-                <circle
-                  cx={routePoints.end.x}
-                  cy={routePoints.end.y}
-                  r={5.8 * invScale}
-                  fill={
-                    routePoints.isIntercity
-                      ? '#9333EA'
-                      : routePoints.isDropoff
-                      ? '#000000'
-                      : '#05944F'
-                  }
-                  stroke="#FFFFFF"
-                  strokeWidth={1.8 * invScale}
-                />
-              </g>
-            )}
-
-            {/* Destination Mode Line */}
-            {destination.active && !routePoints && (
-              <g>
-                <path
-                  d={`M ${driverPos.x} ${driverPos.y} L ${destination.coords.x} ${destination.coords.y}`}
-                  fill="none"
-                  stroke="#276EF1"
-                  strokeWidth={2.5 * invScale}
-                  strokeDasharray="5 5"
-                  strokeLinecap="round"
-                />
-                <circle
-                  cx={destination.coords.x}
-                  cy={destination.coords.y}
-                  r={5.5 * invScale}
-                  fill="#276EF1"
-                  stroke="#FFFFFF"
-                  strokeWidth={1.8 * invScale}
-                />
-              </g>
-            )}
-          </svg>
-
-          {/* UK Airport Badges when zoomed in */}
-          {zoom >= 1.25 &&
-            UK_AIRPORT_MAP_PINS.map((ap) => (
-              <div
-                key={ap.code}
-                style={{
-                  left: `${ap.coords.x}px`,
-                  top: `${ap.coords.y}px`,
-                  transform: `translate(-50%, -50%) rotate(${counterRotationDeg}deg) scale(${invScale * 0.9})`,
-                }}
-                className="absolute pointer-events-none px-1.5 py-0.5 rounded bg-black/80 text-white text-[9px] font-bold flex items-center gap-1 shadow-xs"
-              >
-                <Plane className="w-2.5 h-2.5 text-[#5B9BF8]" />
-                <span>{ap.code}</span>
-              </div>
-            ))}
-
-          {/* Speed & Bus-Lane Camera Pins */}
-          {showSpeedCameras &&
-            zoom >= 1.3 &&
-            UK_SPEED_CAMERAS.map((cam) => (
-              <div
-                key={cam.id}
-                title={`${cam.label} (${cam.limitMph} mph)`}
-                style={{
-                  left: `${cam.coords.x}px`,
-                  top: `${cam.coords.y}px`,
-                  transform: `translate(-50%, -50%) rotate(${counterRotationDeg}deg) scale(${invScale * 0.9})`,
-                }}
-                className="absolute pointer-events-none w-5 h-5 rounded-full bg-white dark:bg-[#1E2028] border-2 border-[#E11900] shadow-sm flex items-center justify-center"
-              >
-                <Camera className="w-2.5 h-2.5 text-[#E11900]" />
-              </div>
-            ))}
-
-          {/* Surge & Demand Pills across the UK */}
-          {tripStage === 'idle' &&
-            surgeZones.map((zone) => {
-              const styleMap: Record<SurgeZone['kind'], string> = {
-                surge: 'bg-[#7A1C79] text-white shadow-md',
-                wait:
-                  zone.intensity === 'high'
-                    ? 'bg-[#D6223A] text-white shadow-md'
-                    : 'bg-[#DE8300] text-white shadow-md',
-                busy: 'bg-[#8F9AA6] text-white shadow-sm',
-                event: 'bg-[#276EF1] text-white shadow-md',
-              };
-
-              return (
-                <button
-                  key={zone.id}
-                  type="button"
-                  onClick={() => onSelectSurgeZone?.(zone)}
-                  style={{
-                    left: `${zone.coords.x}px`,
-                    top: `${zone.coords.y}px`,
-                    transform: `translate(-50%, -50%) rotate(${counterRotationDeg}deg) scale(${invScale})`,
-                  }}
-                  className={`absolute px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-tight flex items-center gap-1 whitespace-nowrap hover:brightness-110 active:scale-95 transition-all ${styleMap[zone.kind]}`}
-                >
-                  {zone.kind === 'wait' && (
-                    <span className="text-[10px] leading-none">
-                      {zone.intensity === 'high' ? '»' : '›'}
-                    </span>
-                  )}
-                  {zone.kind === 'event' && <Flame className="w-3 h-3" />}
-                  <span className="tabular-nums">{zone.label}</span>
-                </button>
-              );
-            })}
-
-          {/* Busy Soon Forecast Countdown Chips */}
-          {showBusySoonZones &&
-            tripStage === 'idle' &&
-            !pendingOffer &&
-            busySoonZones.map((bz) => (
-              <button
-                key={`bz-pill-${bz.id}`}
-                type="button"
-                onClick={() => onSelectBusySoonZone?.(bz)}
-                style={{
-                  left: `${bz.coords.x}px`,
-                  top: `${bz.coords.y - 16 * invScale}px`,
-                  transform: `translate(-50%, -100%) rotate(${counterRotationDeg}deg) scale(${invScale * 0.92})`,
-                }}
-                className="absolute px-2 py-0.5 rounded-full bg-[#FEF3C7] dark:bg-amber-950/90 text-[#92400E] dark:text-amber-200 border border-[#F59E0B]/40 text-[10px] font-bold flex items-center gap-1 shadow-sm whitespace-nowrap hover:scale-105 transition-transform"
-                title={`${bz.area}: ${bz.reason} (${bz.expectedBoost})`}
-              >
-                <Clock className="w-2.5 h-2.5 text-[#D97706] dark:text-amber-300" />
-                <span className="tabular-nums">
-                  {bz.area.split(' ')[0]} · {bz.minutesUntilBusy}m
-                </span>
-              </button>
-            ))}
-
-          {/* Multi-Stop Floating Badge */}
-          {routePoints?.stop && (
-            <div
-              style={{
-                left: `${routePoints.stop.x}px`,
-                top: `${routePoints.stop.y - 10 * invScale}px`,
-                transform: `translate(-50%, -100%) rotate(${counterRotationDeg}deg) scale(${invScale})`,
-              }}
-              className="absolute bg-[#F59E0B] text-black text-[10.5px] font-extrabold px-2 py-0.5 rounded-md shadow-md whitespace-nowrap pointer-events-none"
-            >
-              Stop 1
-            </div>
-          )}
-
-          {/* Route Endpoint Floating Label */}
-          {routePoints && (
-            <div
-              style={{
-                left: `${routePoints.end.x}px`,
-                top: `${routePoints.end.y - 12 * invScale}px`,
-                transform: `translate(-50%, -100%) rotate(${counterRotationDeg}deg) scale(${invScale})`,
-              }}
-              className={`absolute text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg shadow-lg whitespace-nowrap pointer-events-none ${
-                routePoints.isIntercity ? 'bg-[#7A1C79]' : 'bg-black'
-              }`}
-            >
-              {routePoints.pinLabel}
-            </div>
-          )}
-
-          {/* Placed Map Report Hazard Pins */}
-          {mapReports.map((pin) => (
-            <div
-              key={pin.id}
-              title={`${pin.label} (${pin.reportedAt})`}
-              style={{
-                left: `${pin.coords.x}px`,
-                top: `${pin.coords.y}px`,
-                transform: `translate(-50%, -50%) rotate(${counterRotationDeg}deg) scale(${invScale})`,
-              }}
-              className="absolute z-10 flex flex-col items-center"
-            >
-              {renderReportIcon(pin.category)}
-            </div>
-          ))}
-
-          {/* Driver Live Location Puck with Directional GPS Navigation Beam */}
-          <div
-            style={{
-              left: `${driverPos.x}px`,
-              top: `${driverPos.y}px`,
-              transform: `translate(-50%, -50%) scale(${invScale})`,
-              transition:
-                isNavigatingActive
-                  ? 'none'
-                  : 'left 450ms linear, top 450ms linear',
-            }}
-            className="absolute z-20 pointer-events-none"
-          >
-            {(onlineStatus === 'online' || isLiveGps || blueGpsActive) && tripStage === 'idle' && (
-              <div className="absolute -inset-3.5 rounded-full bg-[#276EF1]/25 animate-go-pulse" />
-            )}
-            <div
-              style={{ transform: `rotate(${driverHeading}deg)` }}
-              className="relative flex items-center justify-center"
-            >
-              {/* Forward GPS Field-of-View Cone during active navigation */}
-              {isNavigatingActive && (
-                <svg
-                  width="92"
-                  height="92"
-                  viewBox="0 0 92 92"
-                  className="absolute -top-[48px] left-1/2 -translate-x-1/2 pointer-events-none"
-                >
-                  <defs>
-                    <linearGradient id="navBeamGrad" x1="50%" y1="100%" x2="50%" y2="0%">
-                      <stop offset="0%" stopColor="#276EF1" stopOpacity="0.42" />
-                      <stop offset="100%" stopColor="#276EF1" stopOpacity="0" />
-                    </linearGradient>
-                  </defs>
-                  <path d="M46 72 L14 8 Q46 0 78 8 Z" fill="url(#navBeamGrad)" />
-                </svg>
-              )}
-
-              <div
-                className={`relative w-10 h-10 rounded-full bg-white dark:bg-[#1E2028] border-[3px] shadow-xl flex items-center justify-center ${
-                  isLiveGps || blueGpsActive
-                    ? 'border-[#276EF1]'
-                    : nightMode
-                    ? 'border-white'
-                    : 'border-black'
-                }`}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M12 3L4.5 19.5L12 16L19.5 19.5L12 3Z"
-                    fill={isLiveGps || blueGpsActive ? '#276EF1' : nightMode ? '#FFFFFF' : '#000000'}
-                  />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          {/* Near Live UK Location Badge */}
-          {tripStage === 'idle' && (
-            <div
-              style={{
-                left: `${driverPos.x}px`,
-                top: `${driverPos.y + 22 * invScale}px`,
-                transform: `translate(-50%, 0) rotate(${counterRotationDeg}deg) scale(${invScale})`,
-              }}
-              className="absolute z-10 pointer-events-none text-[10.5px] font-bold text-[#1F2937] dark:text-white bg-white/90 dark:bg-[#181A20]/90 backdrop-blur-xs px-2.5 py-0.5 rounded-full shadow-xs border border-black/10 dark:border-white/15 whitespace-nowrap flex items-center gap-1.5"
-            >
-              {(isLiveGps || blueGpsActive) && (
-                <span className="w-2 h-2 rounded-full bg-[#276EF1] animate-pulse" />
-              )}
-              <span>
-                {isLiveGps
-                  ? `Live GPS · ${nearCityLabel}`
-                  : blueGpsActive
-                  ? `GPS Active · ${nearCityLabel}`
-                  : `Near ${nearCityLabel} · UK`}
-              </span>
-            </div>
-          )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 };

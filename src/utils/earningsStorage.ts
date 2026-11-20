@@ -17,18 +17,27 @@ export function getLocalDateKey(date: Date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
-export function getCurrentWeekDays(): Array<{
+export function getOffsetDateKey(daysOffset: number, baseDate: Date = new Date()): string {
+  const d = new Date(baseDate);
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + daysOffset);
+  return getLocalDateKey(d);
+}
+
+export function getCurrentWeekDays(weekOffset = 0): Array<{
   day: string;
   dateKey: string;
   isToday: boolean;
+  isYesterday: boolean;
 }> {
   const now = new Date();
   const todayKey = getLocalDateKey(now);
+  const yesterdayKey = getOffsetDateKey(-1, now);
   const jsDay = now.getDay(); // 0=Sun, 1=Mon ... 6=Sat
   const diffToMonday = jsDay === 0 ? -6 : 1 - jsDay;
   const monday = new Date(now);
   monday.setHours(0, 0, 0, 0);
-  monday.setDate(now.getDate() + diffToMonday);
+  monday.setDate(now.getDate() + diffToMonday + weekOffset * 7);
 
   const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   return labels.map((label, idx) => {
@@ -39,12 +48,13 @@ export function getCurrentWeekDays(): Array<{
       day: label,
       dateKey: key,
       isToday: key === todayKey,
+      isYesterday: key === yesterdayKey,
     };
   });
 }
 
-export function formatWeekRangeLabel(): string {
-  const week = getCurrentWeekDays();
+export function formatWeekRangeLabel(weekOffset = 0): string {
+  const week = getCurrentWeekDays(weekOffset);
   const start = new Date(`${week[0].dateKey}T00:00:00`);
   const end = new Date(`${week[6].dateKey}T00:00:00`);
   const fmt = (d: Date) =>
@@ -110,11 +120,22 @@ export function saveDriverLedger(ledger: DriverLedger, accountId?: string): void
   }
 }
 
-export function getWeeklyTotalFromLedger(dailyTotals: Record<string, number>): number {
-  const week = getCurrentWeekDays();
+export function getWeeklyTotalFromLedger(
+  dailyTotals: Record<string, number>,
+  weekOffset = 0
+): number {
+  const week = getCurrentWeekDays(weekOffset);
   return Number(
     week
       .reduce((sum, item) => sum + (dailyTotals[item.dateKey] ?? 0), 0)
+      .toFixed(2)
+  );
+}
+
+export function getAllTimeTotalFromLedger(dailyTotals: Record<string, number>): number {
+  return Number(
+    Object.values(dailyTotals)
+      .reduce((sum, val) => sum + (Number.isFinite(val) ? val : 0), 0)
       .toFixed(2)
   );
 }

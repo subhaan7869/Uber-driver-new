@@ -1,0 +1,12 @@
+{
+	"appId": "com.uberdriver.uk",
+	"appName": "Uber Driver",
+	"webDir": "dist",
+	"android": {
+		"backgroundColor": "#000000",
+		"allowMixedContent": false
+	},
+	"server": {
+		"androidScheme": "https"
+	}
+}

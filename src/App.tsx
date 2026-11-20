@@ -5,6 +5,7 @@ import {
   Bell,
   Camera,
   CheckCircle2,
+  ChevronUp,
   Compass,
   CornerUpLeft,
   CornerUpRight,
@@ -97,6 +98,25 @@ import {
   requestNotificationPermission,
   sendDriverNotification,
 } from './utils/notifications';
+import { APP_UPDATE_EVENT } from './utils/autoUpdater';
+import {
+  cancelNativeScheduledOffer,
+  clearOfferFromNativeBubble,
+  consumePendingNativeLaunchOffer,
+  getNativeBubblePermissions,
+  isNativeAndroidApk,
+  listenToNativeBubbleTap,
+  NativeBubblePermissions,
+  previewNativeFloatingBubble,
+  pushOfferToNativeBubble,
+  requestAndroidBatteryOptimization,
+  requestAndroidNotificationPermission,
+  requestAndroidOverlayPermission,
+  scheduleNativeBackgroundOffer,
+  startNativeOnlineBubbleService,
+  stopNativeOnlineBubbleService,
+  syncNativeAppForeground,
+} from './native/floatingDot';
 import { uberSounds } from './utils/uberSounds';
 import {
   clampMapCoords,
@@ -220,16 +240,18 @@ export default function App() {
   const [intercityIdx, setIntercityIdx] = useState<number>(0);
   const [showMapLayersPopover, setShowMapLayersPopover] = useState<boolean>(false);
   const [showRadarList, setShowRadarList] = useState<boolean>(false);
+  const [radarMatchingId, setRadarMatchingId] = useState<string | null>(null);
   const [showStopMenu, setShowStopMenu] = useState<boolean>(false);
+  const [statusSwapOnline, setStatusSwapOnline] = useState<boolean>(false);
   const [radarBatchIdx, setRadarBatchIdx] = useState<number>(0);
-  const [radarOffers, setRadarOffers] = useState<TripOffer[]>(() =>
-    savedSession?.onlineStatus === 'online' ? ALL_RADAR_POOL.slice(0, 2) : []
-  );
+  const [radarOffers, setRadarOffers] = useState<TripOffer[]>([]);
   const [radarRefreshSecLeft, setRadarRefreshSecLeft] = useState<number>(60);
   const [nextOfferSecLeft, setNextOfferSecLeft] = useState<number | null>(null);
 
   const [legStartDistPx, setLegStartDistPx] = useState<number>(150);
-  const [navProgress, setNavProgress] = useState<number>(0);
+  const [navProgress, setNavProgress] = useState<number>(() =>
+    typeof savedSession?.navProgress === 'number' ? savedSession.navProgress : 0
+  );
   const [simSpeedMph, setSimSpeedMph] = useState<number>(0);
   const [navNowMs, setNavNowMs] = useState<number>(() => Date.now());
 
@@ -330,6 +352,12 @@ export default function App() {
 
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermissionState>(() => getNotificationPermission());
+  const [nativeBubblePerms, setNativeBubblePerms] = useState<NativeBubblePermissions>({
+    isNative: isNativeAndroidApk(),
+    overlayGranted: false,
+    notificationsGranted: false,
+    batteryIgnored: false,
+  });
   const [showPermissionsModal, setShowPermissionsModal] = useState<boolean>(false);
   const [inAppBanner, setInAppBanner] = useState<{
     title: string;
@@ -354,6 +382,27 @@ export default function App() {
       setToastMsg((prev) => (prev === msg ? null : prev));
     }, 2600);
   }, []);
+
+  // Notify driver immediately when a new GitHub -> Vercel deployment triggers auto-restart
+  useEffect(() => {
+    const onUpdating = () => {
+      setToastMsg('New update detected — restarting app...');
+    };
+    window.addEventListener(APP_UPDATE_EVENT, onUpdating);
+    return () => window.removeEventListener(APP_UPDATE_EVENT, onUpdating);
+  }, []);
+
+  // Swap "You're online" and "Finding trips..." every 4 seconds when online
+  useEffect(() => {
+    if (onlineStatus !== 'online') {
+      setStatusSwapOnline(false);
+      return;
+    }
+    const t = setInterval(() => {
+      setStatusSwapOnline((v) => !v);
+    }, 4000);
+    return () => clearInterval(t);
+  }, [onlineStatus]);
 
   const pushDriverAlert = useCallback(
     (title: string, body: string, tag?: string, onAction?: () => void) => {
@@ -384,7 +433,18 @@ export default function App() {
 
   useEffect(() => {
     const id = setInterval(checkMidnightRollover, 15000);
-    return () => clearInterval(id);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        checkMidnightRollover();
+      }
+    };
+    window.addEventListener('focus', checkMidnightRollover);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('focus', checkMidnightRollover);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [checkMidnightRollover]);
 
   // Track UK 12-hour driving time limit while online
@@ -528,17 +588,99 @@ export default function App() {
     };
   }, [onlineStatus, tripStage, gpsExplicitlyAccepted]);
 
-  // Play looping Uber Driver dispatch ping while an offer is on screen
+  // Play looping Uber Driver dispatch ping & sync Android floating dot on offer change
   useEffect(() => {
     if (pendingOffer && tripStage === 'idle') {
       uberSounds.startDispatchLoop(pendingOffer.type === 'radar' ? 'radar' : 'exclusive');
+      void pushOfferToNativeBubble(pendingOffer);
     } else {
       uberSounds.stopDispatchLoop();
+      void clearOfferFromNativeBubble();
     }
     return () => {
       uberSounds.stopDispatchLoop();
     };
   }, [pendingOffer, tripStage]);
+
+  // Android APK: sync online service, floating dot visibility, background offer trigger, & tap-to-open
+  const pendingOfferRef = useRef<TripOffer | null>(pendingOffer);
+  pendingOfferRef.current = pendingOffer;
+  const nextOfferSecLeftRef = useRef<number | null>(nextOfferSecLeft);
+  nextOfferSecLeftRef.current = nextOfferSecLeft;
+  const onlineStatusRef = useRef<DriverOnlineStatus>(onlineStatus);
+  onlineStatusRef.current = onlineStatus;
+
+  useEffect(() => {
+    if (!isNativeAndroidApk()) return;
+
+    const refreshPerms = () => {
+      void getNativeBubblePermissions().then((perms) => {
+        setNativeBubblePerms(perms);
+      });
+    };
+
+    refreshPerms();
+
+    if (onlineStatus === 'online') {
+      void startNativeOnlineBubbleService(
+        nearestUKCity(driverPosRef.current),
+        activeAccount?.name ?? 'Driver'
+      );
+    }
+
+    const handleVisibility = () => {
+      const inFg = !document.hidden;
+      void syncNativeAppForeground(inFg);
+
+      if (inFg) {
+        refreshPerms();
+        void cancelNativeScheduledOffer();
+        void consumePendingNativeLaunchOffer().then((launchOffer) => {
+          if (launchOffer && tripStageRef.current === 'idle' && !pendingOfferRef.current) {
+            setActiveTab('home');
+            setPendingOffer(launchOffer);
+          }
+        });
+      } else if (
+        onlineStatusRef.current === 'online' &&
+        tripStageRef.current === 'idle' &&
+        !pendingOfferRef.current
+      ) {
+        const pool = preferences.intercity
+          ? SAMPLE_TRIP_OFFERS
+          : SAMPLE_TRIP_OFFERS.filter((o) => !o.isIntercity);
+        const activePool = pool.length > 0 ? pool : SAMPLE_TRIP_OFFERS;
+        const upcoming = activePool[offerIndex % activePool.length];
+        if (upcoming) {
+          const delaySec = Math.max(4, nextOfferSecLeftRef.current ?? 9);
+          void scheduleNativeBackgroundOffer(delaySec, upcoming);
+        }
+      }
+    };
+
+    const removeTapListener = listenToNativeBubbleTap((tappedOffer) => {
+      setActiveTab('home');
+      if (tappedOffer && tripStageRef.current === 'idle' && !pendingOfferRef.current) {
+        setPendingOffer(tappedOffer);
+      }
+    });
+
+    void consumePendingNativeLaunchOffer().then((launchOffer) => {
+      if (launchOffer && tripStageRef.current === 'idle' && !pendingOfferRef.current) {
+        setActiveTab('home');
+        setPendingOffer(launchOffer);
+      }
+    });
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', refreshPerms);
+
+    return () => {
+      removeTapListener();
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', refreshPerms);
+    };
+  }, [onlineStatus, activeAccount?.name, preferences.intercity, offerIndex]);
 
   // Trip Radar 60-second auto-refresh when online
   const rotateRadarOffers = useCallback((nextBatch: number) => {
@@ -550,7 +692,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (onlineStatus !== 'online') {
+    if (onlineStatus !== 'online' || radarOffers.length === 0) {
       setRadarRefreshSecLeft(60);
       return;
     }
@@ -570,16 +712,16 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(tick);
-  }, [onlineStatus, rotateRadarOffers]);
+  }, [onlineStatus, radarOffers.length, rotateRadarOffers]);
 
-  // Random job request timer within 5 minutes (15s - 300s) when online & idle
+  // Job request timer when online & idle (starts hidden, triggers job card)
   useEffect(() => {
     if (onlineStatus !== 'online' || tripStage !== 'idle' || pendingOffer || showRadarList) {
       setNextOfferSecLeft(null);
       return;
     }
 
-    const randomDelaySec = Math.floor(Math.random() * 285) + 15;
+    const randomDelaySec = Math.floor(Math.random() * 25) + 8;
     setNextOfferSecLeft(randomDelaySec);
 
     const countdownInterval = setInterval(() => {
@@ -593,7 +735,6 @@ export default function App() {
           const activePool = pool.length > 0 ? pool : SAMPLE_TRIP_OFFERS;
           const next = activePool[offerIndex % activePool.length];
           setPendingOffer(next);
-          setRadarOffers([next, ...ALL_RADAR_POOL.filter((o) => o.id !== next.id).slice(0, 2)]);
           setOfferIndex((i) => i + 1);
           pushDriverAlert(
             `${
@@ -687,13 +828,20 @@ export default function App() {
   // Smooth 60fps arc-length polyline navigation with lookahead steering & cornering speed
   const headingRef = useRef<number>(driverHeading);
   headingRef.current = driverHeading;
-  const navProgressRef = useRef<number>(0);
+  const rushNavRef = useRef<boolean>(preferences.rushNav);
+  rushNavRef.current = preferences.rushNav;
+  const navProgressRef = useRef<number>(navProgress);
+  const prevNavLegSigRef = useRef<string>(`${activeTrip?.id ?? ''}|${tripStage}|${stopVisited}`);
 
   useEffect(() => {
-    navProgressRef.current = 0;
-    setNavProgress(0);
-    setSimSpeedMph(0);
-  }, [activeRoute, tripStage, stopVisited]);
+    const nextSig = `${activeTrip?.id ?? ''}|${tripStage}|${stopVisited}`;
+    if (prevNavLegSigRef.current !== nextSig) {
+      prevNavLegSigRef.current = nextSig;
+      navProgressRef.current = 0;
+      setNavProgress(0);
+      setSimSpeedMph(0);
+    }
+  }, [activeTrip?.id, tripStage, stopVisited]);
 
   useEffect(() => {
     if (!activeTrip) return;
@@ -736,11 +884,11 @@ export default function App() {
     };
 
     const isPickup = tripStage === 'pickup';
-    const legDurationSec = isPickup
-      ? Math.max(10, Math.min(15, activeTrip.pickupMinutes * 2.4))
+    const baseDurationSec = isPickup
+      ? Math.max(26, Math.min(68, activeTrip.pickupMinutes * 8))
       : Math.max(
-          13,
-          Math.min(22, (activeTrip.isIntercity ? 17 : 12.5) + activeTrip.tripMinutes * 0.06)
+          38,
+          Math.min(115, (activeTrip.isIntercity ? 62 : 34) + activeTrip.tripMinutes * 2.1)
         );
 
     let rafId = 0;
@@ -765,22 +913,23 @@ export default function App() {
         if (lookDist > 0.001) {
           const targetAngle = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
           const angDiff = Math.abs((((targetAngle - headingRef.current) % 360) + 540) % 360 - 180);
-          cornerFactor = Math.max(0.52, 1 - (angDiff / 90) * 0.45);
+          cornerFactor = Math.max(0.55, 1 - (angDiff / 90) * 0.42);
           const smoothHeading = lerpAngle(
             headingRef.current,
             targetAngle,
-            1 - Math.exp(-dtSec * 7.5)
+            1 - Math.exp(-dtSec * 6.5)
           );
           headingRef.current = smoothHeading;
           setDriverHeading(smoothHeading);
         }
 
-        // Gentle launch & arrival braking profile
+        // Gentle launch & arrival braking profile + optional Rush Nav multiplier
         const launchRamp = prog < 0.08 ? 0.38 + (prog / 0.08) * 0.62 : 1;
         const arriveRamp = prog > 0.9 ? Math.max(0.28, (1 - prog) / 0.1) : 1;
-        const speedMult = launchRamp * arriveRamp * cornerFactor;
+        const rushMultiplier = rushNavRef.current ? 3.8 : 1;
+        const speedMult = launchRamp * arriveRamp * cornerFactor * rushMultiplier;
 
-        const nextProg = Math.min(1, prog + (dtSec / legDurationSec) * speedMult);
+        const nextProg = Math.min(1, prog + (dtSec / baseDurationSec) * speedMult);
         navProgressRef.current = nextProg;
 
         const nextSample = sampleAt(nextProg);
@@ -1024,8 +1173,12 @@ export default function App() {
     setRadarOffers([]); // Trip Radar shows no job and is hidden until timer triggers
     setRadarRefreshSecLeft(60);
     setActiveTab('home');
+    void startNativeOnlineBubbleService(
+      nearestUKCity(driverPosRef.current),
+      activeAccount?.name ?? 'Driver'
+    );
     showToast("You're online — Trip Radar active");
-  }, [showToast]);
+  }, [activeAccount?.name, showToast]);
 
   const handleToggleOnline = () => {
     uberSounds.unlock();
@@ -1041,7 +1194,10 @@ export default function App() {
       setOnlineStatus('offline');
       setPendingOffer(null);
       setShowRadarList(false);
+      setRadarMatchingId(null);
+      setRadarOffers([]);
       setNextOfferSecLeft(null);
+      void stopNativeOnlineBubbleService();
       showToast("You're offline");
     }
   };
@@ -1052,6 +1208,8 @@ export default function App() {
       uberSounds.play('accept');
       setPendingOffer(null);
       setShowRadarList(false);
+      setRadarMatchingId(null);
+      setRadarOffers([]);
       setQueuedOffer(null);
       setAcceptedNextOffer(null);
       setStopVisited(false);
@@ -1111,16 +1269,50 @@ export default function App() {
     showToast('EV battery rapid-charged to 100% (~250 mi range)');
   }, [activeAccount?.id, showToast]);
 
+  const handleMoveToRadarMatch = useCallback(
+    (offer: TripOffer) => {
+      uberSounds.unlock();
+      setPendingOffer(null);
+      setRadarOffers([offer]);
+      setRadarMatchingId(offer.id);
+      setShowRadarList(true);
+      showToast('Sent to Trip Radar — matching for 10s...');
+    },
+    [showToast]
+  );
+
+  const handleRadarMatchFailed = useCallback(
+    (offer: TripOffer) => {
+      uberSounds.play('decline');
+      setRadarMatchingId(null);
+      setRadarOffers([]);
+      setShowRadarList(false);
+      const pool = (
+        preferences.intercity
+          ? SAMPLE_TRIP_OFFERS
+          : SAMPLE_TRIP_OFFERS.filter((o) => !o.isIntercity)
+      ).filter((o) => o.id !== offer.id);
+      const next = pool.length > 0 ? pool[offerIndex % pool.length] : null;
+      if (next) {
+        setOfferIndex((i) => i + 1);
+        showToast('Another driver matched — loading next available job...');
+        setTimeout(() => {
+          if (onlineStatus === 'online' && tripStageRef.current === 'idle') {
+            setPendingOffer(next);
+          }
+        }, 700);
+      } else {
+        showToast('Another driver matched — waiting for next request...');
+      }
+    },
+    [onlineStatus, preferences.intercity, offerIndex, showToast]
+  );
+
   const handleDeclineOffer = useCallback(
     (offer: TripOffer) => {
       uberSounds.play('decline');
       setPendingOffer(null);
-      const pool = SAMPLE_TRIP_OFFERS.filter((o) => o.id !== offer.id);
-      const next = pool[Math.floor(Math.random() * pool.length)] || SAMPLE_TRIP_OFFERS[1];
-      setTimeout(() => {
-        setPendingOffer(next);
-      }, 1500);
-
+      setRadarMatchingId(null);
       if (offer.type === 'exclusive' && activeAccount?.id) {
         setAccounts((prev) =>
           prev.map((acct) =>
@@ -1129,9 +1321,9 @@ export default function App() {
               : acct
           )
         );
-        showToast('Outmatched / declined · Finding next request...');
+        showToast('Exclusive declined · Acceptance rate updated');
       } else {
-        showToast('Outmatched · Finding next request...');
+        showToast('Request declined');
       }
     },
     [activeAccount?.id, showToast]
@@ -1140,7 +1332,14 @@ export default function App() {
   const handleDeclineRadarItem = useCallback(
     (offer: TripOffer) => {
       uberSounds.play('decline');
-      setRadarOffers((prev) => prev.filter((item) => item.id !== offer.id));
+      setRadarMatchingId(null);
+      setRadarOffers((prev) => {
+        const nextList = prev.filter((item) => item.id !== offer.id);
+        if (nextList.length === 0) {
+          setShowRadarList(false);
+        }
+        return nextList;
+      });
       showToast(`Declined ${offer.serviceName} (£${offer.fare.toFixed(2)})`);
     },
     [showToast]
@@ -1577,6 +1776,15 @@ export default function App() {
 
   const handleAcceptNotificationPermission = async () => {
     setPreferences((prev) => ({ ...prev, notificationsEnabled: true }));
+    if (isNativeAndroidApk()) {
+      const granted = await requestAndroidNotificationPermission();
+      const updated = await getNativeBubblePermissions();
+      setNativeBubblePerms(updated);
+      if (granted) {
+        showToast('Android trip notifications enabled');
+        return;
+      }
+    }
     const perm = await requestNotificationPermission();
     setNotificationPermission(perm);
     if (perm === 'granted') {
@@ -1598,6 +1806,10 @@ export default function App() {
     handleAcceptLocationPermission();
     await handleAcceptNotificationPermission();
     await handleAcceptBackgroundRefresh();
+    if (isNativeAndroidApk() && !nativeBubblePerms.overlayGranted) {
+      await requestAndroidOverlayPermission();
+      showToast('Enable "Display over other apps" for the floating Uber dot');
+    }
     setShowPermissionsModal(false);
   };
 
@@ -2312,11 +2524,17 @@ export default function App() {
                 offer={pendingOffer || radarOffers[0] || SAMPLE_TRIP_OFFERS[1]}
                 onAccept={handleAcceptOffer}
                 onDecline={handleDeclineOffer}
+                onMoveToRadarMatch={handleMoveToRadarMatch}
+                onRadarMatchFailed={handleRadarMatchFailed}
+                initialMatchingId={radarMatchingId}
                 radarOffers={radarOffers}
                 showRadarList={showRadarList}
                 radarRefreshSecLeft={radarRefreshSecLeft}
                 onDeclineRadarItem={handleDeclineRadarItem}
-                onCloseRadarList={() => setShowRadarList(false)}
+                onCloseRadarList={() => {
+                  setShowRadarList(false);
+                  setRadarMatchingId(null);
+                }}
               />
             </div>
           )}
@@ -2361,16 +2579,48 @@ export default function App() {
             </div>
           )}
 
-          {/* BOTTOM STATUS DOCK ON MAP (Centered Trip Radar with 60s refresh + Random 5m timer) */}
+          {/* BOTTOM STATUS DOCK ON MAP (Pull-Up Menu when Online + Swapping Online/Finding Trips Text) */}
           {tripStage === 'idle' && !pendingOffer && !showRadarList && (
             <div className="absolute bottom-0 inset-x-0 z-20 flex justify-center pointer-events-none">
-              <div className="pointer-events-auto w-full max-w-[540px] bg-white dark:bg-[#141416] rounded-t-3xl shadow-[0_-6px_24px_rgba(0,0,0,0.08)] border-t border-black/5 dark:border-white/10">
+              <div
+                onTouchStart={(e) => {
+                  if (onlineStatus === 'online') {
+                    (e.currentTarget as HTMLDivElement).dataset.touchY = String(
+                      e.touches[0].clientY
+                    );
+                  }
+                }}
+                onTouchEnd={(e) => {
+                  if (onlineStatus !== 'online') return;
+                  const startY = Number(
+                    (e.currentTarget as HTMLDivElement).dataset.touchY || '0'
+                  );
+                  const endY = e.changedTouches[0]?.clientY ?? startY;
+                  if (startY - endY > 24) {
+                    setShowStopMenu(true);
+                  }
+                }}
+                className="pointer-events-auto w-full max-w-[540px] bg-white dark:bg-[#141416] rounded-t-3xl shadow-[0_-6px_24px_rgba(0,0,0,0.08)] border-t border-black/5 dark:border-white/10"
+              >
                 {onlineStatus === 'online' && (
                   <div className="w-full h-1 bg-[#E8F0FE] dark:bg-white/10 overflow-hidden rounded-t-3xl">
                     <div className="w-1/2 h-full bg-[#276EF1] animate-uber-radar" />
                   </div>
                 )}
-                <div className="px-4 py-2.5 flex items-center justify-between gap-2">
+
+                {/* Visible Pull-Up Grabber Handle when Online */}
+                {onlineStatus === 'online' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowStopMenu(true)}
+                    className="w-full pt-2 pb-0.5 flex flex-col items-center justify-center group"
+                    aria-label="Open pull-up menu"
+                  >
+                    <span className="w-11 h-1.5 rounded-full bg-black/20 dark:bg-white/25 group-hover:bg-black/35 dark:group-hover:bg-white/40 transition-colors" />
+                  </button>
+                )}
+
+                <div className="px-4 py-2 flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => setShowPreferencesModal(true)}
@@ -2380,7 +2630,7 @@ export default function App() {
                     <SlidersHorizontal className="w-5 h-5 text-black dark:text-white" />
                   </button>
 
-                   <button
+                  <button
                     type="button"
                     onClick={() => {
                       if (onlineStatus === 'offline') {
@@ -2389,16 +2639,25 @@ export default function App() {
                         setShowStopMenu(true);
                       }
                     }}
-                    className="flex-1 text-center py-1 min-w-0"
+                    className="flex-1 text-center py-1 min-w-0 flex flex-col items-center"
                   >
-                    <p className="text-[18px] font-extrabold text-black dark:text-white truncate">
-                      {onlineStatus === 'offline' ? "You're offline" : 'Finding trips...'}
-                    </p>
+                    <div className="inline-flex items-center gap-1.5 max-w-full">
+                      <p className="text-[18px] font-extrabold text-black dark:text-white truncate">
+                        {onlineStatus === 'offline'
+                          ? "You're offline"
+                          : statusSwapOnline
+                          ? "You're online"
+                          : 'Finding trips...'}
+                      </p>
+                      {onlineStatus === 'online' && (
+                        <ChevronUp className="w-4 h-4 text-[#545454] dark:text-neutral-400 shrink-0" />
+                      )}
+                    </div>
                     {onlineStatus === 'online' && (
                       <p className="text-[11.5px] font-semibold text-[#276EF1] tabular-nums truncate">
                         {nextOfferSecLeft !== null
-                          ? `Next request ~${formatSecMmSs(nextOfferSecLeft)} · Tap to go offline`
-                          : 'Tap to go offline'}
+                          ? `Next request ~${formatSecMmSs(nextOfferSecLeft)} · Pull up to Stop`
+                          : 'Pull up for Stop menu'}
                       </p>
                     )}
                   </button>
@@ -2407,17 +2666,21 @@ export default function App() {
                     type="button"
                     onClick={() =>
                       onlineStatus === 'online'
-                        ? setShowRadarList(true)
+                        ? setShowStopMenu(true)
                         : setOpportunitiesModalMode('opportunities')
                     }
                     className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center shrink-0"
-                    aria-label="Opportunities or Trip Radar"
+                    aria-label={onlineStatus === 'online' ? 'Open driver pull-up menu' : 'Opportunities'}
                   >
-                    <List className="w-5 h-5 text-black dark:text-white" />
+                    {onlineStatus === 'online' ? (
+                      <ChevronUp className="w-5 h-5 text-black dark:text-white" />
+                    ) : (
+                      <List className="w-5 h-5 text-black dark:text-white" />
+                    )}
                   </button>
                 </div>
 
-                {/* Centered Trip Radar Pill - only shown when radar offers/jobs arrive */}
+                {/* Centered Trip Radar Pill - hidden when no jobs */}
                 {onlineStatus === 'online' && radarOffers.length > 0 && (
                   <div className="px-4 pb-3 flex items-center justify-center">
                     <button
@@ -2602,9 +2865,20 @@ export default function App() {
           hasRealCoords={realCoords !== null}
           backgroundAppRefresh={preferences.backgroundAppRefresh}
           wakeLockActive={wakeLockActive}
+          nativeBubblePerms={nativeBubblePerms}
           onAcceptNotifications={handleAcceptNotificationPermission}
           onAcceptLocation={handleAcceptLocationPermission}
           onAcceptBackgroundRefresh={handleAcceptBackgroundRefresh}
+          onRequestAndroidOverlay={() => {
+            void requestAndroidOverlayPermission();
+          }}
+          onRequestAndroidBattery={() => {
+            void requestAndroidBatteryOptimization();
+          }}
+          onPreviewFloatingDot={() => {
+            void previewNativeFloatingBubble();
+            showToast('Floating Uber dot visible for 8s — drag anywhere!');
+          }}
           onAcceptAll={handleAcceptAllPermissions}
           onClose={() => setShowPermissionsModal(false)}
         />
@@ -2674,38 +2948,73 @@ export default function App() {
       )}
 
       {showStopMenu && (
-        <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-end justify-center">
-          <div className="w-full max-w-[540px] bg-white dark:bg-[#141416] rounded-t-3xl p-6 space-y-4 shadow-2xl animate-in slide-in-from-bottom">
+        <div
+          onClick={() => setShowStopMenu(false)}
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-end justify-center"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-[540px] bg-white dark:bg-[#141416] rounded-t-3xl px-6 pt-3 pb-7 space-y-5 shadow-2xl border-t border-black/10 dark:border-white/10"
+          >
+            <div className="flex justify-center">
+              <span className="w-12 h-1.5 rounded-full bg-black/15 dark:bg-white/25" />
+            </div>
+
             <div className="flex items-center justify-between">
-              <h3 className="text-[20px] font-extrabold text-black dark:text-white">Go offline?</h3>
+              <div>
+                <h3 className="text-[20px] font-extrabold text-black dark:text-white">
+                  {statusSwapOnline ? "You're online" : 'Finding trips...'}
+                </h3>
+                <p className="text-[13px] text-[#545454] dark:text-neutral-400">
+                  Tap Stop to go offline and pause incoming trip requests
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowStopMenu(false)}
-                className="w-10 h-10 rounded-xl bg-[#F3F3F3] dark:bg-white/10 flex items-center justify-center font-bold text-black dark:text-white"
+                className="w-10 h-10 rounded-full bg-[#F3F3F3] dark:bg-white/10 flex items-center justify-center font-bold text-black dark:text-white"
+                aria-label="Close pull-up menu"
               >
-                ✕
+                <X className="w-5 h-5" />
               </button>
             </div>
-            <p className="text-[14px] text-[#545454] dark:text-neutral-400">
-              You will stop receiving trip requests and Trip Radar offers.
-            </p>
-            <div className="space-y-2.5 pt-2">
+
+            {/* Circular Red "Stop" Button matching Circular Blue "Go" Button */}
+            <div className="py-2 flex flex-col items-center justify-center gap-3">
               <button
                 type="button"
                 onClick={() => {
                   setShowStopMenu(false);
                   handleToggleOnline();
                 }}
-                className="w-full h-14 rounded-2xl bg-[#E11900] hover:bg-[#C51500] text-white text-[16px] font-bold shadow-lg transition-all active:scale-[0.98]"
+                className="relative w-[92px] h-[92px] rounded-full bg-[#E11900] hover:bg-[#C51500] active:scale-95 text-white shadow-2xl flex items-center justify-center transition-all focus:outline-none"
+                aria-label="Stop and go offline"
               >
-                Stop & Go Offline
+                <span className="absolute inset-1.5 rounded-full border-2 border-white/40 pointer-events-none" />
+                <span className="text-[24px] font-extrabold tracking-tight">Stop</span>
+              </button>
+              <span className="text-[12px] font-semibold text-[#545454] dark:text-neutral-400">
+                Go offline
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStopMenu(false);
+                  setShowPreferencesModal(true);
+                }}
+                className="h-12 rounded-2xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-black dark:text-white text-[14px] font-bold transition-all active:scale-[0.98]"
+              >
+                Driving Preferences
               </button>
               <button
                 type="button"
                 onClick={() => setShowStopMenu(false)}
-                className="w-full h-14 rounded-2xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-black dark:text-white text-[16px] font-bold transition-all active:scale-[0.98]"
+                className="h-12 rounded-2xl bg-black dark:bg-[#276EF1] text-white text-[14px] font-bold transition-all active:scale-[0.98]"
               >
-                Resume Driving
+                Keep Driving
               </button>
             </div>
           </div>

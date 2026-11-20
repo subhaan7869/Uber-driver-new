@@ -1,0 +1,56 @@
+name: Build Uber Driver Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install npm dependencies
+        run: npm ci || npm install
+
+      - name: Build web bundle & sync Capacitor Android
+        run: |
+          npm run build
+          npx cap sync android
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x android/gradlew
+
+      - name: Build Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Rename output APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk UberDriver-UK.apk
+
+      - name: Upload UberDriver-UK.apk artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UberDriver-UK-APK
+          path: UberDriver-UK.apk
+          retention-days: 30

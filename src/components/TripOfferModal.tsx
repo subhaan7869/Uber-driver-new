@@ -6,6 +6,9 @@ interface TripOfferModalProps {
   offer: TripOffer;
   onAccept: (offer: TripOffer) => void;
   onDecline: (offer: TripOffer) => void;
+  onMoveToRadarMatch?: (offer: TripOffer) => void;
+  onRadarMatchFailed?: (offer: TripOffer) => void;
+  initialMatchingId?: string | null;
   radarOffers?: TripOffer[];
   showRadarList?: boolean;
   radarRefreshSecLeft?: number;
@@ -17,6 +20,9 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
   offer,
   onAccept,
   onDecline,
+  onMoveToRadarMatch,
+  onRadarMatchFailed,
+  initialMatchingId = null,
   radarOffers = [],
   showRadarList = false,
   radarRefreshSecLeft = 60,
@@ -24,57 +30,72 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
   onCloseRadarList,
 }) => {
   const [secondsLeft, setSecondsLeft] = useState(offer.expiresInSec);
-  const [matchingId, setMatchingId] = useState<string | null>(null);
+  const [matchingId, setMatchingId] = useState<string | null>(initialMatchingId);
+  const [matchingSecLeft, setMatchingSecLeft] = useState<number>(initialMatchingId ? 10 : 0);
 
   useEffect(() => {
     setSecondsLeft(offer.expiresInSec);
-    setMatchingId(null);
   }, [offer.id, offer.expiresInSec]);
 
   useEffect(() => {
-    if (showRadarList) return;
+    if (initialMatchingId) {
+      setMatchingId(initialMatchingId);
+      setMatchingSecLeft(10);
+    } else if (!showRadarList) {
+      setMatchingId(null);
+      setMatchingSecLeft(0);
+    }
+  }, [initialMatchingId, showRadarList]);
+
+  // Countdown for standalone incoming job card (paused while in radar list)
+  useEffect(() => {
+    if (showRadarList || matchingId !== null) return;
     const interval = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          onDecline(offer);
-          return 0;
-        }
-        return prev - 1;
-      });
+      setSecondsLeft((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(interval);
-  }, [offer, onDecline, showRadarList]);
+  }, [offer.id, showRadarList, matchingId]);
+
+  useEffect(() => {
+    if (!showRadarList && matchingId === null && secondsLeft === 0) {
+      onDecline(offer);
+    }
+  }, [secondsLeft, showRadarList, matchingId, offer, onDecline]);
 
   const progressPct = Math.max(0, (secondsLeft / offer.expiresInSec) * 100);
 
-  const [matchingSecLeft, setMatchingSecLeft] = useState<number>(0);
-
+  // 10-second Trip Radar matching countdown
   useEffect(() => {
-    if (matchingId === null || matchingSecLeft <= 0) return;
+    if (matchingId === null) return;
     const t = setInterval(() => {
-      setMatchingSecLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(t);
-          setMatchingId(null);
-          // 70% chance success, 30% chance another driver matched
-          const success = Math.random() < 0.7;
-          const target = radarOffers.find((o) => o.id === matchingId) || offer;
-          if (success) {
-            onAccept(target);
-          } else {
-            if (onDeclineRadarItem) onDeclineRadarItem(target);
-            else onDecline(target);
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
+      setMatchingSecLeft((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(t);
-  }, [matchingId, matchingSecLeft, offer, radarOffers, onAccept, onDecline, onDeclineRadarItem]);
+  }, [matchingId]);
+
+  // Resolve match cleanly once 10s countdown hits 0
+  useEffect(() => {
+    if (matchingId === null || matchingSecLeft > 0) return;
+    const target = radarOffers.find((o) => o.id === matchingId) || offer;
+    setMatchingId(null);
+    // 70% chance driver wins match, 30% chance another driver matched first
+    const success = Math.random() < 0.7;
+    if (success) {
+      onAccept(target);
+    } else if (onRadarMatchFailed) {
+      onRadarMatchFailed(target);
+    } else if (onDeclineRadarItem) {
+      onDeclineRadarItem(target);
+    } else {
+      onDecline(target);
+    }
+  }, [matchingId, matchingSecLeft, offer, radarOffers, onAccept, onRadarMatchFailed, onDeclineRadarItem, onDecline]);
 
   const handleAction = (targetOffer: TripOffer) => {
+    if (!showRadarList && onMoveToRadarMatch) {
+      onMoveToRadarMatch(targetOffer);
+      return;
+    }
     setMatchingId(targetOffer.id);
     setMatchingSecLeft(10);
   };
@@ -87,11 +108,13 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
             <div className="flex items-center gap-2">
               <h3 className="text-[18px] font-bold text-black dark:text-white">Trip Radar</h3>
               <span className="px-2 py-0.5 rounded-full bg-[#F3F3F3] dark:bg-white/10 text-[11px] font-bold text-[#545454] dark:text-neutral-300 tabular-nums">
-                Refreshes in {radarRefreshSecLeft}s
+                {matchingId ? `Matching (${matchingSecLeft}s)` : `Refreshes in ${radarRefreshSecLeft}s`}
               </span>
             </div>
             <p className="text-[13px] text-[#545454] dark:text-neutral-400">
-              {radarOffers.length} nearby & Intercity requests sent to multiple drivers
+              {matchingId
+                ? 'Checking driver availability — hold tight for up to 10s...'
+                : `${radarOffers.length} nearby & Intercity requests sent to multiple drivers`}
             </p>
           </div>
           <button
@@ -108,16 +131,36 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
           <div className="py-8 text-center space-y-2">
             <p className="text-[15px] font-bold text-black dark:text-white">No active Trip Radar offers</p>
             <p className="text-[13px] text-[#545454] dark:text-neutral-400 tabular-nums">
-              Refreshing automatically in {radarRefreshSecLeft}s...
+              Waiting for nearby rider demand...
             </p>
           </div>
         ) : (
           <div className="space-y-3">
-            {radarOffers.map((item) => (
+            {radarOffers.map((item) => {
+              const isMatchingThis = matchingId === item.id;
+              return (
               <div
                 key={item.id}
-                className="rounded-2xl border border-black/10 dark:border-white/10 p-4 bg-white dark:bg-[#1B1D22] shadow-xs"
+                className={`rounded-2xl border p-4 bg-white dark:bg-[#1B1D22] shadow-xs transition-all ${
+                  isMatchingThis
+                    ? 'border-[#276EF1] ring-2 ring-[#276EF1]/25'
+                    : 'border-black/10 dark:border-white/10'
+                }`}
               >
+                {isMatchingThis && (
+                  <div className="mb-2.5">
+                    <div className="flex items-center justify-between text-[11.5px] font-bold text-[#276EF1] mb-1 tabular-nums">
+                      <span>Matching in Trip Radar...</span>
+                      <span>{matchingSecLeft}s</span>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-[#E8F0FE] dark:bg-white/10 overflow-hidden">
+                      <div
+                        className="h-full bg-[#276EF1] transition-all duration-1000 ease-linear"
+                        style={{ width: `${Math.max(0, (matchingSecLeft / 10) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center justify-between mb-1.5 gap-2">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span
@@ -215,7 +258,8 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

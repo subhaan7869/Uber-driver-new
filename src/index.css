@@ -110,3 +110,29 @@
 .dark ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
 }
+
+/* MapLibre GL OpenFreeMap overrides */
+.maplibregl-map {
+  font-family: var(--font-sans) !important;
+  background: #e5e3df;
+  outline: none;
+}
+.dark .maplibregl-map {
+  background: #0d1117;
+}
+.maplibregl-ctrl-attrib {
+  font-size: 9px !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(4px);
+  padding: 1px 6px !important;
+  border-radius: 6px !important;
+  margin: 0 6px 104px 6px !important;
+}
+.dark .maplibregl-ctrl-attrib {
+  background: rgba(20, 20, 22, 0.74) !important;
+  color: rgba(255, 255, 255, 0.65) !important;
+}
+.dark .maplibregl-ctrl-attrib a {
+  color: rgba(147, 197, 253, 0.85) !important;
+}
+

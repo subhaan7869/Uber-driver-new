@@ -554,3 +554,45 @@ export const UK_SVG_PATHS = {
     { label: 'M8', ...projectLatLngToMap(55.9, -3.75) },
   ],
 };
+
+export const UK_TRAFFIC_SEGMENTS_LATLNG: Array<{
+  points: Array<[number, number]>;
+  level: 'heavy' | 'moderate' | 'clear';
+}> = [
+  {
+    points: [
+      [51.38, -0.5],
+      [51.5, -0.52],
+      [51.6, -0.44],
+    ],
+    level: 'heavy',
+  },
+  {
+    points: [
+      [51.92, -0.55],
+      [52.12, -0.78],
+    ],
+    level: 'moderate',
+  },
+  {
+    points: [
+      [52.47, -1.96],
+      [52.53, -1.82],
+    ],
+    level: 'heavy',
+  },
+  {
+    points: [
+      [53.48, -2.24],
+      [53.63, -1.9],
+    ],
+    level: 'moderate',
+  },
+  {
+    points: [
+      [51.62, -0.8],
+      [51.85, -1.25],
+    ],
+    level: 'clear',
+  },
+];

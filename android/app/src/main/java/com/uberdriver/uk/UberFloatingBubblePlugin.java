@@ -34,8 +34,11 @@ import java.lang.ref.WeakReference;
 public class UberFloatingBubblePlugin extends Plugin {
 
     private static WeakReference<UberFloatingBubblePlugin> instanceRef = new WeakReference<>(null);
+    private static String pendingAction = null;
     private static String pendingOfferId = null;
     private static String pendingOfferJson = null;
+    private static String lastActionKey = "";
+    private static long lastActionAtMs = 0L;
 
     @Override
     public void load() {
@@ -96,26 +99,42 @@ public class UberFloatingBubblePlugin extends Plugin {
         notifyListeners("permissionsChanged", buildPermissionsSnapshot());
     }
 
-    public static void notifyBubbleTapped(String offerId, String offerJson) {
+    public static void notifyBubbleAction(String action, String offerId, String offerJson) {
+        String safeAction = (action != null && !action.isEmpty()) ? action : "open";
+        String key = safeAction + ":" + (offerId != null ? offerId : "");
+        long now = System.currentTimeMillis();
+        if (key.equals(lastActionKey) && (now - lastActionAtMs) < 2500L) {
+            return;
+        }
+        lastActionKey = key;
+        lastActionAtMs = now;
+
+        pendingAction = safeAction;
         pendingOfferId = offerId;
         pendingOfferJson = offerJson;
 
         UberFloatingBubblePlugin plugin = instanceRef.get();
         if (plugin != null) {
             JSObject payload = new JSObject();
+            payload.put("action", safeAction);
             if (offerId != null) payload.put("offerId", offerId);
             if (offerJson != null) payload.put("offerJson", offerJson);
-            payload.put("tappedAt", System.currentTimeMillis());
+            payload.put("tappedAt", now);
             plugin.notifyListeners("bubbleTapped", payload, true);
         }
     }
 
+    public static void notifyBubbleTapped(String offerId, String offerJson) {
+        notifyBubbleAction("open", offerId, offerJson);
+    }
+
     public static void dispatchLaunchIntent(Intent intent) {
         if (intent == null) return;
+        String action = intent.getStringExtra("uber_action");
         String offerId = intent.getStringExtra("uber_open_offer_id");
         String offerJson = intent.getStringExtra("uber_offer_json");
-        if (offerId != null || offerJson != null) {
-            notifyBubbleTapped(offerId, offerJson);
+        if (action != null || offerId != null || offerJson != null) {
+            notifyBubbleAction(action != null ? action : "open", offerId, offerJson);
         }
     }
 
@@ -217,7 +236,7 @@ public class UberFloatingBubblePlugin extends Plugin {
         String offerJson = call.getString("offerJson", "");
         String fareText = call.getString("fareText", "£15");
         String title = call.getString("title", "New Uber Trip");
-        String subtitle = call.getString("subtitle", "Tap floating dot to accept");
+        String subtitle = call.getString("subtitle", "Tap to view or accept trip");
         int expiresInSec = call.getInt("expiresInSec", 15);
 
         if (UberBubbleService.isServiceRunning) {
@@ -238,6 +257,7 @@ public class UberFloatingBubblePlugin extends Plugin {
 
     @PluginMethod
     public void clearOfferOnBubble(PluginCall call) {
+        pendingAction = null;
         pendingOfferId = null;
         pendingOfferJson = null;
         UberBubbleService.clearOfferDirect();
@@ -252,9 +272,10 @@ public class UberFloatingBubblePlugin extends Plugin {
                 delaySec.longValue() * 1000L,
                 call.getString("offerId", ""),
                 call.getString("offerJson", ""),
+                call.getString("offersQueueJson", ""),
                 call.getString("fareText", "£15"),
                 call.getString("title", "New Uber Trip"),
-                call.getString("subtitle", "Tap floating dot to accept"),
+                call.getString("subtitle", "Tap floating job card to accept"),
                 call.getInt("expiresInSec", 15)
             );
         }
@@ -276,10 +297,26 @@ public class UberFloatingBubblePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void previewOfferCard(PluginCall call) {
+        Intent svc = new Intent(getContext(), UberBubbleService.class);
+        svc.setAction(UberBubbleService.ACTION_PREVIEW_OFFER_CARD);
+        svc.putExtra(UberBubbleService.EXTRA_OFFER_ID, call.getString("offerId", ""));
+        svc.putExtra(UberBubbleService.EXTRA_OFFER_JSON, call.getString("offerJson", ""));
+        svc.putExtra(UberBubbleService.EXTRA_FARE_TEXT, call.getString("fareText", "£18"));
+        svc.putExtra(UberBubbleService.EXTRA_OFFER_TITLE, call.getString("title", "New Uber Trip"));
+        svc.putExtra(UberBubbleService.EXTRA_OFFER_SUBTITLE, call.getString("subtitle", "Preview job card"));
+        svc.putExtra(UberBubbleService.EXTRA_EXPIRES_SEC, call.getInt("expiresInSec", 15));
+        startServiceCompat(svc);
+        call.resolve();
+    }
+
+    @PluginMethod
     public void consumePendingLaunchOffer(PluginCall call) {
         JSObject ret = new JSObject();
+        if (pendingAction != null) ret.put("action", pendingAction);
         if (pendingOfferId != null) ret.put("offerId", pendingOfferId);
         if (pendingOfferJson != null) ret.put("offerJson", pendingOfferJson);
+        pendingAction = null;
         pendingOfferId = null;
         pendingOfferJson = null;
         call.resolve(ret);

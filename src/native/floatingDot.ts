@@ -8,10 +8,18 @@ export interface NativeBubblePermissions {
   batteryIgnored: boolean;
 }
 
+export type BubbleActionType = 'accept' | 'decline' | 'open';
+
 export interface BubbleTappedEvent {
+  action?: BubbleActionType;
   offerId?: string;
   offerJson?: string;
   tappedAt?: number;
+}
+
+export interface NativeBubbleActionResult {
+  action: BubbleActionType;
+  offer: TripOffer | null;
 }
 
 interface UberFloatingBubbleNativePlugin {
@@ -35,6 +43,7 @@ interface UberFloatingBubbleNativePlugin {
     delaySec: number;
     offerId: string;
     offerJson: string;
+    offersQueueJson?: string;
     fareText: string;
     title: string;
     subtitle: string;
@@ -42,7 +51,19 @@ interface UberFloatingBubbleNativePlugin {
   }): Promise<void>;
   cancelScheduledOffer(): Promise<void>;
   showBubblePreview(): Promise<void>;
-  consumePendingLaunchOffer(): Promise<{ offerId?: string; offerJson?: string }>;
+  previewOfferCard(options: {
+    offerId: string;
+    offerJson: string;
+    fareText: string;
+    title: string;
+    subtitle: string;
+    expiresInSec: number;
+  }): Promise<void>;
+  consumePendingLaunchOffer(): Promise<{
+    action?: BubbleActionType;
+    offerId?: string;
+    offerJson?: string;
+  }>;
   addListener(
     eventName: 'bubbleTapped',
     listenerFunc: (event: BubbleTappedEvent) => void
@@ -171,12 +192,14 @@ export async function clearOfferFromNativeBubble(): Promise<void> {
 
 export async function scheduleNativeBackgroundOffer(
   delaySec: number,
-  offer: TripOffer
+  offer: TripOffer,
+  queueOffers?: TripOffer[]
 ): Promise<void> {
   if (!isNativeAndroidApk()) return;
   try {
     await UberFloatingBubble.scheduleBackgroundOffer({
       delaySec,
+      offersQueueJson: queueOffers && queueOffers.length > 0 ? JSON.stringify(queueOffers) : undefined,
       ...serializeOfferForNative(offer),
     });
   } catch {
@@ -202,12 +225,28 @@ export async function previewNativeFloatingBubble(): Promise<void> {
   }
 }
 
-export async function consumePendingNativeLaunchOffer(): Promise<TripOffer | null> {
+export async function previewNativeFloatingOfferCard(offer: TripOffer): Promise<void> {
+  if (!isNativeAndroidApk()) return;
+  try {
+    await UberFloatingBubble.previewOfferCard(serializeOfferForNative(offer));
+  } catch {
+    // Ignore native error
+  }
+}
+
+export async function consumePendingNativeLaunchOffer(): Promise<NativeBubbleActionResult | null> {
   if (!isNativeAndroidApk()) return null;
   try {
     const res = await UberFloatingBubble.consumePendingLaunchOffer();
+    let parsed: TripOffer | null = null;
     if (res?.offerJson) {
-      return JSON.parse(res.offerJson) as TripOffer;
+      parsed = JSON.parse(res.offerJson) as TripOffer;
+    }
+    if (res?.action || parsed) {
+      return {
+        action: res?.action ?? 'open',
+        offer: parsed,
+      };
     }
   } catch {
     // Ignore parse/native error
@@ -216,7 +255,7 @@ export async function consumePendingNativeLaunchOffer(): Promise<TripOffer | nul
 }
 
 export function listenToNativeBubbleTap(
-  onTap: (offer: TripOffer | null) => void
+  onAction: (result: NativeBubbleActionResult) => void
 ): () => void {
   if (!isNativeAndroidApk()) return () => {};
 
@@ -232,7 +271,10 @@ export function listenToNativeBubbleTap(
         parsed = null;
       }
     }
-    onTap(parsed);
+    onAction({
+      action: event?.action ?? 'open',
+      offer: parsed,
+    });
   }).then((h) => {
     if (cancelled) {
       void h.remove();
@@ -274,4 +316,3 @@ export function listenToNativePermissionsChanged(
     }
   };
 }
-

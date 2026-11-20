@@ -107,8 +107,10 @@ import {
   isNativeAndroidApk,
   listenToNativeBubbleTap,
   listenToNativePermissionsChanged,
+  NativeBubbleActionResult,
   NativeBubblePermissions,
   previewNativeFloatingBubble,
+  previewNativeFloatingOfferCard,
   pushOfferToNativeBubble,
   requestAndroidBatteryOptimization,
   requestAndroidNotificationPermission,
@@ -610,6 +612,37 @@ export default function App() {
   nextOfferSecLeftRef.current = nextOfferSecLeft;
   const onlineStatusRef = useRef<DriverOnlineStatus>(onlineStatus);
   onlineStatusRef.current = onlineStatus;
+  const nativeActionHandlersRef = useRef<{
+    accept: (offer: TripOffer) => void;
+    decline: (offer: TripOffer) => void;
+    radarMatch: (offer: TripOffer) => void;
+  } | null>(null);
+
+  const handleNativeOverlayAction = useCallback((result: NativeBubbleActionResult | null) => {
+    if (!result) return;
+    const { action, offer } = result;
+    if (action === 'decline') {
+      if (offer) {
+        nativeActionHandlersRef.current?.decline(offer);
+      } else {
+        setPendingOffer(null);
+      }
+      return;
+    }
+    setActiveTab('home');
+    if (!offer || tripStageRef.current !== 'idle') return;
+    if (action === 'accept') {
+      if (offer.type === 'radar') {
+        nativeActionHandlersRef.current?.radarMatch(offer);
+      } else {
+        nativeActionHandlersRef.current?.accept(offer);
+      }
+      return;
+    }
+    if (!pendingOfferRef.current) {
+      setPendingOffer(offer);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isNativeAndroidApk()) return;
@@ -636,11 +669,8 @@ export default function App() {
       if (inFg) {
         refreshPerms();
         void cancelNativeScheduledOffer();
-        void consumePendingNativeLaunchOffer().then((launchOffer) => {
-          if (launchOffer && tripStageRef.current === 'idle' && !pendingOfferRef.current) {
-            setActiveTab('home');
-            setPendingOffer(launchOffer);
-          }
+        void consumePendingNativeLaunchOffer().then((launchRes) => {
+          handleNativeOverlayAction(launchRes);
         });
       } else if (
         onlineStatusRef.current === 'online' &&
@@ -654,27 +684,21 @@ export default function App() {
         const upcoming = activePool[offerIndex % activePool.length];
         if (upcoming) {
           const delaySec = Math.max(4, nextOfferSecLeftRef.current ?? 9);
-          void scheduleNativeBackgroundOffer(delaySec, upcoming);
+          void scheduleNativeBackgroundOffer(delaySec, upcoming, activePool);
         }
       }
     };
 
-    const removeTapListener = listenToNativeBubbleTap((tappedOffer) => {
-      setActiveTab('home');
-      if (tappedOffer && tripStageRef.current === 'idle' && !pendingOfferRef.current) {
-        setPendingOffer(tappedOffer);
-      }
+    const removeTapListener = listenToNativeBubbleTap((actionResult) => {
+      handleNativeOverlayAction(actionResult);
     });
 
     const removePermsListener = listenToNativePermissionsChanged((perms) => {
       setNativeBubblePerms(perms);
     });
 
-    void consumePendingNativeLaunchOffer().then((launchOffer) => {
-      if (launchOffer && tripStageRef.current === 'idle' && !pendingOfferRef.current) {
-        setActiveTab('home');
-        setPendingOffer(launchOffer);
-      }
+    void consumePendingNativeLaunchOffer().then((launchRes) => {
+      handleNativeOverlayAction(launchRes);
     });
 
     document.addEventListener('visibilitychange', handleVisibility);
@@ -686,7 +710,13 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', refreshPerms);
     };
-  }, [onlineStatus, activeAccount?.name, preferences.intercity, offerIndex]);
+  }, [
+    onlineStatus,
+    activeAccount?.name,
+    preferences.intercity,
+    offerIndex,
+    handleNativeOverlayAction,
+  ]);
 
   // Trip Radar 60-second auto-refresh when online
   const rotateRadarOffers = useCallback((nextBatch: number) => {
@@ -1339,6 +1369,12 @@ export default function App() {
     },
     [activeAccount?.id, showToast]
   );
+
+  nativeActionHandlersRef.current = {
+    accept: handleAcceptOffer,
+    decline: handleDeclineOffer,
+    radarMatch: handleMoveToRadarMatch,
+  };
 
   const handleDeclineRadarItem = useCallback(
     (offer: TripOffer) => {
@@ -2389,17 +2425,38 @@ export default function App() {
                   onlineStatus === 'online' &&
                   !pendingOffer &&
                   !showRadarList && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void previewNativeFloatingBubble();
-                        showToast('Floating Uber dot active for 8s — drag anywhere!');
-                      }}
-                      className="h-9 px-3.5 rounded-full bg-black text-white border border-[#276EF1]/70 text-[12px] font-bold shadow-lg flex items-center gap-1.5 active:scale-95 transition-all whitespace-nowrap"
-                    >
-                      <Compass className="w-3.5 h-3.5 text-[#5B9BF8]" />
-                      <span>Test Dot</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void previewNativeFloatingBubble();
+                          showToast('Floating Uber dot active for 8s — drag anywhere!');
+                        }}
+                        className="h-9 px-3.5 rounded-full bg-black text-white border border-[#276EF1]/70 text-[12px] font-bold shadow-lg flex items-center gap-1.5 active:scale-95 transition-all whitespace-nowrap"
+                      >
+                        <Compass className="w-3.5 h-3.5 text-[#5B9BF8]" />
+                        <span>Test Dot</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pool = preferences.intercity
+                            ? SAMPLE_TRIP_OFFERS
+                            : SAMPLE_TRIP_OFFERS.filter((o) => !o.isIntercity);
+                          const sample = (pool.length > 0 ? pool : SAMPLE_TRIP_OFFERS)[
+                            offerIndex % Math.max(1, pool.length)
+                          ];
+                          if (sample) {
+                            setOfferIndex((i) => i + 1);
+                            void previewNativeFloatingOfferCard(sample);
+                            showToast('Floating overlay job card open — tap Accept or X!');
+                          }
+                        }}
+                        className="h-9 px-3.5 rounded-full bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[12px] font-bold shadow-lg flex items-center gap-1.5 active:scale-95 transition-all whitespace-nowrap"
+                      >
+                        <span>Test Job Card</span>
+                      </button>
+                    </>
                   )}
                 {permissionsReadyCount < 3 && (
                   <button
@@ -2917,6 +2974,15 @@ export default function App() {
           onPreviewFloatingDot={() => {
             void previewNativeFloatingBubble();
             showToast('Floating Uber dot visible for 8s — drag anywhere!');
+          }}
+          onPreviewFloatingJobCard={() => {
+            const sample = SAMPLE_TRIP_OFFERS[offerIndex % SAMPLE_TRIP_OFFERS.length];
+            if (sample) {
+              setOfferIndex((i) => i + 1);
+              setShowPermissionsModal(false);
+              void previewNativeFloatingOfferCard(sample);
+              showToast('Floating Uber job card preview active — tap Accept or Dot');
+            }
           }}
           onAcceptAll={handleAcceptAllPermissions}
           onClose={() => setShowPermissionsModal(false)}

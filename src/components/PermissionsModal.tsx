@@ -28,6 +28,7 @@ interface PermissionsModalProps {
   onRequestAndroidOverlay?: () => void;
   onRequestAndroidBattery?: () => void;
   onPreviewFloatingDot?: () => void;
+  onPreviewFloatingJobCard?: () => void;
   onAcceptAll: () => void;
   onClose: () => void;
 }
@@ -47,6 +48,7 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
   onRequestAndroidOverlay,
   onRequestAndroidBattery,
   onPreviewFloatingDot,
+  onPreviewFloatingJobCard,
   onAcceptAll,
   onClose,
 }) => {
@@ -233,12 +235,12 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
             </div>
 
             {isAndroidApk && (
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex items-center gap-2 pt-1 flex-wrap">
                 {!nativeBubblePerms?.batteryIgnored && onRequestAndroidBattery && (
                   <button
                     type="button"
                     onClick={onRequestAndroidBattery}
-                    className="flex-1 h-9 rounded-xl bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[12px] font-bold text-black dark:text-white flex items-center justify-center gap-1.5"
+                    className="flex-1 min-w-[140px] h-9 rounded-xl bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[12px] font-bold text-black dark:text-white flex items-center justify-center gap-1.5"
                   >
                     <BatteryCharging className="w-3.5 h-3.5 text-[#05944F]" />
                     Unrestricted Battery
@@ -248,9 +250,18 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
                   <button
                     type="button"
                     onClick={onPreviewFloatingDot}
-                    className="flex-1 h-9 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[12px] font-bold"
+                    className="flex-1 min-w-[110px] h-9 rounded-xl bg-black dark:bg-white/15 text-white text-[12px] font-bold"
                   >
-                    Preview Floating Dot (8s)
+                    Preview Dot
+                  </button>
+                )}
+                {nativeBubblePerms?.overlayGranted && onPreviewFloatingJobCard && (
+                  <button
+                    type="button"
+                    onClick={onPreviewFloatingJobCard}
+                    className="flex-1 min-w-[125px] h-9 rounded-xl bg-[#276EF1] text-white text-[12px] font-bold"
+                  >
+                    Preview Job Card
                   </button>
                 )}
               </div>

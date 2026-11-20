@@ -63,6 +63,8 @@ public class UberBubbleService extends Service {
     private static final int ONLINE_NOTIF_ID = 7101;
     private static final int OFFER_NOTIF_ID = 7102;
 
+    public static volatile boolean isServiceRunning = false;
+
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
     private WindowManager.LayoutParams bubbleParams;
@@ -638,14 +640,15 @@ public class UberBubbleService extends Service {
     }
 
     private int pendingIntentFlags() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            return PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
         }
         return PendingIntent.FLAG_UPDATE_CURRENT;
     }
 
     @Override
     public void onDestroy() {
+        isServiceRunning = false;
         cancelScheduledOffer();
         clearOfferState();
         removeBubbleView();

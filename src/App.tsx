@@ -106,6 +106,7 @@ import {
   getNativeBubblePermissions,
   isNativeAndroidApk,
   listenToNativeBubbleTap,
+  listenToNativePermissionsChanged,
   NativeBubblePermissions,
   previewNativeFloatingBubble,
   pushOfferToNativeBubble,
@@ -665,6 +666,10 @@ export default function App() {
       }
     });
 
+    const removePermsListener = listenToNativePermissionsChanged((perms) => {
+      setNativeBubblePerms(perms);
+    });
+
     void consumePendingNativeLaunchOffer().then((launchOffer) => {
       if (launchOffer && tripStageRef.current === 'idle' && !pendingOfferRef.current) {
         setActiveTab('home');
@@ -677,6 +682,7 @@ export default function App() {
 
     return () => {
       removeTapListener();
+      removePermsListener();
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', refreshPerms);
     };
@@ -1177,8 +1183,13 @@ export default function App() {
       nearestUKCity(driverPosRef.current),
       activeAccount?.name ?? 'Driver'
     );
+    if (isNativeAndroidApk() && !nativeBubblePerms.overlayGranted) {
+      setShowPermissionsModal(true);
+      showToast("Online · Tap 'Allow' on Floating Uber Dot so it shows when minimised");
+      return;
+    }
     showToast("You're online — Trip Radar active");
-  }, [activeAccount?.name, showToast]);
+  }, [activeAccount?.name, nativeBubblePerms.overlayGranted, showToast]);
 
   const handleToggleOnline = () => {
     uberSounds.unlock();
@@ -1808,7 +1819,8 @@ export default function App() {
     await handleAcceptBackgroundRefresh();
     if (isNativeAndroidApk() && !nativeBubblePerms.overlayGranted) {
       await requestAndroidOverlayPermission();
-      showToast('Enable "Display over other apps" for the floating Uber dot');
+      showToast('Allow "Display over other apps" for Uber Driver, then press Back');
+      return;
     }
     setShowPermissionsModal(false);
   };
@@ -2362,6 +2374,33 @@ export default function App() {
                     <span>Intercity Job</span>
                   </button>
                 )}
+                {isNativeAndroidApk() && !nativeBubblePerms.overlayGranted && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPermissionsModal(true)}
+                    className="h-9 px-3.5 rounded-full bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[12px] font-bold shadow-lg flex items-center gap-1.5 active:scale-95 transition-all whitespace-nowrap"
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>Enable Floating Dot</span>
+                  </button>
+                )}
+                {isNativeAndroidApk() &&
+                  nativeBubblePerms.overlayGranted &&
+                  onlineStatus === 'online' &&
+                  !pendingOffer &&
+                  !showRadarList && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void previewNativeFloatingBubble();
+                        showToast('Floating Uber dot active for 8s — drag anywhere!');
+                      }}
+                      className="h-9 px-3.5 rounded-full bg-black text-white border border-[#276EF1]/70 text-[12px] font-bold shadow-lg flex items-center gap-1.5 active:scale-95 transition-all whitespace-nowrap"
+                    >
+                      <Compass className="w-3.5 h-3.5 text-[#5B9BF8]" />
+                      <span>Test Dot</span>
+                    </button>
+                  )}
                 {permissionsReadyCount < 3 && (
                   <button
                     type="button"

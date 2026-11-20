@@ -41,6 +41,59 @@ public class UberFloatingBubblePlugin extends Plugin {
     public void load() {
         super.load();
         instanceRef = new WeakReference<>(this);
+        UberBubbleService.updateForegroundState(true);
+    }
+
+    @Override
+    protected void handleOnStart() {
+        super.handleOnStart();
+        UberBubbleService.updateForegroundState(true);
+    }
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        UberBubbleService.updateForegroundState(true);
+        emitPermissionsSnapshot();
+    }
+
+    @Override
+    protected void handleOnStop() {
+        super.handleOnStop();
+        UberBubbleService.updateForegroundState(false);
+    }
+
+    private JSObject buildPermissionsSnapshot() {
+        Context ctx = getContext();
+        boolean overlayGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(ctx);
+
+        boolean notificationsGranted = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationsGranted = ContextCompat.checkSelfPermission(
+                ctx,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED;
+        }
+
+        boolean batteryIgnored = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                batteryIgnored = pm.isIgnoringBatteryOptimizations(ctx.getPackageName());
+            }
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("isNative", true);
+        ret.put("overlayGranted", overlayGranted);
+        ret.put("notificationsGranted", notificationsGranted);
+        ret.put("batteryIgnored", batteryIgnored);
+        return ret;
+    }
+
+    private void emitPermissionsSnapshot() {
+        if (getContext() == null) return;
+        notifyListeners("permissionsChanged", buildPermissionsSnapshot());
     }
 
     public static void notifyBubbleTapped(String offerId, String offerJson) {
@@ -68,31 +121,7 @@ public class UberFloatingBubblePlugin extends Plugin {
 
     @PluginMethod
     public void checkPermissions(PluginCall call) {
-        Context ctx = getContext();
-        boolean overlayGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(ctx);
-
-        boolean notificationsGranted = true;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationsGranted = ContextCompat.checkSelfPermission(
-                ctx,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED;
-        }
-
-        boolean batteryIgnored = true;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
-            if (pm != null) {
-                batteryIgnored = pm.isIgnoringBatteryOptimizations(ctx.getPackageName());
-            }
-        }
-
-        JSObject ret = new JSObject();
-        ret.put("isNative", true);
-        ret.put("overlayGranted", overlayGranted);
-        ret.put("notificationsGranted", notificationsGranted);
-        ret.put("batteryIgnored", batteryIgnored);
-        call.resolve(ret);
+        call.resolve(buildPermissionsSnapshot());
     }
 
     @PluginMethod
@@ -127,6 +156,7 @@ public class UberFloatingBubblePlugin extends Plugin {
     @PermissionCallback
     private void notificationsPermsCallback(PluginCall call) {
         boolean granted = getPermissionState("notifications") == PermissionState.GRANTED;
+        emitPermissionsSnapshot();
         JSObject ret = new JSObject();
         ret.put("granted", granted);
         call.resolve(ret);
@@ -157,9 +187,12 @@ public class UberFloatingBubblePlugin extends Plugin {
 
     @PluginMethod
     public void startOnlineService(PluginCall call) {
+        String city = call.getString("city", "London");
+        UberBubbleService.setDesiredOnlineState(true, city);
+
         Intent svc = new Intent(getContext(), UberBubbleService.class);
         svc.setAction(UberBubbleService.ACTION_START_ONLINE);
-        svc.putExtra(UberBubbleService.EXTRA_CITY, call.getString("city", "London"));
+        svc.putExtra(UberBubbleService.EXTRA_CITY, city);
         svc.putExtra(UberBubbleService.EXTRA_DRIVER_NAME, call.getString("driverName", "Driver"));
         startServiceCompat(svc);
         call.resolve();
@@ -167,37 +200,39 @@ public class UberFloatingBubblePlugin extends Plugin {
 
     @PluginMethod
     public void stopOnlineService(PluginCall call) {
-        if (UberBubbleService.isServiceRunning) {
-            Intent svc = new Intent(getContext(), UberBubbleService.class);
-            svc.setAction(UberBubbleService.ACTION_STOP_ONLINE);
-            safeStartService(svc);
-        }
+        UberBubbleService.stopOnlineDirect();
         call.resolve();
     }
 
     @PluginMethod
     public void setAppInForeground(PluginCall call) {
-        if (UberBubbleService.isServiceRunning) {
-            boolean inForeground = Boolean.TRUE.equals(call.getBoolean("inForeground", true));
-            Intent svc = new Intent(getContext(), UberBubbleService.class);
-            svc.setAction(UberBubbleService.ACTION_APP_FOREGROUND);
-            svc.putExtra(UberBubbleService.EXTRA_IN_FOREGROUND, inForeground);
-            safeStartService(svc);
-        }
+        boolean inForeground = Boolean.TRUE.equals(call.getBoolean("inForeground", true));
+        UberBubbleService.updateForegroundState(inForeground);
         call.resolve();
     }
 
     @PluginMethod
     public void showOfferOnBubble(PluginCall call) {
-        Intent svc = new Intent(getContext(), UberBubbleService.class);
-        svc.setAction(UberBubbleService.ACTION_SHOW_OFFER);
-        svc.putExtra(UberBubbleService.EXTRA_OFFER_ID, call.getString("offerId", ""));
-        svc.putExtra(UberBubbleService.EXTRA_OFFER_JSON, call.getString("offerJson", ""));
-        svc.putExtra(UberBubbleService.EXTRA_FARE_TEXT, call.getString("fareText", "£15"));
-        svc.putExtra(UberBubbleService.EXTRA_OFFER_TITLE, call.getString("title", "New Uber Trip"));
-        svc.putExtra(UberBubbleService.EXTRA_OFFER_SUBTITLE, call.getString("subtitle", "Tap floating dot to accept"));
-        svc.putExtra(UberBubbleService.EXTRA_EXPIRES_SEC, call.getInt("expiresInSec", 15));
-        startServiceCompat(svc);
+        String offerId = call.getString("offerId", "");
+        String offerJson = call.getString("offerJson", "");
+        String fareText = call.getString("fareText", "£15");
+        String title = call.getString("title", "New Uber Trip");
+        String subtitle = call.getString("subtitle", "Tap floating dot to accept");
+        int expiresInSec = call.getInt("expiresInSec", 15);
+
+        if (UberBubbleService.isServiceRunning) {
+            UberBubbleService.updateOfferDirect(offerId, offerJson, fareText, title, subtitle, expiresInSec);
+        } else {
+            Intent svc = new Intent(getContext(), UberBubbleService.class);
+            svc.setAction(UberBubbleService.ACTION_SHOW_OFFER);
+            svc.putExtra(UberBubbleService.EXTRA_OFFER_ID, offerId);
+            svc.putExtra(UberBubbleService.EXTRA_OFFER_JSON, offerJson);
+            svc.putExtra(UberBubbleService.EXTRA_FARE_TEXT, fareText);
+            svc.putExtra(UberBubbleService.EXTRA_OFFER_TITLE, title);
+            svc.putExtra(UberBubbleService.EXTRA_OFFER_SUBTITLE, subtitle);
+            svc.putExtra(UberBubbleService.EXTRA_EXPIRES_SEC, expiresInSec);
+            startServiceCompat(svc);
+        }
         call.resolve();
     }
 
@@ -205,39 +240,30 @@ public class UberFloatingBubblePlugin extends Plugin {
     public void clearOfferOnBubble(PluginCall call) {
         pendingOfferId = null;
         pendingOfferJson = null;
-        if (UberBubbleService.isServiceRunning) {
-            Intent svc = new Intent(getContext(), UberBubbleService.class);
-            svc.setAction(UberBubbleService.ACTION_CLEAR_OFFER);
-            safeStartService(svc);
-        }
+        UberBubbleService.clearOfferDirect();
         call.resolve();
     }
 
     @PluginMethod
     public void scheduleBackgroundOffer(PluginCall call) {
         if (UberBubbleService.isServiceRunning) {
-            Intent svc = new Intent(getContext(), UberBubbleService.class);
-            svc.setAction(UberBubbleService.ACTION_SCHEDULE_OFFER);
             Integer delaySec = call.getInt("delaySec", 10);
-            svc.putExtra(UberBubbleService.EXTRA_DELAY_MS, delaySec.longValue() * 1000L);
-            svc.putExtra(UberBubbleService.EXTRA_OFFER_ID, call.getString("offerId", ""));
-            svc.putExtra(UberBubbleService.EXTRA_OFFER_JSON, call.getString("offerJson", ""));
-            svc.putExtra(UberBubbleService.EXTRA_FARE_TEXT, call.getString("fareText", "£15"));
-            svc.putExtra(UberBubbleService.EXTRA_OFFER_TITLE, call.getString("title", "New Uber Trip"));
-            svc.putExtra(UberBubbleService.EXTRA_OFFER_SUBTITLE, call.getString("subtitle", "Tap floating dot to accept"));
-            svc.putExtra(UberBubbleService.EXTRA_EXPIRES_SEC, call.getInt("expiresInSec", 15));
-            safeStartService(svc);
+            UberBubbleService.scheduleOfferDirect(
+                delaySec.longValue() * 1000L,
+                call.getString("offerId", ""),
+                call.getString("offerJson", ""),
+                call.getString("fareText", "£15"),
+                call.getString("title", "New Uber Trip"),
+                call.getString("subtitle", "Tap floating dot to accept"),
+                call.getInt("expiresInSec", 15)
+            );
         }
         call.resolve();
     }
 
     @PluginMethod
     public void cancelScheduledOffer(PluginCall call) {
-        if (UberBubbleService.isServiceRunning) {
-            Intent svc = new Intent(getContext(), UberBubbleService.class);
-            svc.setAction(UberBubbleService.ACTION_CANCEL_SCHEDULED);
-            safeStartService(svc);
-        }
+        UberBubbleService.cancelScheduledDirect();
         call.resolve();
     }
 
@@ -257,14 +283,6 @@ public class UberFloatingBubblePlugin extends Plugin {
         pendingOfferId = null;
         pendingOfferJson = null;
         call.resolve(ret);
-    }
-
-    private void safeStartService(Intent intent) {
-        try {
-            getContext().startService(intent);
-        } catch (Exception ignored) {
-            startServiceCompat(intent);
-        }
     }
 
     private void startServiceCompat(Intent intent) {

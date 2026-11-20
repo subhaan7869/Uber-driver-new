@@ -47,6 +47,10 @@ interface UberFloatingBubbleNativePlugin {
     eventName: 'bubbleTapped',
     listenerFunc: (event: BubbleTappedEvent) => void
   ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'permissionsChanged',
+    listenerFunc: (perms: NativeBubblePermissions) => void
+  ): Promise<PluginListenerHandle>;
 }
 
 const UberFloatingBubble = registerPlugin<UberFloatingBubbleNativePlugin>(
@@ -244,3 +248,30 @@ export function listenToNativeBubbleTap(
     }
   };
 }
+
+export function listenToNativePermissionsChanged(
+  onChanged: (perms: NativeBubblePermissions) => void
+): () => void {
+  if (!isNativeAndroidApk()) return () => {};
+
+  let handle: PluginListenerHandle | null = null;
+  let cancelled = false;
+
+  void UberFloatingBubble.addListener('permissionsChanged', (perms) => {
+    onChanged(perms);
+  }).then((h) => {
+    if (cancelled) {
+      void h.remove();
+    } else {
+      handle = h;
+    }
+  });
+
+  return () => {
+    cancelled = true;
+    if (handle) {
+      void handle.remove();
+    }
+  };
+}
+

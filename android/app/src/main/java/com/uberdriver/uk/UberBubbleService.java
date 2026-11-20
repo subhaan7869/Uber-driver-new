@@ -64,6 +64,10 @@ public class UberBubbleService extends Service {
     private static final int OFFER_NOTIF_ID = 7102;
 
     public static volatile boolean isServiceRunning = false;
+    private static volatile UberBubbleService instance = null;
+    private static volatile boolean desiredOnline = false;
+    private static volatile boolean desiredInForeground = true;
+    private static volatile String desiredCity = "London";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
@@ -87,10 +91,110 @@ public class UberBubbleService extends Service {
     private Runnable scheduledOfferRunnable;
     private Runnable previewStopRunnable;
 
+    // --- Direct in-process hooks so background restrictions never drop foreground/offer updates ---
+
+    public static void setDesiredOnlineState(boolean online, String city) {
+        desiredOnline = online;
+        if (city != null && !city.isEmpty()) {
+            desiredCity = city;
+        }
+        UberBubbleService inst = instance;
+        if (inst != null) {
+            inst.mainHandler.post(() -> {
+                inst.isOnline = desiredOnline;
+                inst.currentCity = desiredCity;
+                if (inst.isOnline) {
+                    inst.startOnlineForeground();
+                    inst.appInForeground = desiredInForeground;
+                    inst.updateBubbleVisibility();
+                } else {
+                    inst.handleStopOnline();
+                }
+            });
+        }
+    }
+
+    public static void updateForegroundState(boolean inForeground) {
+        desiredInForeground = inForeground;
+        UberBubbleService inst = instance;
+        if (inst != null) {
+            inst.mainHandler.post(() -> {
+                inst.appInForeground = inForeground;
+                if (inForeground) {
+                    inst.cancelScheduledOffer();
+                }
+                inst.updateBubbleVisibility();
+            });
+        }
+    }
+
+    public static void updateOfferDirect(
+        String offerId,
+        String offerJson,
+        String fareText,
+        String title,
+        String subtitle,
+        int expiresSec
+    ) {
+        UberBubbleService inst = instance;
+        if (inst != null) {
+            inst.mainHandler.post(() ->
+                inst.triggerOfferDisplay(offerId, offerJson, fareText, title, subtitle, expiresSec, !inst.appInForeground)
+            );
+        }
+    }
+
+    public static void clearOfferDirect() {
+        UberBubbleService inst = instance;
+        if (inst != null) {
+            inst.mainHandler.post(() -> {
+                inst.clearOfferState();
+                inst.renderBubbleVisualState();
+                inst.cancelOfferNotification();
+            });
+        }
+    }
+
+    public static void scheduleOfferDirect(
+        long delayMs,
+        String offerId,
+        String offerJson,
+        String fareText,
+        String title,
+        String subtitle,
+        int expiresSec
+    ) {
+        UberBubbleService inst = instance;
+        if (inst != null) {
+            inst.mainHandler.post(() ->
+                inst.scheduleNativeOffer(delayMs, offerId, offerJson, fareText, title, subtitle, expiresSec)
+            );
+        }
+    }
+
+    public static void cancelScheduledDirect() {
+        UberBubbleService inst = instance;
+        if (inst != null) {
+            inst.mainHandler.post(inst::cancelScheduledOffer);
+        }
+    }
+
+    public static void stopOnlineDirect() {
+        desiredOnline = false;
+        UberBubbleService inst = instance;
+        if (inst != null) {
+            inst.mainHandler.post(inst::handleStopOnline);
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
         isServiceRunning = true;
+        isOnline = desiredOnline;
+        appInForeground = desiredInForeground;
+        currentCity = desiredCity;
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         createNotificationChannels();
     }
@@ -98,8 +202,11 @@ public class UberBubbleService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) {
-            if (isOnline) {
+            if (isOnline || desiredOnline) {
+                isOnline = true;
+                appInForeground = desiredInForeground;
                 startOnlineForeground();
+                updateBubbleVisibility();
             }
             return START_STICKY;
         }
@@ -112,26 +219,25 @@ public class UberBubbleService extends Service {
         switch (action) {
             case ACTION_START_ONLINE: {
                 isOnline = true;
+                desiredOnline = true;
+                appInForeground = desiredInForeground;
                 String city = intent.getStringExtra(EXTRA_CITY);
                 if (city != null && !city.isEmpty()) {
                     currentCity = city;
+                    desiredCity = city;
                 }
                 startOnlineForeground();
                 updateBubbleVisibility();
                 break;
             }
             case ACTION_STOP_ONLINE: {
-                isOnline = false;
-                previewMode = false;
-                cancelScheduledOffer();
-                clearOfferState();
-                removeBubbleView();
-                stopForegroundCompat();
-                stopSelf();
+                desiredOnline = false;
+                handleStopOnline();
                 break;
             }
             case ACTION_APP_FOREGROUND: {
                 appInForeground = intent.getBooleanExtra(EXTRA_IN_FOREGROUND, true);
+                desiredInForeground = appInForeground;
                 if (appInForeground) {
                     cancelScheduledOffer();
                 }
@@ -192,6 +298,16 @@ public class UberBubbleService extends Service {
         }
 
         return START_STICKY;
+    }
+
+    private void handleStopOnline() {
+        isOnline = false;
+        previewMode = false;
+        cancelScheduledOffer();
+        clearOfferState();
+        removeBubbleView();
+        stopForegroundCompat();
+        stopSelf();
     }
 
     private void startOnlineForeground() {
@@ -453,12 +569,14 @@ public class UberBubbleService extends Service {
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             windowType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         );
         bubbleParams.gravity = Gravity.TOP | Gravity.START;
-        bubbleParams.x = dpToPx(16);
-        bubbleParams.y = dpToPx(220);
+        bubbleParams.x = dpToPx(14);
+        bubbleParams.y = dpToPx(210);
 
         try {
             windowManager.addView(bubbleRootView, bubbleParams);
@@ -484,6 +602,10 @@ public class UberBubbleService extends Service {
         LinearLayout container = new LinearLayout(this);
         container.setOrientation(LinearLayout.HORIZONTAL);
         container.setGravity(Gravity.CENTER_VERTICAL);
+        container.setClipChildren(false);
+        container.setClipToPadding(false);
+        int pad = dpToPx(4);
+        container.setPadding(pad, pad, pad, pad);
 
         int circleSize = dpToPx(60);
         dotCircleView = new FrameLayout(this);
@@ -649,6 +771,9 @@ public class UberBubbleService extends Service {
     @Override
     public void onDestroy() {
         isServiceRunning = false;
+        if (instance == this) {
+            instance = null;
+        }
         cancelScheduledOffer();
         clearOfferState();
         removeBubbleView();

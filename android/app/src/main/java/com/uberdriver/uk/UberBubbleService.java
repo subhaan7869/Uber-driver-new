@@ -1050,14 +1050,16 @@ public class UberBubbleService extends Service {
 
         // Service Pill (e.g. UberX / Comfort / Intercity)
         headerRow.addView(makePill(
-            offerServiceName,
-            offerIsIntercity ? Color.parseColor("#7A1C79") : Color.parseColor("#000000"),
+            isRadar && !offerIsIntercity ? ("👤 " + offerServiceName) : offerServiceName,
+            offerIsIntercity
+                ? Color.parseColor("#7A1C79")
+                : (isRadar ? Color.parseColor("#737373") : Color.parseColor("#000000")),
             Color.WHITE,
             12,
             0
         ));
 
-        // Exclusive / Trip Radar / Out of City badge
+        // Exclusive / Out of City badge (omit clutter pill on standard Trip Radar)
         if (offerIsIntercity) {
             headerRow.addView(makePill(
                 "Out of City",
@@ -1074,24 +1076,18 @@ public class UberBubbleService extends Service {
                 11,
                 dpToPx(6)
             ));
-        } else {
+        }
+
+        // Rating badge (only inline on Exclusive cards; Trip Radar puts rating cleanly under fare)
+        if (isExclusive) {
             headerRow.addView(makePill(
-                "Trip Radar",
+                String.format(Locale.UK, "★ %.2f", offerRating),
                 Color.parseColor("#F3F3F3"),
-                Color.parseColor("#222222"),
+                Color.parseColor("#111111"),
                 11,
                 dpToPx(6)
             ));
         }
-
-        // Rating badge
-        headerRow.addView(makePill(
-            String.format(Locale.UK, "★ %.2f", offerRating),
-            Color.parseColor("#F3F3F3"),
-            Color.parseColor("#111111"),
-            11,
-            dpToPx(6)
-        ));
 
         // Flexible spacer
         View spacer = new View(this);
@@ -1122,7 +1118,7 @@ public class UberBubbleService extends Service {
         closeBtn.setGravity(Gravity.CENTER);
         GradientDrawable closeBg = new GradientDrawable();
         closeBg.setCornerRadius(dpToPx(10));
-        closeBg.setColor(Color.parseColor("#EEEEEE"));
+        closeBg.setColor(Color.parseColor("#F3F3F3"));
         closeBtn.setBackground(closeBg);
         LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(dpToPx(34), dpToPx(34));
         closeLp.setMarginStart(dpToPx(6));
@@ -1138,28 +1134,30 @@ public class UberBubbleService extends Service {
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         );
-        fareRowLp.topMargin = dpToPx(8);
+        fareRowLp.topMargin = dpToPx(6);
         fareRow.setLayoutParams(fareRowLp);
         body.addView(fareRow);
 
         TextView fareTextView = new TextView(this);
         fareTextView.setText(String.format(Locale.UK, "£%.2f", offerFare));
         fareTextView.setTextColor(Color.parseColor("#000000"));
-        fareTextView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 32);
+        fareTextView.setTextSize(TypedValue.COMPLEX_UNIT_SP, isRadar ? 34 : 32);
         fareTextView.setTypeface(Typeface.DEFAULT_BOLD);
         fareRow.addView(fareTextView);
 
-        int totalMin = Math.max(1, offerTripMin + offerPickupMin);
-        long hourlyEst = Math.round((offerFare / totalMin) * 60.0);
-        fareRow.addView(makePill(
-            String.format(Locale.UK, "£%d/hr est.", hourlyEst),
-            Color.parseColor("#E6F4EA"),
-            Color.parseColor("#05944F"),
-            11,
-            dpToPx(8)
-        ));
+        if (isExclusive) {
+            int totalMin = Math.max(1, offerTripMin + offerPickupMin);
+            long hourlyEst = Math.round((offerFare / totalMin) * 60.0);
+            fareRow.addView(makePill(
+                String.format(Locale.UK, "£%d/hr est.", hourlyEst),
+                Color.parseColor("#E6F4EA"),
+                Color.parseColor("#05944F"),
+                11,
+                dpToPx(8)
+            ));
+        }
 
-        if (offerSurgeBonus > 0.01) {
+        if (offerSurgeBonus > 0.01 && isExclusive) {
             TextView surgeTxt = new TextView(this);
             surgeTxt.setText(String.format(Locale.UK, "+£%.2f surge", offerSurgeBonus));
             surgeTxt.setTextColor(Color.parseColor("#7A1C79"));
@@ -1172,6 +1170,26 @@ public class UberBubbleService extends Service {
             sLp.setMarginStart(dpToPx(8));
             surgeTxt.setLayoutParams(sLp);
             fareRow.addView(surgeTxt);
+        }
+
+        // Unboxed Rating row for Trip Radar (matches screenshot)
+        if (!isExclusive) {
+            TextView radarRatingTxt = new TextView(this);
+            String ratingLine = String.format(Locale.UK, "★  %.2f", offerRating);
+            if (offerSurgeBonus > 0.01) {
+                ratingLine += String.format(Locale.UK, "  · +£%.2f surge", offerSurgeBonus);
+            }
+            radarRatingTxt.setText(ratingLine);
+            radarRatingTxt.setTextColor(Color.parseColor("#222222"));
+            radarRatingTxt.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f);
+            radarRatingTxt.setTypeface(Typeface.DEFAULT_BOLD);
+            LinearLayout.LayoutParams rrLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            );
+            rrLp.topMargin = dpToPx(2);
+            radarRatingTxt.setLayoutParams(rrLp);
+            body.addView(radarRatingTxt);
         }
 
         // Extras subtitle line (PIN / Corridor / Surcharge)
@@ -1187,7 +1205,7 @@ public class UberBubbleService extends Service {
             if (extras.length() > 0) extras.append(" · ");
             extras.append("PIN Verified");
         }
-        if (extras.length() > 0) {
+        if (extras.length() > 0 && isExclusive) {
             TextView extrasTxt = new TextView(this);
             extrasTxt.setText(extras.toString());
             extrasTxt.setTextColor(Color.parseColor("#545454"));
@@ -1205,7 +1223,7 @@ public class UberBubbleService extends Service {
 
         // Divider
         View divider = new View(this);
-        divider.setBackgroundColor(Color.parseColor("#EEEEEE"));
+        divider.setBackgroundColor(Color.parseColor("#EAEAEA"));
         LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             dpToPx(1)
@@ -1223,8 +1241,8 @@ public class UberBubbleService extends Service {
         timeline.addView(makeTimelineRow(
             true,
             false,
-            String.format(Locale.UK, "%d min (%.1f mi) away", offerPickupMin, offerPickupMiles),
-            offerPickupAddress + " · " + offerPickupArea
+            String.format(Locale.UK, "%d mins (%.1f mi) away", offerPickupMin, offerPickupMiles),
+            offerPickupAddress + ", " + offerPickupArea
         ));
 
         if (offerStopAddress != null) {
@@ -1239,11 +1257,11 @@ public class UberBubbleService extends Service {
         timeline.addView(makeTimelineRow(
             false,
             false,
-            String.format(Locale.UK, "%d min (%.1f mi) trip", offerTripMin, offerTripMiles),
-            offerDropoffAddress + " · " + offerDropoffArea
+            String.format(Locale.UK, "%d mins (%.1f mi) trip", offerTripMin, offerTripMiles),
+            offerDropoffAddress + ", " + offerDropoffArea
         ));
 
-        // 6. Primary Accept / Match / Decline buttons
+        // 6. Primary Accept / Match button (top-right X already declines)
         LinearLayout actionsRow = new LinearLayout(this);
         actionsRow.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams actLp = new LinearLayout.LayoutParams(
@@ -1254,24 +1272,6 @@ public class UberBubbleService extends Service {
         actionsRow.setLayoutParams(actLp);
         body.addView(actionsRow);
 
-        if (isRadar) {
-            TextView declineBtn = new TextView(this);
-            declineBtn.setText("Decline");
-            declineBtn.setTextColor(Color.parseColor("#111111"));
-            declineBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            declineBtn.setTypeface(Typeface.DEFAULT_BOLD);
-            declineBtn.setGravity(Gravity.CENTER);
-            GradientDrawable decBg = new GradientDrawable();
-            decBg.setCornerRadius(dpToPx(12));
-            decBg.setColor(Color.parseColor("#F3F3F3"));
-            declineBtn.setBackground(decBg);
-            LinearLayout.LayoutParams decLp = new LinearLayout.LayoutParams(0, dpToPx(46), 1f);
-            decLp.setMarginEnd(dpToPx(8));
-            declineBtn.setLayoutParams(decLp);
-            declineBtn.setOnClickListener(v -> handleCardDecline());
-            actionsRow.addView(declineBtn);
-        }
-
         LinearLayout acceptBtn = new LinearLayout(this);
         acceptBtn.setOrientation(LinearLayout.HORIZONTAL);
         acceptBtn.setGravity(Gravity.CENTER);
@@ -1279,7 +1279,7 @@ public class UberBubbleService extends Service {
         accBg.setCornerRadius(dpToPx(12));
         accBg.setColor(accentColor);
         acceptBtn.setBackground(accBg);
-        LinearLayout.LayoutParams accLp = new LinearLayout.LayoutParams(0, dpToPx(46), isRadar ? 2f : 1f);
+        LinearLayout.LayoutParams accLp = new LinearLayout.LayoutParams(0, dpToPx(46), 1f);
         acceptBtn.setLayoutParams(accLp);
         acceptBtn.setOnClickListener(v -> handleCardAccept());
 

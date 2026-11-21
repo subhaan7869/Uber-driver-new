@@ -29,6 +29,7 @@ interface UberFloatingBubbleNativePlugin {
   requestBatteryOptimization(): Promise<void>;
   startOnlineService(options: { city?: string; driverName?: string }): Promise<void>;
   stopOnlineService(): Promise<void>;
+  setImmersiveNavHidden(options: { hidden: boolean }): Promise<void>;
   setAppInForeground(options: { inForeground: boolean }): Promise<void>;
   showOfferOnBubble(options: {
     offerId: string;
@@ -147,6 +148,15 @@ export async function stopNativeOnlineBubbleService(): Promise<void> {
   if (!isNativeAndroidApk()) return;
   try {
     await UberFloatingBubble.stopOnlineService();
+  } catch {
+    // Ignore native error
+  }
+}
+
+export async function setNativeImmersiveNavHidden(hidden: boolean): Promise<void> {
+  if (!isNativeAndroidApk()) return;
+  try {
+    await UberFloatingBubble.setImmersiveNavHidden({ hidden });
   } catch {
     // Ignore native error
   }

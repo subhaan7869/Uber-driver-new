@@ -1,16 +1,18 @@
 import React from 'react';
-import { Banknote, Home, Mail, Menu } from 'lucide-react';
+import { Banknote, CalendarClock, Home, Mail, Menu } from 'lucide-react';
 import { MainTab } from '../types/driver';
 
 interface BottomNavProps {
   activeTab: MainTab;
   unreadInboxCount: number;
+  scheduledReserveCount?: number;
   onChangeTab: (tab: MainTab) => void;
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({
   activeTab,
   unreadInboxCount,
+  scheduledReserveCount = 0,
   onChangeTab,
 }) => {
   const items: Array<{
@@ -27,6 +29,20 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           className={`w-[22px] h-[22px] ${
             active
               ? 'text-black dark:text-white fill-black dark:fill-white'
+              : 'text-[#6B6B6B] dark:text-neutral-400'
+          }`}
+        />
+      ),
+    },
+    {
+      id: 'reserve',
+      label: 'Reserve',
+      badge: scheduledReserveCount,
+      icon: (active) => (
+        <CalendarClock
+          className={`w-[22px] h-[22px] ${
+            active
+              ? 'text-black dark:text-white stroke-[2.5]'
               : 'text-[#6B6B6B] dark:text-neutral-400'
           }`}
         />
@@ -77,7 +93,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   return (
     <nav
       aria-label="Primary navigation"
-      className="w-full bg-white dark:bg-[#141416] border-t border-[#EAEAEA] dark:border-white/10 grid grid-cols-4 h-[64px] shrink-0 z-30"
+      className="w-full bg-white dark:bg-[#141416] border-t border-[#EAEAEA] dark:border-white/10 grid grid-cols-5 h-[64px] shrink-0 z-30"
     >
       {items.map((item) => {
         const active = activeTab === item.id;

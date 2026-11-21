@@ -1,4 +1,4 @@
-export type MainTab = 'home' | 'hub' | 'earnings' | 'inbox' | 'menu';
+export type MainTab = 'home' | 'hub' | 'reserve' | 'earnings' | 'inbox' | 'menu';
 
 export type DriverOnlineStatus = 'offline' | 'online';
 
@@ -96,6 +96,38 @@ export interface TripOffer {
   stopCoords?: Coordinates;
   riderNote?: string;
   expiresInSec: number;
+}
+
+export type ReserveCategory = 'local' | 'airport' | 'executive';
+
+export interface ReserveTrip {
+  id: string;
+  category: ReserveCategory;
+  serviceName: 'Reserve · UberX' | 'Reserve · Comfort' | 'Reserve · Executive' | 'Reserve · UberXL';
+  scheduledAtMs: number;
+  dayLabel: string; // e.g. 'Today' | 'Tomorrow'
+  timeLabel: string; // e.g. '15:30'
+  onlineByLabel: string; // e.g. '14:50' (40m before pickup)
+  estimatedFare: number;
+  reserveFee: number;
+  rating: number;
+  riderName: string;
+  riderTrips: number;
+  pickupMinutes: number;
+  pickupMiles: number;
+  pickupAddress: string;
+  pickupArea: string;
+  dropoffAddress: string;
+  dropoffArea: string;
+  tripMiles: number;
+  tripMinutes: number;
+  pickupCoords: Coordinates;
+  dropoffCoords: Coordinates;
+  flightNumber?: string;
+  waitIncludedMin: number;
+  pinCode?: string;
+  riderNote?: string;
+  status: 'available' | 'scheduled';
 }
 
 export type MapReportCategory =

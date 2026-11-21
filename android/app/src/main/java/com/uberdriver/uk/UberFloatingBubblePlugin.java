@@ -208,6 +208,7 @@ public class UberFloatingBubblePlugin extends Plugin {
     public void startOnlineService(PluginCall call) {
         String city = call.getString("city", "London");
         UberBubbleService.setDesiredOnlineState(true, city);
+        MainActivity.setOnlineImmersiveMode(true);
 
         Intent svc = new Intent(getContext(), UberBubbleService.class);
         svc.setAction(UberBubbleService.ACTION_START_ONLINE);
@@ -220,6 +221,14 @@ public class UberFloatingBubblePlugin extends Plugin {
     @PluginMethod
     public void stopOnlineService(PluginCall call) {
         UberBubbleService.stopOnlineDirect();
+        MainActivity.setOnlineImmersiveMode(false);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setImmersiveNavHidden(PluginCall call) {
+        boolean hidden = Boolean.TRUE.equals(call.getBoolean("hidden", false));
+        MainActivity.setOnlineImmersiveMode(hidden);
         call.resolve();
     }
 

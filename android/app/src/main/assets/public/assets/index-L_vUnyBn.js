@@ -11631,6 +11631,19 @@ var BookOpen = createLucideIcon("book-open", [["path", {
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var BookmarkCheck = createLucideIcon("bookmark-check", [["path", {
+	d: "m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2Z",
+	key: "169p4p"
+}], ["path", {
+	d: "m9 10 2 2 4-4",
+	key: "1gnqz4"
+}]]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var CalendarClock = createLucideIcon("calendar-clock", [
 	["path", {
 		d: "M16 14v2.2l1.6 1",
@@ -13091,6 +13104,34 @@ var Target = createLucideIcon("target", [
 * This source code is licensed under the ISC license.
 * See the LICENSE file in the root directory of this source tree.
 */
+var Trash2 = createLucideIcon("trash-2", [
+	["path", {
+		d: "M10 11v6",
+		key: "nco0om"
+	}],
+	["path", {
+		d: "M14 11v6",
+		key: "outv1u"
+	}],
+	["path", {
+		d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6",
+		key: "miytrc"
+	}],
+	["path", {
+		d: "M3 6h18",
+		key: "d0wm0j"
+	}],
+	["path", {
+		d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+		key: "e791ji"
+	}]
+]);
+/**
+* @license lucide-react v0.546.0 - ISC
+*
+* This source code is licensed under the ISC license.
+* See the LICENSE file in the root directory of this source tree.
+*/
 var TriangleAlert = createLucideIcon("triangle-alert", [
 	["path", {
 		d: "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3",
@@ -13384,20 +13425,25 @@ var require_jsx_runtime = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 // src/components/AccountModal.tsx
 var import_client = require_client();
 var import_jsx_runtime = require_jsx_runtime();
-var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelectAccount, onSignInCredentials, onRegisterAccount, onSignOut, onClose }) => {
+var AccountModal = ({ accounts, activeAccount, rememberedLogin = null, isSignedOutGate = false, onSelectAccount, onSignInCredentials, onRegisterAccount, onExportBackupCode, onRestoreBackupCode, onSignOut, onClose }) => {
 	const [mode, setMode] = (0, import_react.useState)(isSignedOutGate ? "signin" : "list");
-	const [email, setEmail] = (0, import_react.useState)("");
-	const [password, setPassword] = (0, import_react.useState)("");
+	const [email, setEmail] = (0, import_react.useState)(() => isSignedOutGate && rememberedLogin?.email || "");
+	const [password, setPassword] = (0, import_react.useState)(() => isSignedOutGate && rememberedLogin?.password || "");
+	const [rememberMe, setRememberMe] = (0, import_react.useState)(() => rememberedLogin?.rememberMe ?? true);
 	const [name, setName] = (0, import_react.useState)("");
 	const [city, setCity] = (0, import_react.useState)("London");
 	const [vehicle, setVehicle] = (0, import_react.useState)("2024 Hyundai Ioniq 5");
 	const [licensePlate, setLicensePlate] = (0, import_react.useState)("LN24 EVU");
 	const [phvBadge, setPhvBadge] = (0, import_react.useState)("TfL-PHV-91204");
 	const [errorMsg, setErrorMsg] = (0, import_react.useState)(null);
+	const [backupCopied, setBackupCopied] = (0, import_react.useState)(false);
+	const [generatedBackupCode, setGeneratedBackupCode] = (0, import_react.useState)(null);
+	const [restoreOpen, setRestoreOpen] = (0, import_react.useState)(false);
+	const [restoreCode, setRestoreCode] = (0, import_react.useState)("");
 	const handleSignInSubmit = (e) => {
 		e.preventDefault();
 		setErrorMsg(null);
-		const res = onSignInCredentials(email.trim(), password);
+		const res = onSignInCredentials(email.trim(), password, rememberMe);
 		if (!res.ok) setErrorMsg(res.error || "Invalid email or password");
 		else onClose?.();
 	};
@@ -13415,10 +13461,48 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 			city: city.trim() || "London",
 			vehicle: vehicle.trim() || "2024 Toyota Corolla Hybrid",
 			licensePlate: licensePlate.trim().toUpperCase() || "UK24 DRV",
-			phvBadge: phvBadge.trim().toUpperCase() || "UK-PHV-10294"
+			phvBadge: phvBadge.trim().toUpperCase() || "UK-PHV-10294",
+			rememberMe
 		});
 		if (!res.ok) setErrorMsg(res.error || "Could not create driver account.");
 		else onClose?.();
+	};
+	const handleCopyBackup = async () => {
+		if (!activeAccount || !onExportBackupCode) return;
+		const code = onExportBackupCode(activeAccount);
+		setGeneratedBackupCode(code);
+		try {
+			await navigator.clipboard.writeText(code);
+			setBackupCopied(true);
+			setTimeout(() => setBackupCopied(false), 2400);
+		} catch {
+			try {
+				const tmp = document.createElement("textarea");
+				tmp.value = code;
+				tmp.style.position = "fixed";
+				tmp.style.opacity = "0";
+				document.body.appendChild(tmp);
+				tmp.select();
+				document.execCommand("copy");
+				document.body.removeChild(tmp);
+				setBackupCopied(true);
+				setTimeout(() => setBackupCopied(false), 2400);
+			} catch {
+				setErrorMsg("Select and copy the UBR1 key shown below.");
+			}
+		}
+	};
+	const handleRestoreSubmit = (e) => {
+		e.preventDefault();
+		setErrorMsg(null);
+		if (!onRestoreBackupCode) return;
+		const res = onRestoreBackupCode(restoreCode);
+		if (!res.ok) setErrorMsg(res.error || "Invalid backup code.");
+		else {
+			setRestoreCode("");
+			setRestoreOpen(false);
+			onClose?.();
+		}
 	};
 	const content = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "bg-white dark:bg-[#141416] w-full sm:max-w-[440px] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl border border-black/10 dark:border-white/10 max-h-[92vh] overflow-y-auto",
@@ -13430,11 +13514,11 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 					children: isSignedOutGate ? "Uber Driver UK Sign In" : "Driver Accounts"
 				}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 					className: "text-[12.5px] text-[#545454] dark:text-neutral-400",
-					children: "Separate profile, vehicle, ledger & face verification per driver"
+					children: "Remembered on this device · Separate profile, vehicle & ledger"
 				})] }), !isSignedOutGate && onClose && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 					type: "button",
 					onClick: onClose,
-					className: "w-9 h-9 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center shrink-0",
+					className: "w-10 h-10 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center shrink-0",
 					"aria-label": "Close accounts",
 					children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X$1, { className: "w-4 h-4 text-black dark:text-white" })
 				})]
@@ -13448,7 +13532,7 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 							setErrorMsg(null);
 							setMode("list");
 						},
-						className: `h-9 rounded-lg text-[12.5px] font-bold transition-colors ${mode === "list" ? "bg-white dark:bg-[#22242A] text-black dark:text-white shadow-xs" : "text-[#545454] dark:text-neutral-400"}`,
+						className: `min-h-[40px] rounded-lg text-[12.5px] font-bold transition-colors ${mode === "list" ? "bg-white dark:bg-[#22242A] text-black dark:text-white shadow-xs" : "text-[#545454] dark:text-neutral-400"}`,
 						children: [
 							"Saved (",
 							accounts.length,
@@ -13461,7 +13545,7 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 							setErrorMsg(null);
 							setMode("signin");
 						},
-						className: `h-9 rounded-lg text-[12.5px] font-bold transition-colors ${mode === "signin" ? "bg-white dark:bg-[#22242A] text-black dark:text-white shadow-xs" : "text-[#545454] dark:text-neutral-400"}`,
+						className: `min-h-[40px] rounded-lg text-[12.5px] font-bold transition-colors ${mode === "signin" ? "bg-white dark:bg-[#22242A] text-black dark:text-white shadow-xs" : "text-[#545454] dark:text-neutral-400"}`,
 						children: "Sign In"
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
@@ -13470,7 +13554,7 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 							setErrorMsg(null);
 							setMode("register");
 						},
-						className: `h-9 rounded-lg text-[12.5px] font-bold transition-colors ${mode === "register" ? "bg-white dark:bg-[#22242A] text-black dark:text-white shadow-xs" : "text-[#545454] dark:text-neutral-400"}`,
+						className: `min-h-[40px] rounded-lg text-[12.5px] font-bold transition-colors ${mode === "register" ? "bg-white dark:bg-[#22242A] text-black dark:text-white shadow-xs" : "text-[#545454] dark:text-neutral-400"}`,
 						children: "New Driver"
 					})
 				]
@@ -13487,7 +13571,7 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 						return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 							type: "button",
 							onClick: () => {
-								onSelectAccount(acct.id);
+								onSelectAccount(acct.id, rememberMe);
 								onClose?.();
 							},
 							className: `w-full p-3.5 rounded-2xl border text-left flex items-center justify-between gap-3 transition-all ${isCurrent ? "border-black dark:border-[#276EF1] bg-[#FAFAFA] dark:bg-[#1D2230]" : "border-[#E6E6E6] dark:border-white/10 hover:bg-[#FAFAFA] dark:hover:bg-white/5"}`,
@@ -13542,8 +13626,62 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						type: "button",
 						onClick: () => setMode("register"),
-						className: "w-full h-11 rounded-xl border border-dashed border-black/20 dark:border-white/20 text-[13.5px] font-bold text-black dark:text-white hover:bg-[#F6F6F6] dark:hover:bg-white/5 flex items-center justify-center gap-2 transition-colors",
+						className: "w-full min-h-[44px] rounded-xl border border-dashed border-black/20 dark:border-white/20 text-[13.5px] font-bold text-black dark:text-white hover:bg-[#F6F6F6] dark:hover:bg-white/5 flex items-center justify-center gap-2 transition-colors",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, { className: "w-4 h-4" }), "Create New UK Driver Account"]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "p-3.5 rounded-2xl bg-[#FAFAFA] dark:bg-[#1B1D22] border border-[#E6E6E6] dark:border-white/10 space-y-2.5",
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "flex items-center justify-between gap-2",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex items-center gap-2 min-w-0",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(BookmarkCheck, { className: "w-4 h-4 text-[#05944F] shrink-0" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+										className: "text-[12.5px] font-bold text-black dark:text-white truncate",
+										children: "Account Remembrance & Transfer"
+									})]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+									type: "button",
+									onClick: () => setRestoreOpen((v) => !v),
+									className: "text-[12px] font-bold text-[#276EF1] hover:underline shrink-0",
+									children: restoreOpen ? "Hide Restore" : "Restore Code"
+								})]
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "text-[11.5px] text-[#545454] dark:text-neutral-400",
+								children: "Your profile and ledger stay saved automatically on this device. Copy a backup key to move to another device or APK install."
+							}),
+							activeAccount && onExportBackupCode && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "space-y-2",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+									type: "button",
+									onClick: handleCopyBackup,
+									className: "w-full min-h-[40px] rounded-xl bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[12.5px] font-bold text-black dark:text-white flex items-center justify-center gap-1.5 hover:bg-[#F3F3F3] dark:hover:bg-white/15 transition-colors",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Copy, { className: "w-3.5 h-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: backupCopied ? "Backup Key Copied!" : `Copy Backup Key (${activeAccount.name.split(" ")[0]})` })]
+								}), generatedBackupCode && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+									type: "text",
+									readOnly: true,
+									value: generatedBackupCode,
+									onFocus: (e) => e.currentTarget.select(),
+									className: "w-full h-9 px-2.5 rounded-lg bg-white dark:bg-black/30 border border-black/10 dark:border-white/15 text-[11px] font-mono text-[#545454] dark:text-neutral-300 select-all"
+								})]
+							}),
+							restoreOpen && onRestoreBackupCode && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", {
+								onSubmit: handleRestoreSubmit,
+								className: "space-y-2 pt-1",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+									type: "text",
+									value: restoreCode,
+									onChange: (e) => setRestoreCode(e.target.value),
+									placeholder: "Paste UBR1:... backup key",
+									className: "w-full h-10 px-3 rounded-xl bg-white dark:bg-black/30 border border-black/10 dark:border-white/15 text-[12.5px] text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#276EF1]"
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+									type: "submit",
+									className: "w-full min-h-[40px] rounded-xl bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[12.5px] font-bold flex items-center justify-center gap-1.5",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Download, { className: "w-3.5 h-3.5" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Restore Saved Driver" })]
+								})]
+							})
+						]
 					}),
 					activeAccount && !isSignedOutGate && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						type: "button",
@@ -13551,7 +13689,7 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 							onSignOut();
 							onClose?.();
 						},
-						className: "w-full h-11 rounded-xl bg-[#FEECEB] dark:bg-red-950/40 hover:bg-[#FDD8D5] text-[#E11900] dark:text-red-300 text-[13.5px] font-bold flex items-center justify-center gap-2 transition-colors",
+						className: "w-full min-h-[44px] rounded-xl bg-[#FEECEB] dark:bg-red-950/40 hover:bg-[#FDD8D5] text-[#E11900] dark:text-red-300 text-[13.5px] font-bold flex items-center justify-center gap-2 transition-colors",
 						children: [
 							/* @__PURE__ */ (0, import_jsx_runtime.jsx)(LogOut, { className: "w-4 h-4" }),
 							"Sign Out (",
@@ -13565,11 +13703,44 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 				onSubmit: handleSignInSubmit,
 				className: "space-y-3",
 				children: [
+					rememberedLogin && rememberedLogin.rememberMe && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+						type: "button",
+						onClick: () => {
+							onSelectAccount(rememberedLogin.accountId, true);
+							onClose?.();
+						},
+						className: "w-full p-3.5 rounded-2xl bg-[#F4F8FF] dark:bg-[#192338] border border-[#276EF1]/30 flex items-center justify-between gap-3 text-left hover:bg-[#EAF1FE] dark:hover:bg-[#1F2C45] transition-colors",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex items-center gap-3 min-w-0",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "w-10 h-10 rounded-full bg-[#276EF1] text-white flex items-center justify-center shrink-0",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BookmarkCheck, { className: "w-5 h-5" })
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "min-w-0",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+									className: "text-[14px] font-bold text-black dark:text-white truncate",
+									children: ["Continue as ", rememberedLogin.name]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+									className: "text-[12px] text-[#545454] dark:text-neutral-300 truncate",
+									children: [
+										rememberedLogin.email,
+										" · ",
+										rememberedLogin.city
+									]
+								})]
+							})]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "text-[12px] font-bold text-[#276EF1] shrink-0",
+							children: "Resume"
+						})]
+					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", {
 						className: "block text-[12px] font-bold text-[#545454] dark:text-neutral-300 mb-1",
 						children: "Driver Email"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 						type: "email",
+						name: "email",
+						autoComplete: "email",
 						value: email,
 						onChange: (e) => setEmail(e.target.value),
 						placeholder: "alex.rivera@uberuk.demo",
@@ -13580,11 +13751,25 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 						children: "Password"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 						type: "password",
+						name: "password",
+						autoComplete: "current-password",
 						value: password,
 						onChange: (e) => setPassword(e.target.value),
 						placeholder: "password123",
 						className: "w-full h-11 px-3.5 rounded-xl bg-[#F3F3F3] dark:bg-white/10 text-[14px] text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-[#276EF1]"
 					})] }),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+						className: "flex items-center gap-2.5 py-1 cursor-pointer select-none",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+							type: "checkbox",
+							checked: rememberMe,
+							onChange: (e) => setRememberMe(e.target.checked),
+							className: "w-4 h-4 rounded accent-[#276EF1]"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "text-[13px] font-semibold text-black dark:text-white",
+							children: "Remember my account & stay signed in"
+						})]
+					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 						type: "submit",
 						className: "w-full h-12 rounded-xl bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] text-white text-[15px] font-bold transition-colors",
@@ -13594,13 +13779,13 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 						className: "pt-2 border-t border-[#EEEEEE] dark:border-white/10",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 							className: "text-[11.5px] font-semibold text-[#757575] dark:text-neutral-400 mb-2",
-							children: "Quick 1-Tap Demo Sign In:"
+							children: "Quick 1-Tap Saved Accounts:"
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 							className: "grid grid-cols-2 gap-2",
-							children: accounts.slice(0, 2).map((acct) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							children: accounts.slice(0, 4).map((acct) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 								type: "button",
 								onClick: () => {
-									onSelectAccount(acct.id);
+									onSelectAccount(acct.id, rememberMe);
 									onClose?.();
 								},
 								className: "p-2.5 rounded-xl bg-[#F6F6F6] dark:bg-white/10 hover:bg-[#EAEAEA] dark:hover:bg-white/15 text-left",
@@ -13631,6 +13816,8 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 							children: "Full Name"
 						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 							type: "text",
+							name: "name",
+							autoComplete: "name",
 							value: name,
 							onChange: (e) => setName(e.target.value),
 							placeholder: "Jordan Hughes",
@@ -13651,6 +13838,8 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 						children: "Email Address"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 						type: "email",
+						name: "email",
+						autoComplete: "email",
 						value: email,
 						onChange: (e) => setEmail(e.target.value),
 						placeholder: "jordan.hughes@driver.co.uk",
@@ -13661,6 +13850,8 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 						children: "Password"
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
 						type: "password",
+						name: "password",
+						autoComplete: "new-password",
 						value: password,
 						onChange: (e) => setPassword(e.target.value),
 						placeholder: "Create password",
@@ -13697,6 +13888,18 @@ var AccountModal = ({ accounts, activeAccount, isSignedOutGate = false, onSelect
 								})]
 							})
 						]
+					}),
+					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+						className: "flex items-center gap-2.5 py-0.5 cursor-pointer select-none",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+							type: "checkbox",
+							checked: rememberMe,
+							onChange: (e) => setRememberMe(e.target.checked),
+							className: "w-4 h-4 rounded accent-[#276EF1]"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							className: "text-[12.5px] font-semibold text-black dark:text-white",
+							children: "Remember account on this device"
+						})]
 					}),
 					/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						type: "submit",
@@ -14252,8 +14455,12 @@ var UK_TRAFFIC_SEGMENTS_LATLNG = [
 var SwipeButton = ({ label, onComplete, variant = "default" }) => {
 	const trackRef = (0, import_react.useRef)(null);
 	const [dragX, setDragX] = (0, import_react.useState)(0);
+	const dragXRef = (0, import_react.useRef)(0);
 	const [isDragging, setIsDragging] = (0, import_react.useState)(false);
+	const isDraggingRef = (0, import_react.useRef)(false);
 	const [completed, setCompleted] = (0, import_react.useState)(false);
+	const completedRef = (0, import_react.useRef)(false);
+	const activePointerIdRef = (0, import_react.useRef)(null);
 	const startXRef = (0, import_react.useRef)(0);
 	const maxDragRef = (0, import_react.useRef)(0);
 	const thumbWidth = 56;
@@ -14261,45 +14468,74 @@ var SwipeButton = ({ label, onComplete, variant = "default" }) => {
 		if (!trackRef.current) return 220;
 		return Math.max(trackRef.current.clientWidth - thumbWidth - 8, 120);
 	};
+	const updateDrag = (next) => {
+		dragXRef.current = next;
+		setDragX(next);
+	};
+	const triggerComplete = () => {
+		if (completedRef.current) return;
+		completedRef.current = true;
+		isDraggingRef.current = false;
+		activePointerIdRef.current = null;
+		setIsDragging(false);
+		setCompleted(true);
+		updateDrag(getMaxDrag());
+		setTimeout(() => {
+			onComplete();
+			completedRef.current = false;
+			setCompleted(false);
+			updateDrag(0);
+		}, 240);
+	};
 	const handlePointerDown = (e) => {
-		if (completed) return;
-		e.currentTarget.setPointerCapture(e.pointerId);
-		startXRef.current = e.clientX - dragX;
+		if (completedRef.current) return;
+		e.stopPropagation();
+		try {
+			e.currentTarget.setPointerCapture(e.pointerId);
+		} catch {}
+		activePointerIdRef.current = e.pointerId;
 		maxDragRef.current = getMaxDrag();
+		startXRef.current = e.clientX - dragXRef.current;
+		isDraggingRef.current = true;
 		setIsDragging(true);
 	};
 	const handlePointerMove = (e) => {
-		if (!isDragging || completed) return;
-		const nextX = Math.max(0, Math.min(e.clientX - startXRef.current, maxDragRef.current));
-		setDragX(nextX);
+		if (!isDraggingRef.current || completedRef.current) return;
+		if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return;
+		e.stopPropagation();
+		const maxDrag = maxDragRef.current || getMaxDrag();
+		const nextX = Math.max(0, Math.min(e.clientX - startXRef.current, maxDrag));
+		updateDrag(nextX);
+		if (nextX >= maxDrag * .92) triggerComplete();
 	};
-	const triggerComplete = () => {
-		setCompleted(true);
-		setDragX(getMaxDrag());
-		setTimeout(() => {
-			onComplete();
-			setCompleted(false);
-			setDragX(0);
-		}, 240);
-	};
-	const handlePointerUp = () => {
-		if (!isDragging || completed) return;
+	const handlePointerEnd = (e) => {
+		if (!isDraggingRef.current || completedRef.current) return;
+		if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return;
+		try {
+			if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+		} catch {}
+		activePointerIdRef.current = null;
+		isDraggingRef.current = false;
 		setIsDragging(false);
 		const maxDrag = maxDragRef.current || getMaxDrag();
-		if (dragX >= maxDrag * .72) triggerComplete();
-		else setDragX(0);
+		if (dragXRef.current >= maxDrag * .62) triggerComplete();
+		else updateDrag(0);
 	};
 	const progress = Math.min(dragX / Math.max(maxDragRef.current || 220, 1), 1);
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		ref: trackRef,
-		className: "relative w-full h-14 bg-[#EEEEEE] rounded-xl overflow-hidden select-none flex items-center justify-center border border-black/5",
+		style: {
+			touchAction: "none",
+			overscrollBehaviorX: "contain"
+		},
+		className: "relative w-full h-14 bg-[#EEEEEE] dark:bg-white/10 rounded-xl overflow-hidden select-none touch-none flex items-center justify-center border border-black/5 dark:border-white/10",
 		children: [
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: `absolute inset-y-0 left-0 transition-opacity ${variant === "green" ? "bg-[#05944F]/15" : "bg-black/10"}`,
+				className: `absolute inset-y-0 left-0 pointer-events-none transition-opacity ${variant === "green" ? "bg-[#05944F]/20" : "bg-black/10 dark:bg-white/15"}`,
 				style: { width: `${dragX + thumbWidth + 4}px` }
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-				className: "text-[16px] font-semibold tracking-tight text-black pointer-events-none transition-opacity",
+				className: "text-[16px] font-semibold tracking-tight text-black dark:text-white pointer-events-none transition-opacity pl-10 pr-6 truncate",
 				style: { opacity: Math.max(.15, 1 - progress * 1.2) },
 				children: label
 			}),
@@ -14315,20 +14551,21 @@ var SwipeButton = ({ label, onComplete, variant = "default" }) => {
 				},
 				onPointerDown: handlePointerDown,
 				onPointerMove: handlePointerMove,
-				onPointerUp: handlePointerUp,
-				onPointerCancel: handlePointerUp,
+				onPointerUp: handlePointerEnd,
+				onPointerCancel: handlePointerEnd,
 				style: {
+					touchAction: "none",
 					transform: `translateX(${dragX}px)`,
 					transition: isDragging ? "none" : "transform 220ms cubic-bezier(0.16, 1, 0.3, 1)"
 				},
-				className: `absolute left-1 top-1 bottom-1 w-14 rounded-lg flex items-center justify-center cursor-grab active:cursor-grabbing shadow-sm ${variant === "green" ? "bg-[#05944F] text-white" : "bg-black text-white"}`,
+				className: `absolute left-1 top-1 bottom-1 w-14 rounded-lg flex items-center justify-center cursor-grab active:cursor-grabbing shadow-sm touch-none select-none ${variant === "green" ? "bg-[#05944F] text-white" : "bg-black text-white"}`,
 				children: completed ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Check, { className: "w-5 h-5 stroke-[2.5]" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ArrowRight, { className: "w-5 h-5 stroke-[2.2]" })
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 				type: "button",
 				onClick: triggerComplete,
 				"aria-label": `Confirm ${label}`,
-				title: "Click to swipe",
+				title: "Tap to confirm",
 				className: "absolute right-0 top-0 bottom-0 w-16 opacity-0 cursor-pointer"
 			})
 		]
@@ -15195,15 +15432,21 @@ var ActiveTripSheet = ({ trip, stage, liveEtaLabel, liveDistanceLabel, routeStep
 	});
 };
 // src/components/BottomNav.tsx
-var BottomNav = ({ activeTab, unreadInboxCount, onChangeTab }) => {
+var BottomNav = ({ activeTab, unreadInboxCount, scheduledReserveCount = 0, onChangeTab }) => {
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("nav", {
 		"aria-label": "Primary navigation",
-		className: "w-full bg-white dark:bg-[#141416] border-t border-[#EAEAEA] dark:border-white/10 grid grid-cols-4 h-[64px] shrink-0 z-30",
+		className: "w-full bg-white dark:bg-[#141416] border-t border-[#EAEAEA] dark:border-white/10 grid grid-cols-5 h-[64px] shrink-0 z-30",
 		children: [
 			{
 				id: "home",
 				label: "Home",
 				icon: (active) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(House, { className: `w-[22px] h-[22px] ${active ? "text-black dark:text-white fill-black dark:fill-white" : "text-[#6B6B6B] dark:text-neutral-400"}` })
+			},
+			{
+				id: "reserve",
+				label: "Reserve",
+				badge: scheduledReserveCount,
+				icon: (active) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CalendarClock, { className: `w-[22px] h-[22px] ${active ? "text-black dark:text-white stroke-[2.5]" : "text-[#6B6B6B] dark:text-neutral-400"}` })
 			},
 			{
 				id: "earnings",
@@ -15405,173 +15648,7 @@ var INTERCITY_TRIP_OFFERS = [
 		expiresInSec: 20
 	}
 ];
-var SAMPLE_TRIP_OFFERS = [
-	{
-		id: "offer-josefina",
-		type: "exclusive",
-		serviceName: "UberX",
-		fare: 12.15,
-		rating: 4.95,
-		riderName: "Joséfina",
-		riderTrips: 312,
-		pickupMinutes: 2,
-		pickupMiles: 1.1,
-		pickupAddress: "215 Oxford St",
-		pickupArea: "Soho, London",
-		tripMinutes: 7,
-		tripMiles: 1.8,
-		dropoffAddress: "84 Victoria St",
-		dropoffArea: "Westminster, London",
-		pickupCoords: projectLatLngToMap(51.515, -.141),
-		dropoffCoords: projectLatLngToMap(51.497, -.135),
-		surgeBonus: 2.25,
-		pinCode: "4829",
-		surchargeLabel: "Central Congestion Zone",
-		surchargeAmount: 1.5,
-		riderNote: "Hi! I'm outside Pret in a black coat.",
-		expiresInSec: 15
-	},
-	INTERCITY_TRIP_OFFERS[0],
-	{
-		id: "offer-multistop-london",
-		type: "exclusive",
-		serviceName: "Comfort",
-		fare: 21.4,
-		rating: 4.94,
-		riderName: "Alistair V.",
-		riderTrips: 248,
-		pickupMinutes: 3,
-		pickupMiles: .7,
-		pickupAddress: "Marylebone High St",
-		pickupArea: "Marylebone, London",
-		tripMinutes: 16,
-		tripMiles: 3.9,
-		stopAddress: "Baker St Station (Quick 2m pickup)",
-		stopCoords: projectLatLngToMap(51.5226, -.1571),
-		dropoffAddress: "King’s Cross St Pancras Forecourt",
-		dropoffArea: "Camden, London",
-		pickupCoords: projectLatLngToMap(51.5205, -.1518),
-		dropoffCoords: projectLatLngToMap(51.5313, -.1261),
-		surgeBonus: 2.5,
-		pinCode: "6190",
-		surchargeLabel: "ULEZ Zone",
-		surchargeAmount: 1,
-		riderNote: "Picking up my colleague at Baker St on the way to St Pancras.",
-		expiresInSec: 16
-	},
-	{
-		id: "offer-radar-1",
-		type: "radar",
-		serviceName: "UberX",
-		fare: 29.31,
-		rating: 4.99,
-		riderName: "Marcus T.",
-		riderTrips: 540,
-		pickupMinutes: 4,
-		pickupMiles: .4,
-		pickupAddress: "12 Regent St",
-		pickupArea: "Piccadilly, London",
-		tripMinutes: 32,
-		tripMiles: 16.3,
-		dropoffAddress: "Heathrow Terminal 5 Departures",
-		dropoffArea: "London Heathrow Airport",
-		pickupCoords: projectLatLngToMap(51.509, -.134),
-		dropoffCoords: projectLatLngToMap(51.47, -.454),
-		pinCode: "7104",
-		surchargeLabel: "Heathrow Terminal Drop-off",
-		surchargeAmount: 5,
-		riderNote: "Two large suitcases — heading to BA Terminal 5.",
-		expiresInSec: 18
-	},
-	INTERCITY_TRIP_OFFERS[1],
-	{
-		id: "offer-exclusive-2",
-		type: "exclusive",
-		serviceName: "Comfort",
-		fare: 18.8,
-		rating: 4.92,
-		riderName: "Elena K.",
-		riderTrips: 128,
-		pickupMinutes: 3,
-		pickupMiles: .9,
-		pickupAddress: "Piccadilly Station",
-		pickupArea: "Manchester City Centre",
-		tripMinutes: 18,
-		tripMiles: 9.2,
-		dropoffAddress: "Manchester Airport T2",
-		dropoffArea: "Ringway, Manchester",
-		pickupCoords: projectLatLngToMap(53.477, -2.23),
-		dropoffCoords: projectLatLngToMap(53.358, -2.273),
-		surgeBonus: 3,
-		pinCode: "3391",
-		surchargeLabel: "Airport Barrier Fee",
-		surchargeAmount: 4,
-		expiresInSec: 15
-	},
-	{
-		id: "offer-radar-2",
-		type: "radar",
-		serviceName: "UberXL",
-		fare: 36.45,
-		rating: 4.97,
-		riderName: "David & Priya",
-		riderTrips: 215,
-		pickupMinutes: 4,
-		pickupMiles: 1.1,
-		pickupAddress: "Liverpool St Station",
-		pickupArea: "City of London",
-		tripMinutes: 28,
-		tripMiles: 14.4,
-		dropoffAddress: "Gatwick North Terminal",
-		dropoffArea: "West Sussex, RH6",
-		pickupCoords: projectLatLngToMap(51.517, -.082),
-		dropoffCoords: projectLatLngToMap(51.153, -.182),
-		surchargeLabel: "Gatwick Drop-off Levy + Dartford",
-		surchargeAmount: 6,
-		expiresInSec: 18
-	},
-	INTERCITY_TRIP_OFFERS[3],
-	{
-		id: "offer-radar-3",
-		type: "radar",
-		serviceName: "UberX",
-		fare: 15.6,
-		rating: 4.94,
-		riderName: "Oliver B.",
-		riderTrips: 189,
-		pickupMinutes: 3,
-		pickupMiles: .6,
-		pickupAddress: "New Street Station",
-		pickupArea: "Birmingham Central",
-		tripMinutes: 14,
-		tripMiles: 4.1,
-		dropoffAddress: "Bullring & Grand Central",
-		dropoffArea: "Solihull / Edgbaston",
-		pickupCoords: projectLatLngToMap(52.477, -1.899),
-		dropoffCoords: projectLatLngToMap(52.412, -1.778),
-		expiresInSec: 18
-	},
-	{
-		id: "offer-radar-4",
-		type: "radar",
-		serviceName: "Comfort",
-		fare: 22.9,
-		rating: 4.96,
-		riderName: "Amelia W.",
-		riderTrips: 402,
-		pickupMinutes: 5,
-		pickupMiles: 1.2,
-		pickupAddress: "Waverley Bridge",
-		pickupArea: "Edinburgh Old Town",
-		tripMinutes: 21,
-		tripMiles: 7.6,
-		dropoffAddress: "Edinburgh Airport Plaza",
-		dropoffArea: "Ingliston, Edinburgh",
-		pickupCoords: projectLatLngToMap(55.952, -3.19),
-		dropoffCoords: projectLatLngToMap(55.95, -3.372),
-		expiresInSec: 18
-	}
-];
+projectLatLngToMap(51.515, -.141), projectLatLngToMap(51.497, -.135), INTERCITY_TRIP_OFFERS[0], projectLatLngToMap(51.5226, -.1571), projectLatLngToMap(51.5205, -.1518), projectLatLngToMap(51.5313, -.1261), projectLatLngToMap(51.509, -.134), projectLatLngToMap(51.47, -.454), INTERCITY_TRIP_OFFERS[1], projectLatLngToMap(53.477, -2.23), projectLatLngToMap(53.358, -2.273), projectLatLngToMap(51.517, -.082), projectLatLngToMap(51.153, -.182), INTERCITY_TRIP_OFFERS[3], projectLatLngToMap(52.477, -1.899), projectLatLngToMap(52.412, -1.778), projectLatLngToMap(55.952, -3.19), projectLatLngToMap(55.95, -3.372);
 var HOURLY_TRENDS = [
 	{
 		hour: "6a",
@@ -20192,6 +20269,414 @@ var PreferencesSheet = ({ preferences, onTogglePreference, onSetNavProvider, onR
 		})
 	});
 };
+// src/components/ReserveView.tsx
+var ReserveView = ({ localCity, availableReserves, scheduledReserves, onAcceptReserve, onCancelReserve, onStartReserveTrip, onRefreshReserves, onBack }) => {
+	const [subTab, setSubTab] = (0, import_react.useState)(scheduledReserves.length > 0 ? "scheduled" : "available");
+	const [categoryFilter, setCategoryFilter] = (0, import_react.useState)("all");
+	const [confirmCancelId, setConfirmCancelId] = (0, import_react.useState)(null);
+	const filteredAvailable = (0, import_react.useMemo)(() => {
+		if (categoryFilter === "all") return availableReserves;
+		return availableReserves.filter((r) => r.category === categoryFilter);
+	}, [availableReserves, categoryFilter]);
+	const scheduledTotalGbp = (0, import_react.useMemo)(() => scheduledReserves.reduce((sum, item) => sum + item.estimatedFare, 0), [scheduledReserves]);
+	const formatHourlyEst = (trip) => {
+		const totalHours = Math.max(.25, (trip.pickupMinutes + trip.tripMinutes) / 60);
+		return Math.round(trip.estimatedFare / totalHours);
+	};
+	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "flex-1 min-h-0 flex flex-col bg-white dark:bg-[#0E0F12] overflow-hidden",
+		children: [
+			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+				className: "px-5 pt-15 lg:pt-5 pb-3 border-b border-[#EEEEEE] dark:border-white/10 flex items-center justify-between gap-3 shrink-0",
+				children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-center gap-3 min-w-0",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						onClick: onBack,
+						className: "w-11 h-11 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 active:scale-95 flex items-center justify-center transition-all shrink-0",
+						"aria-label": "Back to Map",
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ChevronLeft, { className: "w-6 h-6 text-black dark:text-white" })
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "min-w-0",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", {
+							className: "text-[18px] font-extrabold text-black dark:text-white truncate",
+							children: "Uber Reserve"
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+							className: "text-[12px] text-[#545454] dark:text-neutral-400 truncate",
+							children: ["Pre-booked rides around ", localCity]
+						})]
+					})]
+				}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+					type: "button",
+					onClick: onRefreshReserves,
+					className: "h-11 px-3.5 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-[12.5px] font-bold text-black dark:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0 active:scale-95 transition-all",
+					"aria-label": "Refresh Reserve requests",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(RefreshCw, { className: "w-4 h-4" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Refresh" })]
+				})]
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				className: "px-5 pt-3.5 pb-3 border-b border-[#EEEEEE] dark:border-white/10 shrink-0",
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "max-w-5xl mx-auto space-y-3",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "grid grid-cols-2 gap-1.5 p-1 bg-[#F3F3F3] dark:bg-white/10 rounded-xl",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							onClick: () => setSubTab("available"),
+							className: `min-h-[44px] rounded-lg text-[13.5px] font-bold transition-colors whitespace-nowrap px-3 tabular-nums ${subTab === "available" ? "bg-white dark:bg-[#22242A] text-black dark:text-white shadow-xs" : "text-[#545454] dark:text-neutral-400 hover:text-black dark:hover:text-white"}`,
+							children: [
+								"Available (",
+								availableReserves.length,
+								")"
+							]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+							type: "button",
+							onClick: () => setSubTab("scheduled"),
+							className: `min-h-[44px] rounded-lg text-[13.5px] font-bold transition-colors whitespace-nowrap px-3 tabular-nums ${subTab === "scheduled" ? "bg-white dark:bg-[#22242A] text-black dark:text-white shadow-xs" : "text-[#545454] dark:text-neutral-400 hover:text-black dark:hover:text-white"}`,
+							children: [
+								"Scheduled (",
+								scheduledReserves.length,
+								")"
+							]
+						})]
+					}), subTab === "available" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "flex items-center gap-2 overflow-x-auto pb-0.5",
+						children: [
+							{
+								id: "all",
+								label: "All Trips"
+							},
+							{
+								id: "airport",
+								label: "Airport"
+							},
+							{
+								id: "local",
+								label: "Local"
+							},
+							{
+								id: "executive",
+								label: "Executive"
+							}
+						].map((item) => {
+							const active = categoryFilter === item.id;
+							return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								onClick: () => setCategoryFilter(item.id),
+								className: `min-h-[40px] px-4 rounded-lg text-[12.5px] font-bold transition-colors whitespace-nowrap shrink-0 ${active ? "bg-black dark:bg-[#276EF1] text-white" : "bg-[#F3F3F3] dark:bg-white/10 text-[#545454] dark:text-neutral-300 hover:bg-[#E7E7E7] dark:hover:bg-white/15"}`,
+								children: item.label
+							}, item.id);
+						})
+					})]
+				})
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				className: "flex-1 overflow-y-auto p-5",
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "max-w-5xl mx-auto space-y-4",
+					children: [subTab === "scheduled" && scheduledReserves.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "p-4 rounded-2xl border border-[#276EF1]/25 bg-[#F4F8FF] dark:bg-[#192338] flex flex-wrap items-center justify-between gap-3",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+							className: "text-[12.5px] font-semibold text-[#545454] dark:text-neutral-300",
+							children: [
+								"Locked-in Reserve Earnings (",
+								scheduledReserves.length,
+								" ",
+								scheduledReserves.length === 1 ? "trip" : "trips",
+								")"
+							]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+							className: "text-[24px] font-extrabold text-black dark:text-white tabular-nums leading-tight mt-0.5",
+							children: ["£", scheduledTotalGbp.toFixed(2)]
+						})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "text-[12px] text-[#545454] dark:text-neutral-300 max-w-xs",
+							children: "Go online 40 min before pickup to lock your reservation and avoid reassignment."
+						})]
+					}), subTab === "available" ? filteredAvailable.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "p-8 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] text-center space-y-3",
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "w-12 h-12 rounded-full bg-[#F3F3F3] dark:bg-white/10 flex items-center justify-center mx-auto",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CalendarClock, { className: "w-6 h-6 text-[#545454] dark:text-neutral-300" })
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "text-[16px] font-bold text-black dark:text-white",
+								children: "No matching Reserve trips right now"
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+								className: "text-[13px] text-[#545454] dark:text-neutral-400",
+								children: [
+									"Switch filter or refresh to load new pre-booked requests around ",
+									localCity,
+									"."
+								]
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								onClick: () => {
+									setCategoryFilter("all");
+									onRefreshReserves();
+								},
+								className: "min-h-[44px] px-5 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[13.5px] font-bold hover:opacity-90 transition-opacity",
+								children: "Refresh Local Requests"
+							})
+						]
+					}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "grid grid-cols-1 md:grid-cols-2 gap-4",
+						children: filteredAvailable.map((trip) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] flex flex-col justify-between gap-4",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "space-y-3",
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "flex items-start justify-between gap-3",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "min-w-0",
+											children: [
+												/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+													className: "flex items-center gap-1.5 text-[12px] font-bold text-[#276EF1] tabular-nums",
+													children: [trip.category === "airport" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plane, { className: "w-3.5 h-3.5 shrink-0" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(CalendarClock, { className: "w-3.5 h-3.5 shrink-0" }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+														trip.dayLabel,
+														", ",
+														trip.timeLabel
+													] })]
+												}),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
+													className: "text-[16px] font-extrabold text-black dark:text-white mt-0.5 truncate",
+													children: trip.serviceName
+												}),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+													className: "text-[12px] text-[#545454] dark:text-neutral-400 tabular-nums mt-0.5",
+													children: [
+														trip.riderName,
+														" · ",
+														trip.rating.toFixed(2),
+														" ",
+														/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Star, { className: "w-3 h-3 inline -mt-0.5 fill-current text-[#FFC043]" }),
+														" · Online by ",
+														trip.onlineByLabel
+													]
+												})
+											]
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "text-right shrink-0",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+												className: "text-[24px] font-extrabold text-black dark:text-white tabular-nums leading-none",
+												children: ["£", trip.estimatedFare.toFixed(2)]
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+												className: "text-[11.5px] font-semibold text-[#05944F] tabular-nums mt-1",
+												children: [
+													"+£",
+													trip.reserveFee.toFixed(2),
+													" fee incl."
+												]
+											})]
+										})]
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "pt-2.5 border-t border-[#EAEAEA] dark:border-white/10 flex gap-3",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "flex flex-col items-center pt-1.5 shrink-0",
+											children: [
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "w-2.5 h-2.5 bg-black dark:bg-white rounded-[2px]" }),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "w-[1.5px] flex-1 bg-[#D4D4D4] dark:bg-white/20 my-1 min-h-[22px]" }),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "w-2.5 h-2.5 border-2 border-black dark:border-white bg-white dark:bg-[#16181D] rounded-[2px]" })
+											]
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "flex-1 min-w-0 space-y-2.5",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: "text-[13.5px] font-bold text-black dark:text-white truncate",
+												children: trip.pickupAddress
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+												className: "text-[12px] text-[#545454] dark:text-neutral-400 tabular-nums truncate",
+												children: [
+													trip.pickupArea,
+													" · ",
+													trip.pickupMinutes,
+													" min (",
+													trip.pickupMiles,
+													" mi away)"
+												]
+											})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+												className: "text-[13.5px] font-bold text-black dark:text-white truncate",
+												children: trip.dropoffAddress
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+												className: "text-[12px] text-[#545454] dark:text-neutral-400 tabular-nums truncate",
+												children: [
+													trip.dropoffArea,
+													" · ",
+													trip.tripMinutes,
+													" min (",
+													trip.tripMiles,
+													" mi) · ~£",
+													formatHourlyEst(trip),
+													"/hr"
+												]
+											})] })]
+										})]
+									}),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+										className: "text-[12px] text-[#545454] dark:text-neutral-400 tabular-nums",
+										children: [
+											trip.flightNumber ? `Flight ${trip.flightNumber} · ` : "",
+											trip.waitIncludedMin,
+											" min wait time included"
+										]
+									})
+								]
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+								type: "button",
+								onClick: () => {
+									onAcceptReserve(trip);
+									setSubTab("scheduled");
+								},
+								className: "w-full min-h-[44px] rounded-xl bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[14px] font-bold flex items-center justify-center gap-2 transition-colors active:scale-[0.98] whitespace-nowrap",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Check, { className: "w-4 h-4 stroke-[2.5]" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Accept Reserve" })]
+							})]
+						}, trip.id))
+					}) : scheduledReserves.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "p-8 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] text-center space-y-3",
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "w-12 h-12 rounded-full bg-[#F3F3F3] dark:bg-white/10 flex items-center justify-center mx-auto",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Clock, { className: "w-6 h-6 text-[#545454] dark:text-neutral-300" })
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "text-[16px] font-bold text-black dark:text-white",
+								children: "No scheduled Reserve trips yet"
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+								className: "text-[13px] text-[#545454] dark:text-neutral-400 max-w-sm mx-auto",
+								children: "Lock in guaranteed-fare trips in advance from the Available tab."
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+								type: "button",
+								onClick: () => setSubTab("available"),
+								className: "min-h-[44px] px-5 rounded-xl bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[13.5px] font-bold transition-colors",
+								children: "Browse Available Trips"
+							})
+						]
+					}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+						className: "grid grid-cols-1 md:grid-cols-2 gap-4",
+						children: scheduledReserves.map((trip) => {
+							const isConfirmingCancel = confirmCancelId === trip.id;
+							return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "p-4 rounded-2xl border border-[#05944F]/30 bg-white dark:bg-[#16181D] flex flex-col justify-between gap-4 shadow-xs",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "space-y-3",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "flex items-start justify-between gap-3",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+												className: "min-w-0",
+												children: [
+													/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+														className: "flex items-center gap-1.5 text-[12px] font-bold text-[#05944F] tabular-nums",
+														children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(CalendarClock, { className: "w-3.5 h-3.5 shrink-0" }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+															"Confirmed · ",
+															trip.dayLabel,
+															", ",
+															trip.timeLabel
+														] })]
+													}),
+													/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", {
+														className: "text-[16px] font-extrabold text-black dark:text-white mt-0.5 truncate",
+														children: trip.serviceName
+													}),
+													/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+														className: "text-[12px] text-[#545454] dark:text-neutral-400 tabular-nums mt-0.5",
+														children: [
+															trip.riderName,
+															" · Go online by ",
+															trip.onlineByLabel
+														]
+													})
+												]
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+												className: "text-right shrink-0",
+												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+													className: "text-[24px] font-extrabold text-black dark:text-white tabular-nums leading-none",
+													children: ["£", trip.estimatedFare.toFixed(2)]
+												}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+													className: "text-[11.5px] font-semibold text-[#545454] dark:text-neutral-400 tabular-nums mt-1",
+													children: [
+														trip.tripMiles,
+														" mi · ",
+														trip.tripMinutes,
+														" min"
+													]
+												})]
+											})]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "pt-2.5 border-t border-[#EAEAEA] dark:border-white/10 flex gap-3",
+											children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+												className: "flex flex-col items-center pt-1.5 shrink-0",
+												children: [
+													/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "w-2.5 h-2.5 bg-black dark:bg-white rounded-[2px]" }),
+													/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "w-[1.5px] flex-1 bg-[#D4D4D4] dark:bg-white/20 my-1 min-h-[22px]" }),
+													/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "w-2.5 h-2.5 border-2 border-black dark:border-white bg-white dark:bg-[#16181D] rounded-[2px]" })
+												]
+											}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+												className: "flex-1 min-w-0 space-y-2.5",
+												children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+													className: "text-[13.5px] font-bold text-black dark:text-white truncate",
+													children: trip.pickupAddress
+												}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+													className: "text-[12px] text-[#545454] dark:text-neutral-400 truncate",
+													children: trip.pickupArea
+												})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+													className: "text-[13.5px] font-bold text-black dark:text-white truncate",
+													children: trip.dropoffAddress
+												}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+													className: "text-[12px] text-[#545454] dark:text-neutral-400 truncate",
+													children: trip.dropoffArea
+												})] })]
+											})]
+										}),
+										trip.flightNumber && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "text-[12px] text-[#276EF1] font-semibold",
+											children: [
+												"Flight ",
+												trip.flightNumber,
+												" tracked · ",
+												trip.waitIncludedMin,
+												" min wait included"
+											]
+										})
+									]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex items-center gap-2.5",
+									children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
+										type: "button",
+										onClick: () => onStartReserveTrip(trip),
+										className: "flex-1 min-h-[44px] px-4 rounded-xl bg-black dark:bg-[#276EF1] hover:opacity-90 text-white text-[13.5px] font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98] whitespace-nowrap",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Navigation, { className: "w-4 h-4" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Start Pickup Now" })]
+									}), isConfirmingCancel ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+										type: "button",
+										onClick: () => {
+											setConfirmCancelId(null);
+											onCancelReserve(trip.id);
+										},
+										className: "min-h-[44px] px-3.5 rounded-xl bg-[#E11900] hover:bg-[#C11400] text-white text-[13px] font-bold whitespace-nowrap transition-colors",
+										children: "Confirm Cancel"
+									}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+										type: "button",
+										onClick: () => setConfirmCancelId(trip.id),
+										className: "min-h-[44px] min-w-[44px] px-3 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-[#545454] dark:text-neutral-300 flex items-center justify-center transition-colors",
+										"aria-label": "Cancel reservation",
+										title: "Cancel reservation",
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Trash2, { className: "w-4 h-4" })
+									})]
+								})]
+							}, trip.id);
+						})
+					})]
+				})
+			})
+		]
+	});
+};
 // src/components/SafetyToolkitModal.tsx
 var SafetyToolkitModal = ({ preferences, onTogglePreference, onClose }) => {
 	const [emergencyConfirmed, setEmergencyConfirmed] = (0, import_react.useState)(false);
@@ -20414,7 +20899,7 @@ var TripOfferModal = ({ offer, onAccept, onDecline, onMoveToRadarMatch, onRadarM
 					className: `rounded-2xl border p-4 bg-white dark:bg-[#1B1D22] shadow-xs transition-all ${isMatchingThis ? "border-[#276EF1] ring-2 ring-[#276EF1]/25" : "border-black/10 dark:border-white/10"}`,
 					children: [
 						isMatchingThis && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "mb-2.5",
+							className: "mb-3",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 								className: "flex items-center justify-between text-[11.5px] font-bold text-[#276EF1] mb-1 tabular-nums",
 								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Matching in Trip Radar..." }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [matchingSecLeft, "s"] })]
@@ -20427,125 +20912,246 @@ var TripOfferModal = ({ offer, onAccept, onDecline, onMoveToRadarMatch, onRadarM
 							})]
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex items-center justify-between mb-1.5 gap-2",
+							className: "flex items-start justify-between gap-2",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "flex items-center gap-1.5 flex-wrap",
+								className: "min-w-0",
 								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-										className: `inline-flex items-center gap-1 text-white text-[12px] font-semibold px-2.5 py-0.5 rounded-md ${item.isIntercity ? "bg-[#7A1C79]" : "bg-black dark:bg-[#276EF1]"}`,
-										children: [item.isIntercity ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Route, { className: "w-3.5 h-3.5" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(User, { className: "w-3.5 h-3.5 fill-white" }), item.serviceName]
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "flex items-center gap-1.5 flex-wrap",
+										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+											className: "inline-flex items-center gap-1 bg-[#737373] dark:bg-neutral-600 text-white text-[12px] font-semibold px-2 py-0.5 rounded-[5px] leading-tight",
+											children: [item.isIntercity ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Route, { className: "w-3 h-3" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(User, { className: "w-3 h-3 fill-white" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.serviceName })]
+										}), item.isIntercity && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+											className: "text-[11.5px] font-semibold text-[#7A1C79] dark:text-purple-300",
+											children: "Out of City"
+										})]
 									}),
-									item.isIntercity && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-										className: "bg-[#F3E8FF] dark:bg-purple-950/60 text-[#7A1C79] dark:text-purple-300 text-[11px] font-bold px-2 py-0.5 rounded-md",
-										children: "Out of City"
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+										className: "mt-1.5",
+										children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+											className: "text-[38px] leading-none font-extrabold tracking-tight text-black dark:text-white tabular-nums",
+											children: ["£", item.fare.toFixed(2)]
+										})
 									}),
-									(item.tripMinutes >= 30 || item.tripMiles >= 20) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-										className: "bg-[#FEF3C7] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[11px] font-bold px-2 py-0.5 rounded-md",
+									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+										className: "mt-1.5 flex items-center gap-1.5 text-[14px] font-semibold text-[#222222] dark:text-neutral-200 tabular-nums",
 										children: [
-											"Long Trip · ",
-											item.tripMinutes,
-											"m"
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Star, { className: "w-3.5 h-3.5 fill-current text-black dark:text-white" }),
+											/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: item.rating.toFixed(2) }),
+											item.surgeBonus && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+												className: "text-[12px] font-medium text-[#7A1C79] dark:text-purple-300",
+												children: [
+													"· +£",
+													item.surgeBonus.toFixed(2),
+													" surge"
+												]
+											})
 										]
-									}),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-										className: "inline-flex items-center gap-1 bg-[#F3F3F3] dark:bg-white/10 text-black dark:text-white text-[12px] font-semibold px-2 py-0.5 rounded-md tabular-nums",
-										children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Star, { className: "w-3 h-3 fill-current" }), item.rating.toFixed(2)]
 									})
 								]
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "text-right shrink-0",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-									className: "text-[22px] font-extrabold text-black dark:text-white tabular-nums block leading-none",
-									children: ["£", item.fare.toFixed(2)]
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-									className: "text-[11px] font-bold text-[#05944F] tabular-nums",
-									children: [
-										"£",
-										(item.fare / Math.max(1, item.tripMinutes + item.pickupMinutes) * 60).toFixed(0),
-										"/hr est."
-									]
-								})]
-							})]
-						}),
-						(item.pinCode || item.surchargeLabel || item.intercityCorridor) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-							className: "text-[11.5px] font-medium text-[#545454] dark:text-neutral-400 mt-1",
-							children: [
-								item.intercityCorridor ?? null,
-								item.surchargeLabel && item.surchargeAmount ? `Incl. ${item.surchargeLabel} (£${item.surchargeAmount.toFixed(2)})` : null,
-								item.pinCode ? "Rider PIN" : null
-							].filter(Boolean).join(" · ")
-						}),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "flex items-start gap-2.5 my-3",
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "flex flex-col items-center pt-1.5",
-								children: [
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-2 h-2 rounded-full bg-black dark:bg-white" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-0.5 h-6 bg-black dark:bg-white/50 my-0.5" }),
-									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-2 h-2 bg-black dark:bg-white" })
-								]
-							}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-								className: "flex-1 min-w-0 space-y-2 text-[13px]",
-								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-									className: "font-semibold text-black dark:text-white",
-									children: [
-										item.pickupMinutes,
-										" min (",
-										item.pickupMiles,
-										" mi) away"
-									]
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-									className: "text-[#545454] dark:text-neutral-400 truncate",
-									children: [
-										item.pickupAddress,
-										" · ",
-										item.pickupArea
-									]
-								})] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-									className: "font-semibold text-black dark:text-white",
-									children: [
-										item.tripMinutes,
-										" min (",
-										item.tripMiles,
-										" mi) trip"
-									]
-								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
-									className: "text-[#545454] dark:text-neutral-400 truncate",
-									children: [
-										item.dropoffAddress,
-										" · ",
-										item.dropoffArea
-									]
-								})] })]
-							})]
-						}),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-							className: "grid grid-cols-3 gap-2",
-							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-								type: "button",
-								onClick: () => (onDeclineRadarItem || onDecline)(item),
-								className: "col-span-1 h-11 rounded-xl bg-[#F3F3F3] dark:bg-white/10 text-black dark:text-white text-[14px] font-bold hover:bg-[#FEECEB] hover:text-[#E11900] active:scale-[0.98] transition-all",
-								children: "Decline"
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 								type: "button",
-								disabled: matchingId === item.id,
-								onClick: () => handleAction(item),
-								className: "col-span-2 h-11 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[15px] font-semibold hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] active:scale-[0.99] transition-all disabled:opacity-70",
-								children: matchingId === item.id ? `Matching... (${matchingSecLeft}s)` : "Match"
+								onClick: () => (onDeclineRadarItem || onDecline)(item),
+								className: "w-10 h-10 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 active:scale-95 flex items-center justify-center transition-all shrink-0",
+								"aria-label": "Dismiss Trip Radar request",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X$1, { className: "w-5 h-5 text-black dark:text-white" })
 							})]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+							className: "border-t border-[#EAEAEA] dark:border-white/10 mt-3 pt-3 mb-4",
+							children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "flex items-stretch gap-3",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex flex-col items-center py-1.5 shrink-0",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-2 h-2 rounded-full bg-black dark:bg-white" }),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-[1.5px] flex-1 bg-[#444444] dark:bg-white/45 my-1 min-h-[22px]" }),
+										item.stopAddress && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-2 h-2 rounded-full bg-[#F59E0B]" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-[1.5px] flex-1 bg-[#444444] dark:bg-white/45 my-1 min-h-[14px]" })] }),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-2 h-2 bg-black dark:bg-white rounded-[1px]" })
+									]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+									className: "flex-1 min-w-0 space-y-2.5",
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "text-[15px] font-semibold text-black dark:text-white leading-snug tabular-nums",
+											children: [
+												item.pickupMinutes,
+												" mins (",
+												item.pickupMiles,
+												" mi) away"
+											]
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "text-[13.5px] text-[#545454] dark:text-neutral-400 truncate",
+											children: [
+												item.pickupAddress,
+												", ",
+												item.pickupArea
+											]
+										})] }),
+										item.stopAddress && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "text-[13px] font-semibold text-[#B45309] dark:text-amber-300 truncate",
+											children: ["Stop 1 · ", item.stopAddress]
+										}) }),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "text-[15px] font-semibold text-black dark:text-white leading-snug tabular-nums",
+											children: [
+												item.tripMinutes,
+												" mins (",
+												item.tripMiles,
+												" mi) trip"
+											]
+										}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "text-[13.5px] text-[#545454] dark:text-neutral-400 truncate",
+											children: [
+												item.dropoffAddress,
+												", ",
+												item.dropoffArea
+											]
+										})] })
+									]
+								})]
+							})
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+							type: "button",
+							disabled: matchingId === item.id,
+							onClick: () => handleAction(item),
+							className: "w-full h-12 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[16px] font-semibold hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] active:scale-[0.99] transition-all disabled:opacity-70 tabular-nums",
+							children: matchingId === item.id ? `Matching... (${matchingSecLeft}s)` : "Match"
 						})
 					]
 				}, item.id);
 			})
 		})]
 	});
-	const isExclusive = offer.type === "exclusive";
+	if (!(offer.type === "exclusive")) return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+		className: "bg-white dark:bg-[#141416] rounded-2xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden w-full",
+		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+			className: "w-full h-1 bg-[#EEEEEE] dark:bg-white/10",
+			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+				className: "h-full bg-black dark:bg-white transition-all duration-1000 ease-linear",
+				style: { width: `${progressPct}%` }
+			})
+		}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+			className: "p-4",
+			children: [
+				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "flex items-start justify-between gap-2",
+					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "min-w-0",
+						children: [
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "flex items-center gap-2 flex-wrap",
+								children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+									className: "inline-flex items-center gap-1 bg-[#737373] dark:bg-neutral-600 text-white text-[12px] font-semibold px-2 py-0.5 rounded-[5px] leading-tight",
+									children: [offer.isIntercity ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Route, { className: "w-3 h-3" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(User, { className: "w-3 h-3 fill-white" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: offer.serviceName })]
+								}), offer.isIntercity && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+									className: "text-[11.5px] font-semibold text-[#7A1C79] dark:text-purple-300",
+									children: "Out of City"
+								})]
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+								className: "mt-1.5",
+								children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+									className: "text-[40px] leading-none font-extrabold tracking-tight text-black dark:text-white tabular-nums",
+									children: ["£", offer.fare.toFixed(2)]
+								})
+							}),
+							/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+								className: "mt-1.5 flex items-center gap-1.5 text-[14px] font-semibold text-[#222222] dark:text-neutral-200 tabular-nums",
+								children: [
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Star, { className: "w-3.5 h-3.5 fill-current text-black dark:text-white" }),
+									/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: offer.rating.toFixed(2) }),
+									offer.surgeBonus && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+										className: "text-[12px] font-medium text-[#7A1C79] dark:text-purple-300",
+										children: [
+											"· +£",
+											offer.surgeBonus.toFixed(2),
+											" surge"
+										]
+									})
+								]
+							})
+						]
+					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+						type: "button",
+						onClick: () => onDecline(offer),
+						className: "w-10 h-10 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 active:scale-95 flex items-center justify-center transition-all shrink-0",
+						"aria-label": "Decline Trip Radar request",
+						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(X$1, { className: "w-5 h-5 text-black dark:text-white" })
+					})]
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+					className: "border-t border-[#EAEAEA] dark:border-white/10 mt-3 pt-3 mb-4",
+					children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+						className: "flex items-stretch gap-3",
+						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex flex-col items-center py-1.5 shrink-0",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-2 h-2 rounded-full bg-black dark:bg-white" }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-[1.5px] flex-1 bg-[#444444] dark:bg-white/45 my-1 min-h-[22px]" }),
+								offer.stopAddress && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-2 h-2 rounded-full bg-[#F59E0B]" }), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-[1.5px] flex-1 bg-[#444444] dark:bg-white/45 my-1 min-h-[14px]" })] }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "w-2 h-2 bg-black dark:bg-white rounded-[1px]" })
+							]
+						}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "flex-1 min-w-0 space-y-2.5",
+							children: [
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+									className: "text-[15px] font-semibold text-black dark:text-white leading-snug tabular-nums",
+									children: [
+										offer.pickupMinutes,
+										" mins (",
+										offer.pickupMiles,
+										" mi) away"
+									]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+									className: "text-[13.5px] text-[#545454] dark:text-neutral-400 truncate",
+									children: [
+										offer.pickupAddress,
+										", ",
+										offer.pickupArea
+									]
+								})] }),
+								offer.stopAddress && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+									className: "text-[13px] font-semibold text-[#B45309] dark:text-amber-300 truncate",
+									children: ["Stop 1 · ", offer.stopAddress]
+								}) }),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+									className: "text-[15px] font-semibold text-black dark:text-white leading-snug tabular-nums",
+									children: [
+										offer.tripMinutes,
+										" mins (",
+										offer.tripMiles,
+										" mi) trip"
+									]
+								}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+									className: "text-[13.5px] text-[#545454] dark:text-neutral-400 truncate",
+									children: [
+										offer.dropoffAddress,
+										", ",
+										offer.dropoffArea
+									]
+								})] })
+							]
+						})]
+					})
+				}),
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+					type: "button",
+					disabled: matchingId === offer.id,
+					onClick: () => handleAction(offer),
+					className: "w-full h-12 rounded-xl text-[16px] font-semibold text-white bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] transition-all active:scale-[0.98] disabled:opacity-75 tabular-nums",
+					children: matchingId === offer.id ? `Matching... (${matchingSecLeft}s)` : "Match"
+				})
+			]
+		})]
+	});
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "bg-white dark:bg-[#141416] rounded-2xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden w-full",
 		children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 			className: "w-full h-1 bg-[#EEEEEE] dark:bg-white/10",
 			children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-				className: `h-full transition-all duration-1000 ease-linear ${offer.isIntercity ? "bg-[#7A1C79]" : isExclusive ? "bg-[#276EF1]" : "bg-black dark:bg-white"}`,
+				className: `h-full transition-all duration-1000 ease-linear ${offer.isIntercity ? "bg-[#7A1C79]" : "bg-[#276EF1]"}`,
 				style: { width: `${progressPct}%` }
 			})
 		}), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
@@ -20576,12 +21182,9 @@ var TripOfferModal = ({ offer, onAccept, onDecline, onMoveToRadarMatch, onRadarM
 								className: "inline-flex items-center bg-[#FEF3C7] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[12px] font-bold px-2.5 py-1 rounded-md",
 								children: "Multi-Stop"
 							}),
-							isExclusive ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
+							/* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
 								className: "inline-flex items-center bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] text-[13px] font-semibold px-2.5 py-1 rounded-md",
 								children: "Exclusive"
-							}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", {
-								className: "inline-flex items-center bg-[#F3F3F3] dark:bg-white/10 text-[#333333] dark:text-neutral-200 text-[13px] font-semibold px-2.5 py-1 rounded-md",
-								children: "Trip Radar"
 							})
 						]
 					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
@@ -20686,26 +21289,12 @@ var TripOfferModal = ({ offer, onAccept, onDecline, onMoveToRadarMatch, onRadarM
 						})]
 					})
 				}),
-				isExclusive ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 					type: "button",
 					disabled: matchingId === offer.id,
 					onClick: () => handleAction(offer),
 					className: "w-full h-12 rounded-xl text-[16px] font-bold text-white bg-[#276EF1] hover:bg-[#1E5CD4] transition-all active:scale-[0.98] disabled:opacity-75 tabular-nums",
 					children: matchingId === offer.id ? `Matching... (${matchingSecLeft}s)` : offer.isIntercity ? "Accept Intercity Ride" : "Accept"
-				}) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "grid grid-cols-3 gap-2.5",
-					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-						type: "button",
-						onClick: () => onDecline(offer),
-						className: "col-span-1 h-12 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#FEECEB] hover:text-[#E11900] text-black dark:text-white text-[15px] font-bold transition-all active:scale-[0.98]",
-						children: "Decline"
-					}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
-						type: "button",
-						disabled: matchingId === offer.id,
-						onClick: () => handleAction(offer),
-						className: "col-span-2 h-12 rounded-xl text-[16px] font-bold text-white bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] transition-all active:scale-[0.98] disabled:opacity-75 tabular-nums",
-						children: matchingId === offer.id ? `Matching... (${matchingSecLeft}s)` : "Match"
-					})]
 				})
 			]
 		})]
@@ -59649,7 +60238,9 @@ function useBackgroundRefresh({ enabled, onlineStatus, onRefreshCycle }) {
 }
 // src/utils/authStorage.ts
 var ACCOUNTS_KEY = "uber_driver_accounts_v1";
+var ACCOUNTS_BACKUP_KEY = "uber_driver_accounts_backup_v1";
 var ACTIVE_ACCOUNT_ID_KEY = "uber_driver_active_account_id_v1";
+var REMEMBERED_LOGIN_KEY = "uber_driver_remembered_login_v1";
 var DEFAULT_ACCOUNTS = [{
 	id: "acct-alex",
 	name: "Alex Rivera",
@@ -59688,8 +60279,8 @@ var DEFAULT_ACCOUNTS = [{
 	batteryPct: 78
 }];
 function loadAccounts() {
-	try {
-		const raw = localStorage.getItem(ACCOUNTS_KEY);
+	for (const key of [ACCOUNTS_KEY, ACCOUNTS_BACKUP_KEY]) try {
+		const raw = localStorage.getItem(key);
 		if (raw) {
 			const parsed = JSON.parse(raw);
 			if (Array.isArray(parsed) && parsed.length > 0) return parsed.map((acct) => ({
@@ -59702,7 +60293,9 @@ function loadAccounts() {
 }
 function saveAccounts(accounts) {
 	try {
-		localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
+		const serialized = JSON.stringify(accounts);
+		localStorage.setItem(ACCOUNTS_KEY, serialized);
+		localStorage.setItem(ACCOUNTS_BACKUP_KEY, serialized);
 	} catch {}
 }
 function getActiveAccountId() {
@@ -59723,6 +60316,70 @@ function isExplicitlySignedOut() {
 		return localStorage.getItem(ACTIVE_ACCOUNT_ID_KEY) === "__signed_out__";
 	} catch {
 		return false;
+	}
+}
+function loadRememberedLogin() {
+	try {
+		const raw = localStorage.getItem(REMEMBERED_LOGIN_KEY);
+		if (!raw) return null;
+		const parsed = JSON.parse(raw);
+		if (!parsed || typeof parsed.email !== "string") return null;
+		return parsed;
+	} catch {
+		return null;
+	}
+}
+function saveRememberedLogin(payload) {
+	try {
+		if (!payload || !payload.rememberMe) {
+			localStorage.removeItem(REMEMBERED_LOGIN_KEY);
+			return;
+		}
+		localStorage.setItem(REMEMBERED_LOGIN_KEY, JSON.stringify(payload));
+	} catch {}
+}
+async function storeBrowserCredential(email, password, name) {
+	try {
+		const nav = navigator;
+		const PasswordCred = window.PasswordCredential;
+		if (nav.credentials?.store && PasswordCred) {
+			const cred = new PasswordCred({
+				id: email,
+				password,
+				name
+			});
+			await nav.credentials.store(cred);
+		}
+	} catch {}
+}
+function exportAccountBackupCode(account, ledger) {
+	const payload = JSON.stringify({
+		v: 1,
+		account,
+		ledger
+	});
+	const bytes = new TextEncoder().encode(payload);
+	let binary = "";
+	for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+	return `UBR1:${btoa(binary)}`;
+}
+function importAccountBackupCode(code) {
+	try {
+		const trimmed = code.trim();
+		if (!trimmed.startsWith("UBR1:")) return null;
+		const b64 = trimmed.slice(5);
+		const binary = atob(b64);
+		const bytes = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+		const jsonStr = new TextDecoder().decode(bytes);
+		const parsed = JSON.parse(jsonStr);
+		if (!parsed?.account?.id || !parsed?.account?.email || !parsed?.account?.name) return null;
+		return {
+			account: parsed.account,
+			ledger: parsed.ledger
+		};
+	} catch {
+		return null;
 	}
 }
 // src/utils/notifications.ts
@@ -60486,7 +61143,7 @@ async function checkRemoteVersion() {
 		if (!res.ok) return;
 		if (!(res.headers.get("content-type") || "").includes("application/json")) return;
 		const data = await res.json();
-		if (data?.buildId && data.buildId !== "1795200498432-vbw32x") await triggerAutoRestart("vercel-version-changed");
+		if (data?.buildId && data.buildId !== "1795271333005-twsf3u") await triggerAutoRestart("vercel-version-changed");
 	} catch {}
 }
 function initAutoUpdater() {
@@ -60587,6 +61244,12 @@ async function stopNativeOnlineBubbleService() {
 	if (!isNativeAndroidApk()) return;
 	try {
 		await UberFloatingBubble.stopOnlineService();
+	} catch {}
+}
+async function setNativeImmersiveNavHidden(hidden) {
+	if (!isNativeAndroidApk()) return;
+	try {
+		await UberFloatingBubble.setImmersiveNavHidden({ hidden });
 	} catch {}
 }
 async function syncNativeAppForeground(inForeground) {
@@ -60696,6 +61359,420 @@ function listenToNativePermissionsChanged(onChanged) {
 		cancelled = true;
 		if (handle) handle.remove();
 	};
+}
+// src/utils/localDispatch.ts
+var geoCache = null;
+var fetchInFlightKey = null;
+function haversineMiles(lat1, lng1, lat2, lng2) {
+	const R = 3958.8;
+	const toRad = (d) => d * Math.PI / 180;
+	const dLat = toRad(lat2 - lat1);
+	const dLng = toRad(lng2 - lng1);
+	const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+	return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function offsetLatLng(lat, lng, distanceMiles, bearingDeg) {
+	const rad = bearingDeg * Math.PI / 180;
+	const dLat = distanceMiles * Math.cos(rad) / 69;
+	const cosLat = Math.max(.2, Math.cos(lat * Math.PI / 180));
+	const dLng = distanceMiles * Math.sin(rad) / (69 * cosLat);
+	return {
+		lat: Number((lat + dLat).toFixed(5)),
+		lng: Number((lng + dLng).toFixed(5))
+	};
+}
+function cleanTownName(props, fallbackCoords) {
+	const raw = props?.city || props?.town || props?.village || props?.borough || props?.suburb || props?.county;
+	if (typeof raw === "string" && raw.trim().length > 1) return raw.trim();
+	return nearestUKCity(fallbackCoords);
+}
+function parsePhotonFeatures(features, anchorLat, anchorLng, fallbackTown, maxRadiusMiles) {
+	if (!Array.isArray(features)) return [];
+	const results = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (const feat of features) {
+		const coords = feat?.geometry?.coordinates;
+		const props = feat?.properties;
+		if (!Array.isArray(coords) || coords.length < 2 || !props) continue;
+		const lng = Number(coords[0]);
+		const lat = Number(coords[1]);
+		if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+		const dist = haversineMiles(anchorLat, anchorLng, lat, lng);
+		if (dist < .18 || dist > maxRadiusMiles) continue;
+		const streetNum = props.housenumber ? `${props.housenumber} ` : "";
+		const primary = props.name || (props.street ? `${streetNum}${props.street}` : null) || props.locality || props.district;
+		if (!primary || typeof primary !== "string") continue;
+		const cleanName = primary.trim();
+		const key = cleanName.toLowerCase();
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const subArea = props.district || props.suburb || props.locality || "";
+		const town = props.city || props.town || props.village || fallbackTown;
+		const area = subArea && subArea !== town ? `${subArea}, ${town}` : town;
+		results.push({
+			name: cleanName,
+			area,
+			lat,
+			lng
+		});
+	}
+	return results;
+}
+function getResolvedLocalCityName(driverCoords) {
+	const ll = mapToLatLng(driverCoords);
+	if (geoCache && haversineMiles(geoCache.anchorLat, geoCache.anchorLng, ll.lat, ll.lng) <= 10) return geoCache.townName;
+	return nearestUKCity(driverCoords);
+}
+async function prefetchLocalPlaces(lat, lng) {
+	if (geoCache && haversineMiles(geoCache.anchorLat, geoCache.anchorLng, lat, lng) < .8) return geoCache.townName;
+	const key = `${lat.toFixed(2)},${lng.toFixed(2)}`;
+	if (fetchInFlightKey === key) return geoCache?.townName ?? null;
+	fetchInFlightKey = key;
+	const fallbackCoords = projectLatLngToMap(lat, lng);
+	let townName = nearestUKCity(fallbackCoords);
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 3500);
+	try {
+		const [revRes, poiStationRes, poiRoadRes] = await Promise.all([
+			fetch(`https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}&lang=en`, { signal: controller.signal }).catch(() => null),
+			fetch(`https://photon.komoot.io/api/?q=station&lat=${lat}&lon=${lng}&limit=8&lang=en`, { signal: controller.signal }).catch(() => null),
+			fetch(`https://photon.komoot.io/api/?q=road&lat=${lat}&lon=${lng}&limit=10&lang=en`, { signal: controller.signal }).catch(() => null)
+		]);
+		clearTimeout(timeout);
+		if (revRes?.ok) {
+			const firstProps = (await revRes.json())?.features?.[0]?.properties;
+			townName = cleanTownName(firstProps, fallbackCoords);
+		}
+		const combined = [];
+		if (poiRoadRes?.ok) {
+			const roadData = await poiRoadRes.json();
+			combined.push(...parsePhotonFeatures(roadData?.features, lat, lng, townName, 9));
+		}
+		if (poiStationRes?.ok) {
+			const stationData = await poiStationRes.json();
+			combined.push(...parsePhotonFeatures(stationData?.features, lat, lng, townName, 12));
+		}
+		const streets = combined.filter((p) => haversineMiles(lat, lng, p.lat, p.lng) <= 2.4);
+		const destinations = combined.filter((p) => haversineMiles(lat, lng, p.lat, p.lng) >= 1.4);
+		geoCache = {
+			anchorLat: lat,
+			anchorLng: lng,
+			townName,
+			streets,
+			destinations
+		};
+		return townName;
+	} catch {
+		clearTimeout(timeout);
+		return null;
+	} finally {
+		fetchInFlightKey = null;
+	}
+}
+var FALLBACK_LOCAL_STREETS = [
+	"High Street",
+	"Station Approach",
+	"Victoria Road",
+	"Church Lane",
+	"Market Square",
+	"Kings Road",
+	"Park Avenue",
+	"Bridge Street",
+	"London Road",
+	"Queensway"
+];
+var FALLBACK_LOCAL_DESTINATIONS = [
+	"Railway Station Forecourt",
+	"Town Centre Retail Park",
+	"General Hospital Main Entrance",
+	"Central Shopping Precinct",
+	"University Campus Gate",
+	"Business & Tech Park",
+	"Sports & Leisure Complex",
+	"Superstore Car Park",
+	"Market Hall & High St",
+	"Old Town Square"
+];
+var RIDER_NAMES = [
+	"Olivia H.",
+	"Marcus T.",
+	"Joséfina",
+	"Callum R.",
+	"Priya S.",
+	"Daniel K.",
+	"Chloe M.",
+	"Tariq A.",
+	"Hannah W.",
+	"Liam B."
+];
+function generateLocalTripOffer({ anchorCoords, realLatLng, seedIndex, forceType, forceIntercity = false, includeIntercity = true }) {
+	const baseLatLng = realLatLng ?? mapToLatLng(anchorCoords);
+	const currentLat = baseLatLng.lat;
+	const currentLng = baseLatLng.lng;
+	const localTown = getResolvedLocalCityName(realLatLng ? projectLatLngToMap(currentLat, currentLng) : anchorCoords);
+	const hasFreshCache = geoCache !== null && haversineMiles(geoCache.anchorLat, geoCache.anchorLng, currentLat, currentLng) <= 8;
+	const isIntercity = forceIntercity || includeIntercity && seedIndex % 7 === 6;
+	const type = forceType ?? (seedIndex % 3 === 1 ? "radar" : "exclusive");
+	const services = [
+		"UberX",
+		"UberX",
+		"Comfort",
+		"UberXL"
+	];
+	const serviceName = isIntercity ? "Intercity" : services[seedIndex % services.length];
+	const pickupBearing = (seedIndex * 73 + 25) % 360;
+	const pickupFallbackLL = offsetLatLng(currentLat, currentLng, .45 + seedIndex % 5 * .18, pickupBearing);
+	let pickupLat = pickupFallbackLL.lat;
+	let pickupLng = pickupFallbackLL.lng;
+	let pickupAddress = `${12 + seedIndex * 17 % 180} ${FALLBACK_LOCAL_STREETS[seedIndex % FALLBACK_LOCAL_STREETS.length]}`;
+	let pickupArea = `${localTown} Centre`;
+	if (hasFreshCache && geoCache && geoCache.streets.length > 0) {
+		const picked = geoCache.streets[seedIndex % geoCache.streets.length];
+		pickupLat = picked.lat;
+		pickupLng = picked.lng;
+		pickupAddress = picked.name;
+		pickupArea = picked.area;
+	}
+	const pickupMilesRaw = Math.max(.3, haversineMiles(currentLat, currentLng, pickupLat, pickupLng) * 1.25);
+	const pickupMiles = Number(pickupMilesRaw.toFixed(1));
+	const pickupMinutes = Math.max(2, Math.round(pickupMiles * 3.1));
+	let dropoffLat = currentLat;
+	let dropoffLng = currentLng;
+	let dropoffAddress = FALLBACK_LOCAL_DESTINATIONS[seedIndex % FALLBACK_LOCAL_DESTINATIONS.length];
+	let dropoffArea = localTown;
+	let intercityCorridor;
+	if (isIntercity) {
+		const candidates = UK_CITIES.map((c) => ({
+			city: c,
+			dist: haversineMiles(currentLat, currentLng, c.lat, c.lng)
+		})).filter((item) => item.dist >= 16).sort((a, b) => a.dist - b.dist);
+		const targetCity = candidates[seedIndex % Math.min(3, Math.max(1, candidates.length))];
+		if (targetCity) {
+			const formattedName = targetCity.city.name.split(" ").map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+			dropoffLat = targetCity.city.lat;
+			dropoffLng = targetCity.city.lng;
+			dropoffAddress = `${formattedName} Rail Station & City Centre`;
+			dropoffArea = `${formattedName} · Out of City`;
+			intercityCorridor = `${localTown} → ${formattedName} · Out of City`;
+		} else {
+			const intercityLL = offsetLatLng(currentLat, currentLng, 28, (pickupBearing + 120) % 360);
+			dropoffLat = intercityLL.lat;
+			dropoffLng = intercityLL.lng;
+			dropoffAddress = "Regional Rail Interchange";
+			dropoffArea = `${localTown} Outskirts · Out of City`;
+			intercityCorridor = `${localTown} Regional Express`;
+		}
+	} else if (hasFreshCache && geoCache && geoCache.destinations.length > 0) {
+		const destPool = geoCache.destinations.filter((d) => haversineMiles(pickupLat, pickupLng, d.lat, d.lng) >= 1.3);
+		const chosen = (destPool.length > 0 ? destPool : geoCache.destinations)[(seedIndex + 2) % Math.max(1, destPool.length || geoCache.destinations.length)];
+		if (chosen && haversineMiles(pickupLat, pickupLng, chosen.lat, chosen.lng) >= 1) {
+			dropoffLat = chosen.lat;
+			dropoffLng = chosen.lng;
+			dropoffAddress = chosen.name;
+			dropoffArea = chosen.area;
+		} else {
+			const localTripDist = 2 + seedIndex % 6 * .75;
+			const dropLL = offsetLatLng(pickupLat, pickupLng, localTripDist, (pickupBearing + 135) % 360);
+			dropoffLat = dropLL.lat;
+			dropoffLng = dropLL.lng;
+			dropoffAddress = FALLBACK_LOCAL_DESTINATIONS[(seedIndex + 3) % FALLBACK_LOCAL_DESTINATIONS.length];
+			dropoffArea = `${localTown} Local`;
+		}
+	} else {
+		const localTripDist = 1.9 + seedIndex % 6 * .8;
+		const dropBearing = (pickupBearing + 115 + seedIndex % 3 * 45) % 360;
+		const dropLL = offsetLatLng(pickupLat, pickupLng, localTripDist, dropBearing);
+		dropoffLat = dropLL.lat;
+		dropoffLng = dropLL.lng;
+		dropoffAddress = FALLBACK_LOCAL_DESTINATIONS[(seedIndex + 3) % FALLBACK_LOCAL_DESTINATIONS.length];
+		dropoffArea = `${localTown} Local`;
+	}
+	const tripMilesRaw = Math.max(1.3, haversineMiles(pickupLat, pickupLng, dropoffLat, dropoffLng) * 1.28);
+	const tripMiles = Number(tripMilesRaw.toFixed(1));
+	const tripMinutes = Math.max(6, Math.round(tripMiles / (isIntercity ? 44 : 18) * 60));
+	const hasStop = !isIntercity && seedIndex % 5 === 2;
+	const stopCoords = hasStop ? clampMapCoords(projectLatLngToMap((pickupLat + dropoffLat) / 2 + .002, (pickupLng + dropoffLng) / 2 - .002)) : void 0;
+	const stopAddress = hasStop ? `${FALLBACK_LOCAL_STREETS[(seedIndex + 4) % FALLBACK_LOCAL_STREETS.length]} (Quick 2m stop)` : void 0;
+	const perMileRate = serviceName === "UberXL" ? 2.15 : serviceName === "Comfort" ? 1.85 : serviceName === "Intercity" ? 1.65 : 1.5;
+	const surgeBonus = seedIndex % 3 === 0 ? Number((1.75 + seedIndex % 4 * .75).toFixed(2)) : void 0;
+	const baseFare = 3.2 + tripMiles * perMileRate + tripMinutes * .18 + (surgeBonus ?? 0);
+	const fare = Number(Math.max(5.8, baseFare).toFixed(2));
+	const riderName = RIDER_NAMES[seedIndex % RIDER_NAMES.length];
+	const pinCode = seedIndex % 2 === 0 ? String(1e3 + (seedIndex * 1373 + 4829) % 8999) : void 0;
+	return {
+		id: `local-${type}-${isIntercity ? "ic-" : ""}${Date.now()}-${seedIndex}`,
+		type,
+		serviceName,
+		fare,
+		rating: Number((4.86 + seedIndex % 13 * .01).toFixed(2)),
+		riderName,
+		riderTrips: 45 + seedIndex * 37 % 480,
+		pickupMinutes,
+		pickupMiles,
+		pickupAddress,
+		pickupArea,
+		tripMinutes,
+		tripMiles,
+		dropoffAddress,
+		dropoffArea,
+		pickupCoords: clampMapCoords(projectLatLngToMap(pickupLat, pickupLng)),
+		dropoffCoords: clampMapCoords(projectLatLngToMap(dropoffLat, dropoffLng)),
+		surgeBonus,
+		pinCode,
+		isIntercity,
+		intercityCorridor,
+		stopAddress,
+		stopCoords,
+		riderNote: `Waiting outside ${pickupAddress} in ${localTown}.`,
+		expiresInSec: isIntercity ? 20 : type === "radar" ? 18 : 15
+	};
+}
+function buildLocalOfferPool(anchorCoords, realLatLng, includeIntercity, startSeed = 0) {
+	const offers = [];
+	for (let i = 0; i < 6; i++) offers.push(generateLocalTripOffer({
+		anchorCoords,
+		realLatLng,
+		seedIndex: startSeed + i,
+		includeIntercity
+	}));
+	return offers;
+}
+var RESERVE_FLIGHT_CODES = [
+	"BA 1432",
+	"EZY 8421",
+	"VS 0045",
+	"LS 0312",
+	"FR 2918",
+	"KL 1074"
+];
+function formatHm(ms) {
+	const d = new Date(ms);
+	return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+}
+function getReserveDayLabel(ms, nowMs) {
+	const target = new Date(ms);
+	const now = new Date(nowMs);
+	if (target.getFullYear() === now.getFullYear() && target.getMonth() === now.getMonth() && target.getDate() === now.getDate()) return "Today";
+	const tomorrow = new Date(nowMs + 864e5);
+	if (target.getFullYear() === tomorrow.getFullYear() && target.getMonth() === tomorrow.getMonth() && target.getDate() === tomorrow.getDate()) return "Tomorrow";
+	return target.toLocaleDateString("en-GB", {
+		weekday: "short",
+		day: "numeric",
+		month: "short"
+	});
+}
+function generateLocalReserveTrips(anchorCoords, realLatLng, startSeed = 0, count = 6) {
+	const baseLatLng = realLatLng ?? mapToLatLng(anchorCoords);
+	const currentLat = baseLatLng.lat;
+	const currentLng = baseLatLng.lng;
+	const localTown = getResolvedLocalCityName(realLatLng ? projectLatLngToMap(currentLat, currentLng) : anchorCoords);
+	const sortedAirports = UK_AIRPORT_MAP_PINS.map((ap) => {
+		const apLL = mapToLatLng(ap.coords);
+		return {
+			...ap,
+			lat: apLL.lat,
+			lng: apLL.lng,
+			dist: haversineMiles(currentLat, currentLng, apLL.lat, apLL.lng)
+		};
+	}).sort((a, b) => a.dist - b.dist);
+	const nowMs = Date.now();
+	const slotBaseMs = Math.ceil((nowMs + 27e5) / 9e5) * 9e5;
+	const offsetsMin = [
+		0,
+		75,
+		165,
+		285,
+		690,
+		960,
+		1140,
+		1320
+	];
+	const categories = [
+		"airport",
+		"local",
+		"executive",
+		"airport",
+		"local",
+		"executive"
+	];
+	const servicesByCategory = {
+		local: "Reserve · UberX",
+		airport: "Reserve · Comfort",
+		executive: "Reserve · Executive"
+	};
+	const results = [];
+	for (let i = 0; i < count; i++) {
+		const seed = startSeed + i;
+		const category = categories[seed % categories.length];
+		const baseOffer = generateLocalTripOffer({
+			anchorCoords,
+			realLatLng,
+			seedIndex: seed + 10,
+			forceType: "exclusive",
+			includeIntercity: false
+		});
+		const scheduledAtMs = slotBaseMs + offsetsMin[i % offsetsMin.length] * 60 * 1e3;
+		const onlineByMs = scheduledAtMs - 24e5;
+		let dropoffAddress = baseOffer.dropoffAddress;
+		let dropoffArea = baseOffer.dropoffArea;
+		let dropoffCoords = baseOffer.dropoffCoords;
+		let tripMiles = Math.max(4.2, Number((baseOffer.tripMiles * 1.45).toFixed(1)));
+		let tripMinutes = Math.max(12, Math.round(tripMiles * 2.2));
+		let flightNumber;
+		if (category === "airport" && sortedAirports[0]) {
+			const nearestAp = sortedAirports[seed % Math.min(2, sortedAirports.length)];
+			const apMiles = Math.max(6.5, Number((nearestAp.dist * 1.24).toFixed(1)));
+			if (apMiles <= 68) {
+				dropoffAddress = `${nearestAp.name} Airport (${nearestAp.code}) Departures`;
+				dropoffArea = `${nearestAp.name} Airport`;
+				dropoffCoords = nearestAp.coords;
+				tripMiles = apMiles;
+				tripMinutes = Math.max(18, Math.round(apMiles * 1.55));
+			} else {
+				dropoffAddress = `${localTown} Central Rail Station`;
+				dropoffArea = `${localTown} · Station`;
+			}
+			flightNumber = RESERVE_FLIGHT_CODES[seed % RESERVE_FLIGHT_CODES.length];
+		} else if (category === "executive") {
+			dropoffAddress = `${localTown} Business Quarter / Station`;
+			dropoffArea = `${localTown} Executive`;
+			tripMiles = Math.max(6, Number((baseOffer.tripMiles * 1.6).toFixed(1)));
+			tripMinutes = Math.max(16, Math.round(tripMiles * 2.1));
+		}
+		const reserveFee = category === "executive" ? 10 : category === "airport" ? 8 : 6;
+		const ratePerMile = category === "executive" ? 2.4 : category === "airport" ? 1.9 : 1.65;
+		const estimatedFare = Number(Math.max(16.5, reserveFee + 4.5 + tripMiles * ratePerMile + tripMinutes * .2).toFixed(2));
+		results.push({
+			id: `reserve-slot-${seed}`,
+			category,
+			serviceName: servicesByCategory[category],
+			scheduledAtMs,
+			dayLabel: getReserveDayLabel(scheduledAtMs, nowMs),
+			timeLabel: formatHm(scheduledAtMs),
+			onlineByLabel: formatHm(onlineByMs),
+			estimatedFare,
+			reserveFee,
+			rating: baseOffer.rating,
+			riderName: baseOffer.riderName,
+			riderTrips: baseOffer.riderTrips,
+			pickupMinutes: baseOffer.pickupMinutes,
+			pickupMiles: baseOffer.pickupMiles,
+			pickupAddress: baseOffer.pickupAddress,
+			pickupArea: baseOffer.pickupArea,
+			dropoffAddress,
+			dropoffArea,
+			tripMiles,
+			tripMinutes,
+			pickupCoords: baseOffer.pickupCoords,
+			dropoffCoords,
+			flightNumber,
+			waitIncludedMin: 15,
+			pinCode: seed % 2 === 0 ? baseOffer.pinCode : void 0,
+			riderNote: flightNumber ? `Flight ${flightNumber} · Pre-booked ${localTown} pickup (15 min wait included)` : `Pre-booked Reserve pickup in ${localTown} · 15 min wait included`,
+			status: "available"
+		});
+	}
+	return results.sort((a, b) => a.scheduledAtMs - b.scheduledAtMs);
 }
 // src/utils/ukRouting.ts
 function osrmToManeuver(type, modifier) {
@@ -61026,7 +62103,6 @@ function speakNavInstruction(text, enabled) {
 	} catch {}
 }
 // src/App.tsx
-var ALL_RADAR_POOL = SAMPLE_TRIP_OFFERS.filter((o) => o.type === "radar");
 function lerpAngle(fromDeg, toDeg, t) {
 	return fromDeg + (((toDeg - fromDeg) % 360 + 540) % 360 - 180) * t;
 }
@@ -61044,11 +62120,14 @@ function isFaceVerifiedRecently(account) {
 }
 function App() {
 	const [accounts, setAccounts] = (0, import_react.useState)(() => loadAccounts());
+	const [rememberedLogin, setRememberedLogin] = (0, import_react.useState)(() => loadRememberedLogin());
 	const [isSignedOut, setIsSignedOut] = (0, import_react.useState)(() => isExplicitlySignedOut());
 	const [activeAccountIdState, setActiveAccountIdState] = (0, import_react.useState)(() => {
 		const savedId = getActiveAccountId();
 		const list = loadAccounts();
 		if (savedId && list.some((a) => a.id === savedId)) return savedId;
+		const remembered = loadRememberedLogin();
+		if (remembered?.rememberMe && list.some((a) => a.id === remembered.accountId)) return remembered.accountId;
 		return list[0].id;
 	});
 	const activeAccount = (0, import_react.useMemo)(() => accounts.find((a) => a.id === activeAccountIdState) ?? accounts[0] ?? null, [accounts, activeAccountIdState]);
@@ -61139,6 +62218,39 @@ function App() {
 		}
 	});
 	const [realCoords, setRealCoords] = (0, import_react.useState)(null);
+	const realCoordsRef = (0, import_react.useRef)(null);
+	realCoordsRef.current = realCoords;
+	const [localGeoVersion, setLocalGeoVersion] = (0, import_react.useState)(0);
+	const getActiveGpsLatLng = (0, import_react.useCallback)(() => {
+		const rc = realCoordsRef.current;
+		if (rc && isWithinUKBounds(rc.lat, rc.lng)) return rc;
+	}, []);
+	const [reserveSeed, setReserveSeed] = (0, import_react.useState)(0);
+	const [scheduledReserves, setScheduledReserves] = (0, import_react.useState)(() => {
+		try {
+			const raw = localStorage.getItem("uber_driver_reserves_v1");
+			if (raw) {
+				const parsed = JSON.parse(raw);
+				if (Array.isArray(parsed)) return parsed;
+			}
+		} catch {}
+		return [];
+	});
+	const [acceptedReserveIds, setAcceptedReserveIds] = (0, import_react.useState)([]);
+	(0, import_react.useEffect)(() => {
+		try {
+			localStorage.setItem("uber_driver_reserves_v1", JSON.stringify(scheduledReserves));
+		} catch {}
+	}, [scheduledReserves]);
+	const availableReserves = (0, import_react.useMemo)(() => {
+		return generateLocalReserveTrips(driverPos, isWithinUKBounds(realCoords?.lat ?? 0, realCoords?.lng ?? 0) ? realCoords : void 0, reserveSeed, 6).filter((r) => !acceptedReserveIds.includes(r.id));
+	}, [
+		driverPos,
+		realCoords,
+		reserveSeed,
+		localGeoVersion,
+		acceptedReserveIds
+	]);
 	(0, import_react.useEffect)(() => {
 		try {
 			localStorage.setItem("uber_driver_gps_accepted_v1", String(gpsExplicitlyAccepted));
@@ -61324,19 +62436,32 @@ function App() {
 			return;
 		}
 		setGpsPermissionState("active");
-		const watchId = navigator.geolocation.watchPosition((pos) => {
+		const applyPosition = (pos) => {
 			const { latitude, longitude, heading, speed } = pos.coords;
 			setGpsPermissionState("active");
-			setRealCoords({
+			const coords = {
 				lat: latitude,
 				lng: longitude
-			});
+			};
+			realCoordsRef.current = coords;
+			setRealCoords(coords);
 			if (typeof speed === "number" && !Number.isNaN(speed)) setLiveSpeedMph(Math.max(0, Math.round(speed * 2.23694)));
-			if (tripStageRef.current === "idle" && isWithinUKBounds(latitude, longitude)) {
-				setDriverPos(clampMapCoords(projectLatLngToMap(latitude, longitude)));
-				if (typeof heading === "number" && !Number.isNaN(heading)) setDriverHeading(heading);
+			if (isWithinUKBounds(latitude, longitude)) {
+				prefetchLocalPlaces(latitude, longitude).then(() => {
+					setLocalGeoVersion((v) => v + 1);
+				});
+				if (tripStageRef.current === "idle") {
+					setDriverPos(clampMapCoords(projectLatLngToMap(latitude, longitude)));
+					if (typeof heading === "number" && !Number.isNaN(heading)) setDriverHeading(heading);
+				}
 			}
-		}, () => {
+		};
+		navigator.geolocation.getCurrentPosition(applyPosition, () => {}, {
+			enableHighAccuracy: false,
+			maximumAge: 12e4,
+			timeout: 4500
+		});
+		const watchId = navigator.geolocation.watchPosition(applyPosition, () => {
 			setGpsPermissionState("denied");
 		}, {
 			enableHighAccuracy: true,
@@ -61395,7 +62520,8 @@ function App() {
 			});
 		};
 		refreshPerms();
-		if (onlineStatus === "online") startNativeOnlineBubbleService(nearestUKCity(driverPosRef.current), activeAccount?.name ?? "Driver");
+		setNativeImmersiveNavHidden(onlineStatus === "online");
+		if (onlineStatus === "online") startNativeOnlineBubbleService(getResolvedLocalCityName(driverPosRef.current), activeAccount?.name ?? "Driver");
 		const handleVisibility = () => {
 			const inFg = !document.hidden;
 			syncNativeAppForeground(inFg);
@@ -61406,9 +62532,8 @@ function App() {
 					handleNativeOverlayAction(launchRes);
 				});
 			} else if (onlineStatusRef.current === "online" && tripStageRef.current === "idle" && !pendingOfferRef.current) {
-				const pool = preferences.intercity ? SAMPLE_TRIP_OFFERS : SAMPLE_TRIP_OFFERS.filter((o) => !o.isIntercity);
-				const activePool = pool.length > 0 ? pool : SAMPLE_TRIP_OFFERS;
-				const upcoming = activePool[offerIndex % activePool.length];
+				const activePool = buildLocalOfferPool(driverPosRef.current, getActiveGpsLatLng(), preferences.intercity, offerIndex);
+				const upcoming = activePool[0];
 				if (upcoming) scheduleNativeBackgroundOffer(Math.max(4, nextOfferSecLeftRef.current ?? 9), upcoming, activePool);
 			}
 		};
@@ -61434,15 +62559,27 @@ function App() {
 		activeAccount?.name,
 		preferences.intercity,
 		offerIndex,
-		handleNativeOverlayAction
+		handleNativeOverlayAction,
+		getActiveGpsLatLng
 	]);
 	const rotateRadarOffers = (0, import_react.useCallback)((nextBatch) => {
-		if (ALL_RADAR_POOL.length === 0) return;
-		const first = ALL_RADAR_POOL[nextBatch % ALL_RADAR_POOL.length];
-		const second = ALL_RADAR_POOL[(nextBatch + 1) % ALL_RADAR_POOL.length];
-		const list = first.id === second.id ? [first] : [first, second];
-		setRadarOffers(list);
-	}, []);
+		const gps = getActiveGpsLatLng();
+		const first = generateLocalTripOffer({
+			anchorCoords: driverPosRef.current,
+			realLatLng: gps,
+			seedIndex: nextBatch * 2,
+			forceType: "radar",
+			includeIntercity: preferences.intercity
+		});
+		const second = generateLocalTripOffer({
+			anchorCoords: driverPosRef.current,
+			realLatLng: gps,
+			seedIndex: nextBatch * 2 + 1,
+			forceType: "radar",
+			includeIntercity: preferences.intercity
+		});
+		setRadarOffers([first, second]);
+	}, [getActiveGpsLatLng, preferences.intercity]);
 	(0, import_react.useEffect)(() => {
 		if (onlineStatus !== "online" || radarOffers.length === 0) {
 			setRadarRefreshSecLeft(60);
@@ -61479,12 +62616,15 @@ function App() {
 				if (prev === null) return null;
 				if (prev <= 1) {
 					clearInterval(countdownInterval);
-					const pool = preferences.intercity ? SAMPLE_TRIP_OFFERS : SAMPLE_TRIP_OFFERS.filter((o) => !o.isIntercity);
-					const activePool = pool.length > 0 ? pool : SAMPLE_TRIP_OFFERS;
-					const next = activePool[offerIndex % activePool.length];
+					const next = generateLocalTripOffer({
+						anchorCoords: driverPosRef.current,
+						realLatLng: getActiveGpsLatLng(),
+						seedIndex: offerIndex,
+						includeIntercity: preferences.intercity
+					});
 					setPendingOffer(next);
 					setOfferIndex((i) => i + 1);
-					pushDriverAlert(`${next.isIntercity ? "Intercity" : next.type === "radar" ? "Trip Radar" : "Exclusive"} · £${next.fare.toFixed(2)}`, `${next.serviceName} · ${next.riderName} (${next.pickupMinutes} min away)`, `offer-${next.id}`, () => setActiveTab("home"));
+					pushDriverAlert(`${next.isIntercity ? "Intercity" : next.type === "radar" ? "Trip Radar" : "Exclusive"} · £${next.fare.toFixed(2)}`, `${next.serviceName} · ${next.pickupArea} → ${next.dropoffArea} (${next.pickupMinutes} min away)`, `offer-${next.id}`, () => setActiveTab("home"));
 					return null;
 				}
 				return prev - 1;
@@ -61498,7 +62638,8 @@ function App() {
 		showRadarList,
 		offerIndex,
 		preferences.intercity,
-		pushDriverAlert
+		pushDriverAlert,
+		getActiveGpsLatLng
 	]);
 	const driverPosRef = (0, import_react.useRef)(driverPos);
 	driverPosRef.current = driverPos;
@@ -61729,7 +62870,11 @@ function App() {
 	(0, import_react.useEffect)(() => {
 		if (!activeTrip || tripStage !== "enroute" || !liveNav || liveNav.progressPct < 75 || queuedOffer || acceptedNextOffer || preferences.stopNewRequests || activeTrip.stopCoords && !stopVisited || queuedForTripIdRef.current === activeTrip.id) return;
 		queuedForTripIdRef.current = activeTrip.id;
-		const candidate = SAMPLE_TRIP_OFFERS.find((o) => o.id !== activeTrip.id && (preferences.intercity || !o.isIntercity)) ?? SAMPLE_TRIP_OFFERS[0];
+		const candidate = generateLocalTripOffer({
+			anchorCoords: activeTrip.dropoffCoords,
+			seedIndex: offerIndex + 1,
+			includeIntercity: preferences.intercity
+		});
 		setQueuedOffer(candidate);
 		uberSounds.play(candidate.type === "exclusive" ? "exclusiveDispatch" : "dispatch");
 	}, [
@@ -61740,7 +62885,8 @@ function App() {
 		acceptedNextOffer,
 		preferences.stopNewRequests,
 		preferences.intercity,
-		stopVisited
+		stopVisited,
+		offerIndex
 	]);
 	const nearbySpeedCamera = (0, import_react.useMemo)(() => {
 		if (!activeTrip || tripStage !== "pickup" && tripStage !== "enroute" || !preferences.speedCameraWarnings) return null;
@@ -61768,7 +62914,9 @@ function App() {
 		setRadarOffers([]);
 		setRadarRefreshSecLeft(60);
 		setActiveTab("home");
-		startNativeOnlineBubbleService(nearestUKCity(driverPosRef.current), activeAccount?.name ?? "Driver");
+		startNativeOnlineBubbleService(getResolvedLocalCityName(driverPosRef.current), activeAccount?.name ?? "Driver");
+		setNativeImmersiveNavHidden(true);
+		if (!isNativeAndroidApk() && typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches && !document.fullscreenElement && document.documentElement?.requestFullscreen) document.documentElement.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
 		if (isNativeAndroidApk() && !nativeBubblePerms.overlayGranted) {
 			setShowPermissionsModal(true);
 			showToast("Online · Tap 'Allow' on Floating Uber Dot so it shows when minimised");
@@ -61798,6 +62946,8 @@ function App() {
 			setRadarOffers([]);
 			setNextOfferSecLeft(null);
 			stopNativeOnlineBubbleService();
+			setNativeImmersiveNavHidden(false);
+			if (!isNativeAndroidApk() && document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
 			showToast("You're offline");
 		}
 	};
@@ -61829,7 +62979,13 @@ function App() {
 			...p,
 			intercity: true
 		}));
-		const offer = INTERCITY_TRIP_OFFERS[intercityIdx % INTERCITY_TRIP_OFFERS.length];
+		const offer = generateLocalTripOffer({
+			anchorCoords: driverPosRef.current,
+			realLatLng: getActiveGpsLatLng(),
+			seedIndex: intercityIdx,
+			forceIntercity: true,
+			includeIntercity: true
+		});
 		setIntercityIdx((i) => i + 1);
 		if (onlineStatus === "offline") setOnlineStatus("online");
 		setShowRadarList(false);
@@ -61842,7 +62998,8 @@ function App() {
 		intercityIdx,
 		onlineStatus,
 		preferences.intercity,
-		showToast
+		showToast,
+		getActiveGpsLatLng
 	]);
 	const handleRechargeVehicle = (0, import_react.useCallback)(() => {
 		if (!activeAccount?.id) return;
@@ -61860,25 +63017,28 @@ function App() {
 		setShowRadarList(true);
 		showToast("Sent to Trip Radar — matching for 10s...");
 	}, [showToast]);
-	const handleRadarMatchFailed = (0, import_react.useCallback)((offer) => {
+	const handleRadarMatchFailed = (0, import_react.useCallback)((_offer) => {
 		uberSounds.play("decline");
 		setRadarMatchingId(null);
 		setRadarOffers([]);
 		setShowRadarList(false);
-		const pool = (preferences.intercity ? SAMPLE_TRIP_OFFERS : SAMPLE_TRIP_OFFERS.filter((o) => !o.isIntercity)).filter((o) => o.id !== offer.id);
-		const next = pool.length > 0 ? pool[offerIndex % pool.length] : null;
-		if (next) {
-			setOfferIndex((i) => i + 1);
-			showToast("Another driver matched — loading next available job...");
-			setTimeout(() => {
-				if (onlineStatus === "online" && tripStageRef.current === "idle") setPendingOffer(next);
-			}, 700);
-		} else showToast("Another driver matched — waiting for next request...");
+		const next = generateLocalTripOffer({
+			anchorCoords: driverPosRef.current,
+			realLatLng: getActiveGpsLatLng(),
+			seedIndex: offerIndex + 1,
+			includeIntercity: preferences.intercity
+		});
+		setOfferIndex((i) => i + 1);
+		showToast("Another driver matched — loading next available job...");
+		setTimeout(() => {
+			if (onlineStatus === "online" && tripStageRef.current === "idle") setPendingOffer(next);
+		}, 700);
 	}, [
 		onlineStatus,
 		preferences.intercity,
 		offerIndex,
-		showToast
+		showToast,
+		getActiveGpsLatLng
 	]);
 	const handleDeclineOffer = (0, import_react.useCallback)((offer) => {
 		uberSounds.play("decline");
@@ -61892,6 +63052,70 @@ function App() {
 			showToast("Exclusive declined · Acceptance rate updated");
 		} else showToast("Request declined");
 	}, [activeAccount?.id, showToast]);
+	const handleAcceptReserve = (0, import_react.useCallback)((trip) => {
+		uberSounds.unlock();
+		uberSounds.play("accept");
+		setAcceptedReserveIds((prev) => [...prev, trip.id]);
+		setScheduledReserves((prev) => {
+			if (prev.some((r) => r.id === trip.id)) return prev;
+			return [{
+				...trip,
+				status: "scheduled"
+			}, ...prev].sort((a, b) => a.scheduledAtMs - b.scheduledAtMs);
+		});
+		showToast(`Reserve confirmed · ${trip.dayLabel}, ${trip.timeLabel}`);
+	}, [showToast]);
+	const handleCancelReserve = (0, import_react.useCallback)((tripId) => {
+		uberSounds.play("decline");
+		setScheduledReserves((prev) => prev.filter((r) => r.id !== tripId));
+		showToast("Reserve trip cancelled");
+	}, [showToast]);
+	const handleRefreshReserves = (0, import_react.useCallback)(() => {
+		setAcceptedReserveIds([]);
+		setReserveSeed((s) => s + 6);
+		showToast(`Refreshed Uber Reserve trips near ${getResolvedLocalCityName(driverPosRef.current)}`);
+	}, [showToast]);
+	const handleStartReserveTrip = (0, import_react.useCallback)((trip) => {
+		uberSounds.unlock();
+		if (onlineStatus === "offline") {
+			setOnlineStatus("online");
+			startNativeOnlineBubbleService(getResolvedLocalCityName(driverPosRef.current), activeAccount?.name ?? "Driver");
+			setNativeImmersiveNavHidden(true);
+		}
+		setScheduledReserves((prev) => prev.filter((r) => r.id !== trip.id));
+		const convertedOffer = {
+			id: `active-${trip.id}`,
+			type: "exclusive",
+			serviceName: trip.serviceName,
+			fare: trip.estimatedFare,
+			rating: trip.rating,
+			riderName: trip.riderName,
+			riderTrips: trip.riderTrips,
+			pickupMinutes: trip.pickupMinutes,
+			pickupMiles: trip.pickupMiles,
+			pickupAddress: trip.pickupAddress,
+			pickupArea: trip.pickupArea,
+			tripMinutes: trip.tripMinutes,
+			tripMiles: trip.tripMiles,
+			dropoffAddress: trip.dropoffAddress,
+			dropoffArea: trip.dropoffArea,
+			pickupCoords: trip.pickupCoords,
+			dropoffCoords: trip.dropoffCoords,
+			surgeBonus: trip.reserveFee,
+			pinCode: trip.pinCode,
+			surchargeLabel: "Uber Reserve Fee",
+			surchargeAmount: trip.reserveFee,
+			riderNote: trip.riderNote,
+			expiresInSec: 30
+		};
+		handleAcceptOffer(convertedOffer);
+		showToast(`Starting Uber Reserve pickup · ${trip.pickupAddress}`);
+	}, [
+		onlineStatus,
+		activeAccount?.name,
+		handleAcceptOffer,
+		showToast
+	]);
 	nativeActionHandlersRef.current = {
 		accept: handleAcceptOffer,
 		decline: handleDeclineOffer,
@@ -62145,11 +63369,27 @@ function App() {
 			};
 		});
 	};
-	const handleSelectAccount = (accountId) => {
-		const target = accounts.find((a) => a.id === accountId);
+	const handleSelectAccount = (accountId, rememberMe = true, targetOverride) => {
+		const target = targetOverride ?? accounts.find((a) => a.id === accountId);
 		if (!target) return;
 		setActiveAccountId(accountId);
 		setActiveAccountIdState(accountId);
+		if (rememberMe) {
+			const remembered = {
+				accountId: target.id,
+				name: target.name,
+				email: target.email,
+				password: target.password,
+				city: target.city,
+				rememberMe: true,
+				lastSignedInAt: Date.now()
+			};
+			saveRememberedLogin(remembered);
+			setRememberedLogin(remembered);
+		} else {
+			saveRememberedLogin(null);
+			setRememberedLogin(null);
+		}
 		setIsSignedOut(false);
 		setOnlineStatus("offline");
 		setPendingOffer(null);
@@ -62159,13 +63399,14 @@ function App() {
 		setRecenterSignal((s) => s + 1);
 		showToast(`Signed in as ${target.name} (${target.city})`);
 	};
-	const handleSignInCredentials = (email, password) => {
+	const handleSignInCredentials = (email, password, rememberMe = true) => {
 		const match = accounts.find((a) => a.email.toLowerCase() === email.toLowerCase() && a.password === password);
 		if (!match) return {
 			ok: false,
 			error: "Email or password did not match any saved UK driver account."
 		};
-		handleSelectAccount(match.id);
+		handleSelectAccount(match.id, rememberMe);
+		if (rememberMe) storeBrowserCredential(match.email, match.password, match.name);
 		return { ok: true };
 	};
 	const handleRegisterAccount = (payload) => {
@@ -62194,8 +63435,26 @@ function App() {
 		};
 		const nextList = [newAcct, ...accounts];
 		setAccounts(nextList);
+		saveAccounts(nextList);
 		setActiveAccountId(newAcct.id);
 		setActiveAccountIdState(newAcct.id);
+		if (payload.rememberMe !== false) {
+			const remembered = {
+				accountId: newAcct.id,
+				name: newAcct.name,
+				email: newAcct.email,
+				password: newAcct.password,
+				city: newAcct.city,
+				rememberMe: true,
+				lastSignedInAt: Date.now()
+			};
+			saveRememberedLogin(remembered);
+			setRememberedLogin(remembered);
+			storeBrowserCredential(newAcct.email, newAcct.password, newAcct.name);
+		} else {
+			saveRememberedLogin(null);
+			setRememberedLogin(null);
+		}
 		setIsSignedOut(false);
 		setOnlineStatus("offline");
 		setPendingOffer(null);
@@ -62204,6 +63463,43 @@ function App() {
 		setDriverPos(getCityStartCoords(newAcct.city));
 		setRecenterSignal((s) => s + 1);
 		showToast(`Welcome aboard, ${newAcct.name}!`);
+		return { ok: true };
+	};
+	const handleExportBackupCode = (account) => {
+		return exportAccountBackupCode(account, account.id === activeAccount?.id ? ledger : loadDriverLedger({
+			proPoints: account.proPoints,
+			walletBalance: account.id === "acct-alex" ? 1e3 : 420,
+			questCompletedCount: account.id === "acct-alex" ? 16 : 9
+		}, account.id));
+	};
+	const handleRestoreBackupCode = (code) => {
+		const parsed = importAccountBackupCode(code);
+		if (!parsed) return {
+			ok: false,
+			error: "Invalid or corrupted UBR1 backup key."
+		};
+		const restoredAcct = parsed.account;
+		setAccounts((prev) => {
+			const next = prev.some((a) => a.id === restoredAcct.id) ? prev.map((a) => a.id === restoredAcct.id ? restoredAcct : a) : [restoredAcct, ...prev];
+			saveAccounts(next);
+			return next;
+		});
+		if (parsed.ledger && typeof parsed.ledger === "object") {
+			const rawLedger = parsed.ledger;
+			const restoredLedger = {
+				dailyTotals: rawLedger.dailyTotals ?? {},
+				walletBalance: typeof rawLedger.walletBalance === "number" ? rawLedger.walletBalance : 0,
+				proPoints: typeof rawLedger.proPoints === "number" ? rawLedger.proPoints : restoredAcct.proPoints,
+				questCompletedCount: typeof rawLedger.questCompletedCount === "number" ? rawLedger.questCompletedCount : 0,
+				completedTrips: Array.isArray(rawLedger.completedTrips) ? rawLedger.completedTrips : []
+			};
+			saveDriverLedger(restoredLedger, restoredAcct.id);
+			prevAccountIdRef.current = restoredAcct.id;
+			setLedger(restoredLedger);
+		}
+		handleSelectAccount(restoredAcct.id, true, restoredAcct);
+		storeBrowserCredential(restoredAcct.email, restoredAcct.password, restoredAcct.name);
+		showToast(`Restored driver account for ${restoredAcct.name}`);
 		return { ok: true };
 	};
 	const handleSignOut = () => {
@@ -62215,7 +63511,7 @@ function App() {
 		setShowRadarList(false);
 		setActiveAccountId(null);
 		setIsSignedOut(true);
-		showToast("Signed out");
+		showToast("Signed out · Saved credentials remembered");
 	};
 	const handleFaceVerified = () => {
 		if (activeAccount) {
@@ -62238,10 +63534,12 @@ function App() {
 			navigator.geolocation.getCurrentPosition((pos) => {
 				const { latitude, longitude, heading, speed } = pos.coords;
 				setGpsPermissionState("active");
-				setRealCoords({
+				const coords = {
 					lat: latitude,
 					lng: longitude
-				});
+				};
+				realCoordsRef.current = coords;
+				setRealCoords(coords);
 				if (typeof speed === "number" && !Number.isNaN(speed)) setLiveSpeedMph(Math.max(0, Math.round(speed * 2.23694)));
 				if (isWithinUKBounds(latitude, longitude)) {
 					const projected = clampMapCoords(projectLatLngToMap(latitude, longitude));
@@ -62250,7 +63548,10 @@ function App() {
 						if (typeof heading === "number" && !Number.isNaN(heading)) setDriverHeading(heading);
 					}
 					setRecenterSignal((s) => s + 1);
-					showToast(`Live GPS active · Near ${nearestUKCity(projected)}, UK`);
+					prefetchLocalPlaces(latitude, longitude).then((town) => {
+						setLocalGeoVersion((v) => v + 1);
+						showToast(`Live GPS active · ${town || getResolvedLocalCityName(projected)}, UK`);
+					});
 				} else showToast("Blue GPS active (outside UK) · Previewing UK map");
 			}, () => {
 				setGpsPermissionState("denied");
@@ -62396,13 +63697,30 @@ function App() {
 		return `${Math.floor(sec / 60)}:${(sec % 60).toString().padStart(2, "0")}`;
 	};
 	const isLiveGpsInUK = realCoords !== null && isWithinUKBounds(realCoords.lat, realCoords.lng);
+	const fallbackLocalOffer = (0, import_react.useMemo)(() => generateLocalTripOffer({
+		anchorCoords: driverPos,
+		realLatLng: isLiveGpsInUK ? realCoords : void 0,
+		seedIndex: offerIndex,
+		forceType: "radar",
+		includeIntercity: preferences.intercity
+	}), [
+		driverPos,
+		isLiveGpsInUK,
+		realCoords,
+		offerIndex,
+		preferences.intercity,
+		localGeoVersion
+	]);
 	if (isSignedOut || !activeAccount) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AccountModal, {
 		accounts,
 		activeAccount,
+		rememberedLogin,
 		isSignedOutGate: true,
 		onSelectAccount: handleSelectAccount,
 		onSignInCredentials: handleSignInCredentials,
 		onRegisterAccount: handleRegisterAccount,
+		onExportBackupCode: handleExportBackupCode,
+		onRestoreBackupCode: handleRestoreBackupCode,
 		onSignOut: handleSignOut
 	});
 	const renderManeuverIcon = (kind) => {
@@ -62763,13 +64081,15 @@ function App() {
 								}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
 									type: "button",
 									onClick: () => {
-										const pool = preferences.intercity ? SAMPLE_TRIP_OFFERS : SAMPLE_TRIP_OFFERS.filter((o) => !o.isIntercity);
-										const sample = (pool.length > 0 ? pool : SAMPLE_TRIP_OFFERS)[offerIndex % Math.max(1, pool.length)];
-										if (sample) {
-											setOfferIndex((i) => i + 1);
-											previewNativeFloatingOfferCard(sample);
-											showToast("Floating overlay job card open — tap Accept or X!");
-										}
+										const sample = generateLocalTripOffer({
+											anchorCoords: driverPosRef.current,
+											realLatLng: getActiveGpsLatLng(),
+											seedIndex: offerIndex,
+											includeIntercity: preferences.intercity
+										});
+										setOfferIndex((i) => i + 1);
+										previewNativeFloatingOfferCard(sample);
+										showToast(`Overlay job card open (${sample.pickupArea}) — tap Accept or X!`);
 									},
 									className: "h-9 px-3.5 rounded-full bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[12px] font-bold shadow-lg flex items-center gap-1.5 active:scale-95 transition-all whitespace-nowrap",
 									children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "Test Job Card" })
@@ -62859,7 +64179,7 @@ function App() {
 									if (isLiveGpsInUK && realCoords && tripStage === "idle") {
 										const projected = clampMapCoords(projectLatLngToMap(realCoords.lat, realCoords.lng));
 										setDriverPos(projected);
-										showToast(`Centered on live GPS · ${nearestUKCity(projected)}`);
+										showToast(`Centered on live GPS · ${getResolvedLocalCityName(projected)}`);
 									}
 									setRecenterSignal((s) => s + 1);
 								},
@@ -62886,7 +64206,7 @@ function App() {
 					(pendingOffer || showRadarList) && tripStage === "idle" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
 						className: "absolute inset-x-3 bottom-4 z-40 max-w-[440px] mx-auto",
 						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(TripOfferModal, {
-							offer: pendingOffer || radarOffers[0] || SAMPLE_TRIP_OFFERS[1],
+							offer: pendingOffer || radarOffers[0] || fallbackLocalOffer,
 							onAccept: handleAcceptOffer,
 							onDecline: handleDeclineOffer,
 							onMoveToRadarMatch: handleMoveToRadarMatch,
@@ -62903,7 +64223,7 @@ function App() {
 						})
 					}),
 					activeTrip && tripStage !== "idle" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-						className: "absolute inset-x-0 bottom-0 sm:bottom-4 sm:inset-x-4 z-40 max-w-[460px] mx-auto",
+						className: "absolute inset-x-0 bottom-2 sm:bottom-6 sm:inset-x-4 z-40 max-w-[460px] mx-auto pb-[env(safe-area-inset-bottom,0px)]",
 						children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ActiveTripSheet, {
 							trip: activeTrip,
 							stage: tripStage,
@@ -63064,6 +64384,16 @@ function App() {
 						onDispatchIntercity: handleDispatchIntercity,
 						onRechargeVehicle: handleRechargeVehicle
 					}),
+					activeTab === "reserve" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(ReserveView, {
+						localCity: getResolvedLocalCityName(driverPos),
+						availableReserves,
+						scheduledReserves,
+						onAcceptReserve: handleAcceptReserve,
+						onCancelReserve: handleCancelReserve,
+						onStartReserveTrip: handleStartReserveTrip,
+						onRefreshReserves: handleRefreshReserves,
+						onBack: () => setActiveTab("home")
+					}),
 					activeTab === "earnings" && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EarningsView, {
 						weeklyEarnings,
 						todayEarnings,
@@ -63132,15 +64462,19 @@ function App() {
 				children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(BottomNav, {
 					activeTab: activeTab === "hub" ? "home" : activeTab,
 					unreadInboxCount,
+					scheduledReserveCount: scheduledReserves.length,
 					onChangeTab: setActiveTab
 				})
 			}),
 			showAccountModal && /* @__PURE__ */ (0, import_jsx_runtime.jsx)(AccountModal, {
 				accounts,
 				activeAccount,
+				rememberedLogin,
 				onSelectAccount: handleSelectAccount,
 				onSignInCredentials: handleSignInCredentials,
 				onRegisterAccount: handleRegisterAccount,
+				onExportBackupCode: handleExportBackupCode,
+				onRestoreBackupCode: handleRestoreBackupCode,
 				onSignOut: handleSignOut,
 				onClose: () => setShowAccountModal(false)
 			}),
@@ -63176,13 +64510,16 @@ function App() {
 					showToast("Floating Uber dot visible for 8s — drag anywhere!");
 				},
 				onPreviewFloatingJobCard: () => {
-					const sample = SAMPLE_TRIP_OFFERS[offerIndex % SAMPLE_TRIP_OFFERS.length];
-					if (sample) {
-						setOfferIndex((i) => i + 1);
-						setShowPermissionsModal(false);
-						previewNativeFloatingOfferCard(sample);
-						showToast("Floating Uber job card preview active — tap Accept or Dot");
-					}
+					const sample = generateLocalTripOffer({
+						anchorCoords: driverPosRef.current,
+						realLatLng: getActiveGpsLatLng(),
+						seedIndex: offerIndex,
+						includeIntercity: preferences.intercity
+					});
+					setOfferIndex((i) => i + 1);
+					setShowPermissionsModal(false);
+					previewNativeFloatingOfferCard(sample);
+					showToast(`Overlay job card preview (${sample.pickupArea}) — tap Accept or Dot`);
 				},
 				onAcceptAll: handleAcceptAllPermissions,
 				onClose: () => setShowPermissionsModal(false)

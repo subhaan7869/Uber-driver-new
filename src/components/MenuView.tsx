@@ -26,7 +26,7 @@ import {
   User,
   Zap,
 } from 'lucide-react';
-import { DriverAccount, DriverPreferences } from '../types/driver';
+import { DriverAccount, DriverPreferences, TripStats } from '../types/driver';
 import { NotificationPermissionState } from '../utils/notifications';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -35,6 +35,7 @@ interface MenuViewProps {
   proPoints: number;
   walletBalance: number;
   totalBusinessMiles?: number;
+  tripStats: TripStats;
   preferences: DriverPreferences;
   notificationPermission: NotificationPermissionState;
   lastRefreshedAt: number;
@@ -50,6 +51,7 @@ interface MenuViewProps {
   onOpenSafety: () => void;
   onOpenPreferences: () => void;
   onOpenOpportunities: () => void;
+  onOpenTrips: () => void;
   onOpenEarnings: () => void;
   onOpenInbox: () => void;
   onToggleNotifications: () => void;
@@ -101,6 +103,7 @@ export const MenuView: React.FC<MenuViewProps> = ({
   proPoints,
   walletBalance,
   totalBusinessMiles = 0,
+  tripStats,
   preferences,
   notificationPermission,
   lastRefreshedAt,
@@ -116,6 +119,7 @@ export const MenuView: React.FC<MenuViewProps> = ({
   onOpenSafety,
   onOpenPreferences,
   onOpenOpportunities,
+  onOpenTrips,
   onOpenEarnings,
   onOpenInbox,
   onToggleNotifications,
@@ -665,7 +669,7 @@ export const MenuView: React.FC<MenuViewProps> = ({
       </button>
 
       {/* 3 Action Tiles: Help, Safety, Settings */}
-      <div className="px-5 grid grid-cols-3 gap-3 mb-5">
+      <div className="px-5 grid grid-cols-3 gap-3 mb-4">
         <button
           type="button"
           onClick={() => setSubView('help')}
@@ -691,6 +695,29 @@ export const MenuView: React.FC<MenuViewProps> = ({
         >
           <Settings className="w-6 h-6 text-black dark:text-white stroke-[2.2]" />
           <span className="text-[14px] font-bold text-black dark:text-white">Settings</span>
+        </button>
+      </div>
+
+      {/* Trips Menu Entry Card */}
+      <div className="px-5 mb-5">
+        <button
+          type="button"
+          onClick={onOpenTrips}
+          className="w-full p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] hover:bg-[#F3F3F3] dark:hover:bg-white/5 flex items-center justify-between gap-3 text-left transition-colors"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-black dark:bg-[#276EF1] text-white flex items-center justify-center shrink-0">
+              <Car className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[15px] font-bold text-black dark:text-white">Trips</p>
+              <p className="text-[12px] text-[#545454] dark:text-neutral-400 tabular-nums truncate">
+                {tripStats.totalReceived} received · {tripStats.accepted} accepted ·{' '}
+                {tripStats.declined} declined
+              </p>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-[#6B6B6B] shrink-0" />
         </button>
       </div>
 

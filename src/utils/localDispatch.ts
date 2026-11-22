@@ -1,4 +1,10 @@
-import { Coordinates, ReserveCategory, ReserveTrip, TripOffer } from '../types/driver';
+import {
+  Coordinates,
+  DriverPreferences,
+  ReserveCategory,
+  ReserveTrip,
+  TripOffer,
+} from '../types/driver';
 import {
   clampMapCoords,
   mapToLatLng,
@@ -7,6 +13,11 @@ import {
   UK_AIRPORT_MAP_PINS,
   UK_CITIES,
 } from './ukGeo';
+
+export type ServicePrefsInput = Pick<
+  DriverPreferences,
+  'uberX' | 'comfort' | 'uberXL' | 'uberPet' | 'deliveries' | 'intercity'
+>;
 
 interface LocalPlace {
   name: string;
@@ -251,6 +262,26 @@ const RIDER_NAMES = [
   'Liam B.',
 ];
 
+const EATS_MERCHANTS = [
+  "Nando's",
+  'Pret A Manger',
+  'Wagamama',
+  'Five Guys',
+  'Greggs',
+  "McDonald's",
+  'Tesco Express',
+  'KFC',
+  'Co-op Food',
+  'PizzaExpress',
+];
+
+const PET_NOTES = [
+  'Travelling with my friendly Labrador on a lead (blanket brought).',
+  'Small cat inside a secured travel carrier — heading to the vet.',
+  '1 passenger + calm Cockapoo dog waiting by the kerb.',
+  'Bringing a medium Golden Retriever — clean paws & towel ready.',
+];
+
 interface LocalOfferOptions {
   anchorCoords: Coordinates;
   realLatLng?: { lat: number; lng: number } | null;
@@ -258,6 +289,7 @@ interface LocalOfferOptions {
   forceType?: 'exclusive' | 'radar';
   forceIntercity?: boolean;
   includeIntercity?: boolean;
+  servicePrefs?: ServicePrefsInput;
 }
 
 export function generateLocalTripOffer({
@@ -267,6 +299,7 @@ export function generateLocalTripOffer({
   forceType,
   forceIntercity = false,
   includeIntercity = true,
+  servicePrefs,
 }: LocalOfferOptions): TripOffer {
   const baseLatLng = realLatLng ?? mapToLatLng(anchorCoords);
   const currentLat = baseLatLng.lat;
@@ -279,15 +312,31 @@ export function generateLocalTripOffer({
     geoCache !== null &&
     haversineMiles(geoCache.anchorLat, geoCache.anchorLng, currentLat, currentLng) <= 8;
 
+  const standardServices: Array<'UberX' | 'Comfort' | 'UberXL' | 'Uber Pet' | 'Uber Eats'> = [];
+  if (servicePrefs) {
+    if (servicePrefs.uberX) standardServices.push('UberX', 'UberX');
+    if (servicePrefs.comfort) standardServices.push('Comfort');
+    if (servicePrefs.uberXL) standardServices.push('UberXL');
+    if (servicePrefs.uberPet) standardServices.push('Uber Pet');
+    if (servicePrefs.deliveries) standardServices.push('Uber Eats');
+  } else {
+    standardServices.push('UberX', 'UberX', 'Comfort', 'UberXL');
+  }
+
+  const intercityEnabled = servicePrefs ? servicePrefs.intercity : includeIntercity;
   const isIntercity =
-    forceIntercity || (includeIntercity && seedIndex % 7 === 6);
+    forceIntercity ||
+    (intercityEnabled && standardServices.length === 0) ||
+    (intercityEnabled && seedIndex % 15 === 14);
   const type: 'exclusive' | 'radar' =
     forceType ?? (seedIndex % 3 === 1 ? 'radar' : 'exclusive');
 
-  const services: Array<'UberX' | 'Comfort' | 'UberXL'> = ['UberX', 'UberX', 'Comfort', 'UberXL'];
   const serviceName = isIntercity
     ? 'Intercity'
-    : services[seedIndex % services.length];
+    : standardServices.length > 0
+    ? standardServices[seedIndex % standardServices.length]
+    : 'UberX';
+  const isDelivery = serviceName === 'Uber Eats';
 
   // 1. Pick local PICKUP within 0.35 - 1.35 miles of driver's current position
   const pickupBearing = ((seedIndex * 73 + 25) % 360);
@@ -381,16 +430,23 @@ export function generateLocalTripOffer({
     dropoffArea = `${localTown} Local`;
   }
 
+  if (isDelivery) {
+    const merchant = EATS_MERCHANTS[seedIndex % EATS_MERCHANTS.length];
+    if (!pickupAddress.toLowerCase().includes(merchant.toLowerCase())) {
+      pickupAddress = `${merchant} · ${pickupAddress}`;
+    }
+  }
+
   const tripMilesRaw = Math.max(
-    1.3,
-    haversineMiles(pickupLat, pickupLng, dropoffLat, dropoffLng) * 1.28
+    isDelivery ? 0.8 : 1.3,
+    haversineMiles(pickupLat, pickupLng, dropoffLat, dropoffLng) * (isDelivery ? 0.92 : 1.28)
   );
   const tripMiles = Number(tripMilesRaw.toFixed(1));
-  const avgSpeedMph = isIntercity ? 44 : 18;
-  const tripMinutes = Math.max(6, Math.round((tripMiles / avgSpeedMph) * 60));
+  const avgSpeedMph = isIntercity ? 44 : isDelivery ? 16 : 18;
+  const tripMinutes = Math.max(isDelivery ? 5 : 6, Math.round((tripMiles / avgSpeedMph) * 60));
 
-  // Optional mid-route stop (~1 in 5 local trips)
-  const hasStop = !isIntercity && seedIndex % 5 === 2;
+  // Optional mid-route stop (~1 in 5 local passenger trips; never on Uber Eats)
+  const hasStop = !isIntercity && !isDelivery && seedIndex % 5 === 2;
   const stopCoords = hasStop
     ? clampMapCoords(
         projectLatLngToMap(
@@ -403,24 +459,59 @@ export function generateLocalTripOffer({
     ? `${FALLBACK_LOCAL_STREETS[(seedIndex + 4) % FALLBACK_LOCAL_STREETS.length]} (Quick 2m stop)`
     : undefined;
 
-  // Realistic UK fare math
+  // Realistic UK fare math per service tier
   const perMileRate =
     serviceName === 'UberXL'
-      ? 2.15
+      ? 2.25
       : serviceName === 'Comfort'
       ? 1.85
+      : serviceName === 'Uber Pet'
+      ? 1.72
+      : serviceName === 'Uber Eats'
+      ? 1.25
       : serviceName === 'Intercity'
       ? 1.65
       : 1.5;
+  const surchargeLabel =
+    serviceName === 'Uber Pet' ? 'Pet Fee' : isDelivery ? 'Hot Bag Bonus' : undefined;
+  const surchargeAmount =
+    serviceName === 'Uber Pet' ? 3.5 : isDelivery && seedIndex % 2 === 0 ? 1.2 : undefined;
   const surgeBonus = seedIndex % 3 === 0 ? Number((1.75 + (seedIndex % 4) * 0.75).toFixed(2)) : undefined;
-  const baseFare = 3.2 + tripMiles * perMileRate + tripMinutes * 0.18 + (surgeBonus ?? 0);
-  const fare = Number(Math.max(5.8, baseFare).toFixed(2));
+  const baseFare =
+    (isDelivery ? 2.85 : 3.2) +
+    tripMiles * perMileRate +
+    tripMinutes * (isDelivery ? 0.14 : 0.18) +
+    (surchargeAmount ?? 0) +
+    (surgeBonus ?? 0);
+  const minFare =
+    serviceName === 'UberXL'
+      ? 9.5
+      : serviceName === 'Uber Pet'
+      ? 8.5
+      : serviceName === 'Comfort'
+      ? 7.8
+      : isDelivery
+      ? 4.6
+      : 5.8;
+  const fare = Number(Math.max(minFare, baseFare).toFixed(2));
 
   const riderName = RIDER_NAMES[seedIndex % RIDER_NAMES.length];
-  const hasPin = seedIndex % 2 === 0;
+  const hasPin = isDelivery ? seedIndex % 3 === 0 : seedIndex % 2 === 0;
   const pinCode = hasPin
     ? String(1000 + ((seedIndex * 1373 + 4829) % 8999))
     : undefined;
+
+  const riderNote = isDelivery
+    ? `Order #UE-${4100 + ((seedIndex * 79) % 5800)} · ${
+        seedIndex % 2 === 0 ? '2x Hot Bags · Leave at front door' : 'Grocery order · Ring doorbell on arrival'
+      }`
+    : serviceName === 'Uber Pet'
+    ? PET_NOTES[seedIndex % PET_NOTES.length]
+    : serviceName === 'UberXL'
+    ? `Group of ${4 + (seedIndex % 3)} passengers with luggage — outside ${pickupAddress}.`
+    : serviceName === 'Comfort'
+    ? `Comfort preference: Quiet ride & cool cabin · ${pickupAddress}.`
+    : `Waiting outside ${pickupAddress} in ${localTown}.`;
 
   return {
     id: `local-${type}-${isIntercity ? 'ic-' : ''}${Date.now()}-${seedIndex}`,
@@ -442,11 +533,13 @@ export function generateLocalTripOffer({
     dropoffCoords: clampMapCoords(projectLatLngToMap(dropoffLat, dropoffLng)),
     surgeBonus,
     pinCode,
+    surchargeLabel,
+    surchargeAmount,
     isIntercity,
     intercityCorridor,
     stopAddress,
     stopCoords,
-    riderNote: `Waiting outside ${pickupAddress} in ${localTown}.`,
+    riderNote,
     expiresInSec: isIntercity ? 20 : type === 'radar' ? 18 : 15,
   };
 }
@@ -455,7 +548,8 @@ export function buildLocalOfferPool(
   anchorCoords: Coordinates,
   realLatLng: { lat: number; lng: number } | null | undefined,
   includeIntercity: boolean,
-  startSeed = 0
+  startSeed = 0,
+  servicePrefs?: ServicePrefsInput
 ): TripOffer[] {
   const offers: TripOffer[] = [];
   for (let i = 0; i < 6; i++) {
@@ -465,6 +559,7 @@ export function buildLocalOfferPool(
         realLatLng,
         seedIndex: startSeed + i,
         includeIntercity,
+        servicePrefs,
       })
     );
   }
@@ -505,7 +600,8 @@ export function generateLocalReserveTrips(
   anchorCoords: Coordinates,
   realLatLng: { lat: number; lng: number } | null | undefined,
   startSeed = 0,
-  count = 6
+  count = 6,
+  servicePrefs?: ServicePrefsInput
 ): ReserveTrip[] {
   const baseLatLng = realLatLng ?? mapToLatLng(anchorCoords);
   const currentLat = baseLatLng.lat;
@@ -531,13 +627,18 @@ export function generateLocalReserveTrips(
   const offsetsMin = [0, 75, 165, 285, 690, 960, 1140, 1320];
 
   const categories: ReserveCategory[] = ['airport', 'local', 'executive', 'airport', 'local', 'executive'];
-  const servicesByCategory: Record<
-    ReserveCategory,
-    ReserveTrip['serviceName']
-  > = {
-    local: 'Reserve · UberX',
-    airport: 'Reserve · Comfort',
-    executive: 'Reserve · Executive',
+  const reserveOptions: ReserveTrip['serviceName'][] = [];
+  if (!servicePrefs || servicePrefs.uberX) reserveOptions.push('Reserve · UberX');
+  if (!servicePrefs || servicePrefs.comfort) reserveOptions.push('Reserve · Comfort', 'Reserve · Executive');
+  if (servicePrefs?.uberXL) reserveOptions.push('Reserve · UberXL');
+  if (reserveOptions.length === 0) reserveOptions.push('Reserve · UberX');
+
+  const pickServiceForCategory = (category: ReserveCategory, seed: number): ReserveTrip['serviceName'] => {
+    if (servicePrefs?.uberXL && seed % 3 === 1) return 'Reserve · UberXL';
+    if (category === 'local' && reserveOptions.includes('Reserve · UberX')) return 'Reserve · UberX';
+    if (category === 'airport' && reserveOptions.includes('Reserve · Comfort')) return 'Reserve · Comfort';
+    if (category === 'executive' && reserveOptions.includes('Reserve · Executive')) return 'Reserve · Executive';
+    return reserveOptions[seed % reserveOptions.length];
   };
 
   const results: ReserveTrip[] = [];
@@ -551,6 +652,7 @@ export function generateLocalReserveTrips(
       seedIndex: seed + 10,
       forceType: 'exclusive',
       includeIntercity: false,
+      servicePrefs,
     });
 
     const scheduledAtMs = slotBaseMs + offsetsMin[i % offsetsMin.length] * 60 * 1000;
@@ -584,8 +686,23 @@ export function generateLocalReserveTrips(
       tripMinutes = Math.max(16, Math.round(tripMiles * 2.1));
     }
 
-    const reserveFee = category === 'executive' ? 10.0 : category === 'airport' ? 8.0 : 6.0;
-    const ratePerMile = category === 'executive' ? 2.4 : category === 'airport' ? 1.9 : 1.65;
+    const chosenService = pickServiceForCategory(category, seed);
+    const reserveFee =
+      chosenService === 'Reserve · Executive'
+        ? 10.0
+        : chosenService === 'Reserve · UberXL'
+        ? 9.0
+        : category === 'airport'
+        ? 8.0
+        : 6.0;
+    const ratePerMile =
+      chosenService === 'Reserve · Executive'
+        ? 2.4
+        : chosenService === 'Reserve · UberXL'
+        ? 2.3
+        : category === 'airport'
+        ? 1.9
+        : 1.65;
     const estimatedFare = Number(
       Math.max(16.5, reserveFee + 4.5 + tripMiles * ratePerMile + tripMinutes * 0.2).toFixed(2)
     );
@@ -593,7 +710,7 @@ export function generateLocalReserveTrips(
     results.push({
       id: `reserve-slot-${seed}`,
       category,
-      serviceName: servicesByCategory[category],
+      serviceName: chosenService,
       scheduledAtMs,
       dayLabel: getReserveDayLabel(scheduledAtMs, nowMs),
       timeLabel: formatHm(scheduledAtMs),

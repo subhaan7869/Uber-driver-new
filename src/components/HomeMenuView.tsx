@@ -4,6 +4,7 @@ import {
   BarChart2,
   BatteryCharging,
   Bell,
+  Car,
   ChevronLeft,
   Clock,
   Eye,
@@ -22,14 +23,17 @@ import {
   User,
 } from 'lucide-react';
 import { BUSY_SOON_ZONES, UK_AIRPORT_QUEUES } from '../data/mockDriverData';
-import { DriverAccount, DriverOnlineStatus, DriverPreferences } from '../types/driver';
+import { DriverAccount, DriverOnlineStatus, DriverPreferences, TripStats } from '../types/driver';
+import { formatOnlineTimer } from '../utils/timeFormat';
 
 interface HomeMenuViewProps {
   account: DriverAccount;
   onlineStatus: DriverOnlineStatus;
+  onlineElapsedSec?: number;
   todayEarnings: number;
   privacyHidden: boolean;
   questCompletedCount: number;
+  tripStats: TripStats;
   preferences: DriverPreferences;
   nextOfferSecLeft: number | null;
   radarRefreshSecLeft: number;
@@ -44,6 +48,7 @@ interface HomeMenuViewProps {
   onOpenSafety: () => void;
   onOpenPreferences: () => void;
   onOpenOpportunities: (section: 'opportunities' | 'trends' | 'airports') => void;
+  onOpenTrips: () => void;
   onOpenEarnings: () => void;
   onOpenAccountMenu: () => void;
   onOpenTripRadar: () => void;
@@ -55,9 +60,11 @@ interface HomeMenuViewProps {
 export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
   account,
   onlineStatus,
+  onlineElapsedSec = 0,
   todayEarnings,
   privacyHidden,
   questCompletedCount,
+  tripStats,
   preferences,
   nextOfferSecLeft,
   radarRefreshSecLeft,
@@ -72,6 +79,7 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
   onOpenSafety,
   onOpenPreferences,
   onOpenOpportunities,
+  onOpenTrips,
   onOpenEarnings,
   onOpenAccountMenu,
   onOpenTripRadar,
@@ -166,10 +174,10 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
             <h1 className="text-[28px] font-extrabold tracking-tight text-black dark:text-white">
               {onlineStatus === 'offline' ? "You're offline" : "You're online"}
             </h1>
-            <p className="text-[14px] text-[#545454] dark:text-neutral-400 font-medium">
+            <p className="text-[14px] text-[#545454] dark:text-neutral-400 font-medium tabular-nums">
               {onlineStatus === 'offline'
                 ? `Ready to go in ${account.city}?`
-                : `Finding high-demand trips across ${account.city}...`}
+                : `Online ${formatOnlineTimer(onlineElapsedSec)} · Finding trips across ${account.city}`}
             </p>
           </div>
           <button
@@ -234,9 +242,21 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
               <div className="w-1/2 h-full bg-[#276EF1] animate-uber-radar" />
             </div>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[14px] font-bold text-black dark:text-white flex items-center gap-2">
-                <Radar className="w-4 h-4 text-[#276EF1]" />
-                Dispatch active · {preferences.uberX ? 'UberX' : 'Custom'}
+              <span className="text-[14px] font-bold text-black dark:text-white flex items-center gap-2 min-w-0 truncate">
+                <Radar className="w-4 h-4 text-[#276EF1] shrink-0" />
+                <span className="truncate">
+                  Dispatch ·{' '}
+                  {[
+                    preferences.uberX ? 'UberX' : null,
+                    preferences.comfort ? 'Comfort' : null,
+                    preferences.uberXL ? 'UberXL' : null,
+                    preferences.uberPet ? 'Uber Pet' : null,
+                    preferences.deliveries ? 'Uber Eats' : null,
+                    preferences.intercity ? 'Intercity' : null,
+                  ]
+                    .filter(Boolean)
+                    .join(', ') || 'UberX'}
+                </span>
               </span>
               <span className="text-[12px] font-bold text-[#276EF1] tabular-nums">
                 {nextOfferSecLeft !== null
@@ -279,6 +299,27 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
             6-hour mandatory break resets after offline rest · {account.vehicle} ({account.licensePlate})
           </p>
         </div>
+
+        {/* Trips Accepted / Declined / Total Received Card */}
+        <button
+          type="button"
+          onClick={onOpenTrips}
+          className="w-full p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] hover:bg-[#F3F3F3] dark:hover:bg-white/5 flex items-center justify-between gap-3 text-left transition-colors"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-black dark:bg-[#276EF1] text-white flex items-center justify-center shrink-0">
+              <Car className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[14px] font-bold text-black dark:text-white">Trips Activity</p>
+              <p className="text-[12px] text-[#545454] dark:text-neutral-400 tabular-nums truncate">
+                {tripStats.totalReceived} received · {tripStats.accepted} accepted ·{' '}
+                {tripStats.declined} declined
+              </p>
+            </div>
+          </div>
+          <ArrowRight className="w-4 h-4 text-[#545454] dark:text-neutral-400 shrink-0" />
+        </button>
 
         {/* EV Battery / Fuel Range Tracker */}
         {(() => {

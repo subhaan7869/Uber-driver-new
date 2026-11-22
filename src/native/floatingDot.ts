@@ -27,10 +27,11 @@ interface UberFloatingBubbleNativePlugin {
   requestOverlayPermission(): Promise<{ openedSettings: boolean }>;
   requestNotificationPermission(): Promise<{ granted: boolean }>;
   requestBatteryOptimization(): Promise<void>;
-  startOnlineService(options: { city?: string; driverName?: string }): Promise<void>;
+  startOnlineService(options: { city?: string; driverName?: string; alertMode?: 'dot' | 'card' }): Promise<void>;
   stopOnlineService(): Promise<void>;
   setImmersiveNavHidden(options: { hidden: boolean }): Promise<void>;
   setAppInForeground(options: { inForeground: boolean }): Promise<void>;
+  setBubbleAlertMode(options: { mode: 'dot' | 'card' }): Promise<void>;
   showOfferOnBubble(options: {
     offerId: string;
     offerJson: string;
@@ -134,11 +135,12 @@ export async function requestAndroidBatteryOptimization(): Promise<void> {
 
 export async function startNativeOnlineBubbleService(
   city: string,
-  driverName: string
+  driverName: string,
+  alertMode: 'dot' | 'card' = 'dot'
 ): Promise<void> {
   if (!isNativeAndroidApk()) return;
   try {
-    await UberFloatingBubble.startOnlineService({ city, driverName });
+    await UberFloatingBubble.startOnlineService({ city, driverName, alertMode });
   } catch {
     // Ignore native error
   }
@@ -166,6 +168,15 @@ export async function syncNativeAppForeground(inForeground: boolean): Promise<vo
   if (!isNativeAndroidApk()) return;
   try {
     await UberFloatingBubble.setAppInForeground({ inForeground });
+  } catch {
+    // Ignore native error
+  }
+}
+
+export async function setNativeBubbleAlertMode(mode: 'dot' | 'card'): Promise<void> {
+  if (!isNativeAndroidApk()) return;
+  try {
+    await UberFloatingBubble.setBubbleAlertMode({ mode });
   } catch {
     // Ignore native error
   }

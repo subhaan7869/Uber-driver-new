@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ExternalLink,
@@ -80,6 +81,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
   const [showRiderProfile, setShowRiderProfile] = useState(false);
   const [showTripDetails, setShowTripDetails] = useState(false);
   const [showPinGate, setShowPinGate] = useState(false);
+  const [showStartConfirm, setShowStartConfirm] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [selectedRating, setSelectedRating] = useState(5);
@@ -113,10 +115,14 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
   }, [trip.id, trip.pickupAddress, trip.pinCode, trip.riderNote]);
 
   useEffect(() => {
-    if (stage !== 'waiting') return;
+    if (stage !== 'waiting') {
+      setShowStartConfirm(false);
+      return;
+    }
     setWaitSecondsLeft(120);
     setPaidWaitSeconds(0);
     setShowPinGate(false);
+    setShowStartConfirm(false);
     setPinInput('');
     setPinError(null);
     const interval = setInterval(() => {
@@ -127,7 +133,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [stage]);
+  }, [stage, trip.id]);
 
   const accruedWaitFee = Number(((paidWaitSeconds / 60) * 0.2).toFixed(2));
   const noShowEligible = paidWaitSeconds >= 180; // 5:00 total wait (2:00 free + 3:00 paid)
@@ -163,13 +169,13 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
       setPinError(null);
       return;
     }
-    onStartTrip(accruedWaitFee);
+    setShowStartConfirm(true);
   };
 
   const handleVerifyPin = (codeToCheck: string) => {
     if (codeToCheck === trip.pinCode) {
       setShowPinGate(false);
-      onStartTrip(accruedWaitFee);
+      setShowStartConfirm(true);
     } else {
       setPinError('Incorrect 4-digit PIN — ask rider to check their Uber app');
     }
@@ -630,7 +636,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
                 onClick={onArrivePickup}
                 className="flex-1 h-10 rounded-xl bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] text-white text-[13px] font-semibold transition-colors"
               >
-                Arrived at Pickup
+                Confirm Pickup
               </button>
             </div>
           </div>
@@ -695,8 +701,72 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
                   onClick={() => handleVerifyPin(pinInput)}
                   className="w-full h-11 rounded-xl bg-[#05944F] hover:bg-[#047A40] text-white text-[14.5px] font-bold"
                 >
-                  Verify PIN & Start Trip
+                  Verify PIN & Confirm Pickup
                 </button>
+              </div>
+            ) : showStartConfirm ? (
+              <div className="space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-full bg-[#E6F4EA] dark:bg-emerald-950/60 flex items-center justify-center shrink-0">
+                      <CheckCircle2 className="w-5 h-5 text-[#05944F]" />
+                    </div>
+                    <div>
+                      <p className="text-[17px] font-extrabold text-black dark:text-white leading-tight">
+                        {trip.serviceName === 'Uber Eats'
+                          ? 'Ready to start delivery?'
+                          : 'Ready to start journey?'}
+                      </p>
+                      <p className="text-[12.5px] text-[#545454] dark:text-neutral-400">
+                        {trip.serviceName === 'Uber Eats'
+                          ? `Confirm ${trip.riderName}'s order is collected & ready for drop-off`
+                          : `Confirm ${trip.riderName} is inside & ready for drop-off`}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowStartConfirm(false)}
+                    className="w-8 h-8 rounded-full bg-[#F3F3F3] dark:bg-white/10 flex items-center justify-center shrink-0"
+                    aria-label="Back to waiting screen"
+                  >
+                    <X className="w-4 h-4 text-black dark:text-white" />
+                  </button>
+                </div>
+
+                <div className="rounded-xl bg-[#F6F6F6] dark:bg-white/5 p-3 text-[12.5px] space-y-1">
+                  <div className="flex items-center justify-between font-bold text-black dark:text-white">
+                    <span>{trip.serviceName} · {trip.riderName}</span>
+                    <span className="tabular-nums">£{trip.fare.toFixed(2)}</span>
+                  </div>
+                  <p className="text-[#545454] dark:text-neutral-300 truncate">
+                    Dropoff: {trip.dropoffAddress}, {trip.dropoffArea}
+                  </p>
+                  <p className="text-[11.5px] text-[#757575] dark:text-neutral-400 tabular-nums">
+                    Est. {trip.tripMinutes} min ({trip.tripMiles} mi)
+                    {accruedWaitFee > 0 ? ` · +£${accruedWaitFee.toFixed(2)} wait fee` : ''}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowStartConfirm(false)}
+                    className="h-11 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-[13.5px] font-bold text-black dark:text-white transition-colors"
+                  >
+                    Keep Waiting
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowStartConfirm(false);
+                      onStartTrip(accruedWaitFee);
+                    }}
+                    className="h-11 rounded-xl bg-[#05944F] hover:bg-[#047A40] text-white text-[13.5px] font-bold transition-colors"
+                  >
+                    Yes, Start Journey
+                  </button>
+                </div>
               </div>
             ) : (
               <>

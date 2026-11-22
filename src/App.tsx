@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { AccountModal } from './components/AccountModal';
 import { ActiveTripSheet } from './components/ActiveTripSheet';
+import { BootScreen } from './components/BootScreen';
 import { BottomNav } from './components/BottomNav';
 import { DestinationModeModal } from './components/DestinationModeModal';
 import { DynamicIsland } from './components/DynamicIsland';
@@ -49,6 +50,7 @@ import { PWAInstallButton } from './components/PWAInstallButton';
 import { ReserveView } from './components/ReserveView';
 import { SafetyToolkitModal } from './components/SafetyToolkitModal';
 import { TripOfferModal } from './components/TripOfferModal';
+import { TripsMenuView } from './components/TripsMenuView';
 import { UberMap } from './components/UberMap';
 import {
   BUSY_SOON_ZONES,
@@ -75,6 +77,8 @@ import {
   NavProvider,
   ReserveTrip,
   SurgeZone,
+  TripActivityEntry,
+  TripActivityStatus,
   TripOffer,
   TripStage,
 } from './types/driver';
@@ -93,6 +97,7 @@ import {
 } from './utils/authStorage';
 import {
   DriverLedger,
+  EMPTY_TRIP_STATS,
   getLocalDateKey,
   getWeeklyTotalFromLedger,
   loadDriverLedger,
@@ -122,6 +127,7 @@ import {
   requestAndroidNotificationPermission,
   requestAndroidOverlayPermission,
   scheduleNativeBackgroundOffer,
+  setNativeBubbleAlertMode,
   setNativeImmersiveNavHidden,
   startNativeOnlineBubbleService,
   stopNativeOnlineBubbleService,
@@ -131,6 +137,7 @@ import { uberSounds } from './utils/uberSounds';
 import {
   clampMapCoords,
   isWithinUKBounds,
+  mapToLatLng,
   projectLatLngToMap,
   UK_SPEED_CAMERAS,
 } from './utils/ukGeo';
@@ -140,12 +147,14 @@ import {
   generateLocalTripOffer,
   getResolvedLocalCityName,
   prefetchLocalPlaces,
+  ServicePrefsInput,
 } from './utils/localDispatch';
 import {
   buildFallbackUKRoute,
   fetchUKRoute,
   speakNavInstruction,
 } from './utils/ukRouting';
+import { formatOnlineTimer } from './utils/timeFormat';
 
 function lerpAngle(fromDeg: number, toDeg: number, t: number): number {
   const diff = ((((toDeg - fromDeg) % 360) + 540) % 360) - 180;
@@ -203,11 +212,28 @@ export default function App() {
     }
   }, []);
 
-  // Primary navigation & online status
+  // Boot-up screen & primary navigation / online status
+  const [showBootScreen, setShowBootScreen] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [onlineStatus, setOnlineStatus] = useState<DriverOnlineStatus>(
     () => savedSession?.onlineStatus ?? 'offline'
   );
+  const [onlineStartedAt, setOnlineStartedAt] = useState<number | null>(() => {
+    const status = savedSession?.onlineStatus ?? 'offline';
+    if (status !== 'online') return null;
+    return typeof savedSession?.onlineStartedAt === 'number'
+      ? savedSession.onlineStartedAt
+      : Date.now();
+  });
+  const [onlineElapsedSec, setOnlineElapsedSec] = useState<number>(() => {
+    const status = savedSession?.onlineStatus ?? 'offline';
+    if (status !== 'online') return 0;
+    const started =
+      typeof savedSession?.onlineStartedAt === 'number'
+        ? savedSession.onlineStartedAt
+        : Date.now();
+    return Math.max(0, Math.floor((Date.now() - started) / 1000));
+  });
   const [tripStage, setTripStage] = useState<TripStage>(
     () => savedSession?.tripStage ?? 'idle'
   );
@@ -244,12 +270,13 @@ export default function App() {
   }, [privacyHidden]);
 
   // Offers, Trip Radar, and Working Turn-by-Turn UK Route state
-  const [offerIndex, setOfferIndex] = useState<number>(0);
+  const [offerIndex, setOfferIndex] = useState<number>(() => Math.floor(Math.random() * 15));
   const [pendingOffer, setPendingOffer] = useState<TripOffer | null>(null);
   const [activeTrip, setActiveTrip] = useState<TripOffer | null>(
     () => savedSession?.activeTrip ?? null
   );
   const [activeRoute, setActiveRoute] = useState<ComputedRoute | null>(null);
+  const [offerTripRoute, setOfferTripRoute] = useState<ComputedRoute | null>(null);
   const [routeWpIdx, setRouteWpIdx] = useState<number>(0);
   const [currentStepIdx, setCurrentStepIdx] = useState<number>(0);
   const [tripWaitFee, setTripWaitFee] = useState<number>(0);
@@ -276,19 +303,47 @@ export default function App() {
   const [simSpeedMph, setSimSpeedMph] = useState<number>(0);
   const [navNowMs, setNavNowMs] = useState<number>(() => Date.now());
 
+  const anchoredToLastJobRef = useRef<boolean>(Boolean(savedSession?.anchoredToLastJob));
+
   useEffect(() => {
     try {
       const payload = {
         onlineStatus,
+        onlineStartedAt,
         tripStage,
         activeTrip,
         driverPos,
         navProgress,
         queuedOffer,
+        anchoredToLastJob: anchoredToLastJobRef.current,
       };
       localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
     } catch {}
-  }, [onlineStatus, tripStage, activeTrip, driverPos, navProgress, queuedOffer]);
+  }, [onlineStatus, onlineStartedAt, tripStage, activeTrip, driverPos, navProgress, queuedOffer]);
+
+  // Live second-by-second online timer (stays accurate across backgrounding & reloads)
+  useEffect(() => {
+    if (onlineStatus !== 'online') {
+      setOnlineElapsedSec(0);
+      return;
+    }
+    const startTs = onlineStartedAt ?? Date.now();
+    if (onlineStartedAt === null) {
+      setOnlineStartedAt(startTs);
+    }
+    const syncElapsed = () => {
+      setOnlineElapsedSec(Math.max(0, Math.floor((Date.now() - startTs) / 1000)));
+    };
+    syncElapsed();
+    const id = window.setInterval(syncElapsed, 1000);
+    window.addEventListener('focus', syncElapsed);
+    document.addEventListener('visibilitychange', syncElapsed);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('focus', syncElapsed);
+      document.removeEventListener('visibilitychange', syncElapsed);
+    };
+  }, [onlineStatus, onlineStartedAt]);
   const [gpsPermissionState, setGpsPermissionState] = useState<'idle' | 'active' | 'denied'>('idle');
   const [gpsExplicitlyAccepted, setGpsExplicitlyAccepted] = useState<boolean>(() => {
     try {
@@ -303,6 +358,9 @@ export default function App() {
   const [localGeoVersion, setLocalGeoVersion] = useState<number>(0);
 
   const getActiveGpsLatLng = useCallback((): { lat: number; lng: number } | undefined => {
+    if (anchoredToLastJobRef.current) {
+      return mapToLatLng(driverPosRef.current);
+    }
     const rc = realCoordsRef.current;
     if (rc && isWithinUKBounds(rc.lat, rc.lng)) {
       return rc;
@@ -333,16 +391,6 @@ export default function App() {
     }
   }, [scheduledReserves]);
 
-  const availableReserves = useMemo(() => {
-    const generated = generateLocalReserveTrips(
-      driverPos,
-      isWithinUKBounds(realCoords?.lat ?? 0, realCoords?.lng ?? 0) ? realCoords : undefined,
-      reserveSeed,
-      6
-    );
-    return generated.filter((r) => !acceptedReserveIds.includes(r.id));
-  }, [driverPos, realCoords, reserveSeed, localGeoVersion, acceptedReserveIds]);
-
   useEffect(() => {
     try {
       localStorage.setItem('uber_driver_gps_accepted_v1', String(gpsExplicitlyAccepted));
@@ -365,10 +413,16 @@ export default function App() {
   );
 
   const prevAccountIdRef = useRef<string | undefined>(activeAccount?.id);
+  const recordedReceivedIdsRef = useRef<Set<string>>(new Set());
+  const resolvedOfferIdsRef = useRef<Set<string>>(new Set());
+  const [tripsReturnTab, setTripsReturnTab] = useState<'hub' | 'menu'>('menu');
+
   useEffect(() => {
     const acctId = activeAccount?.id;
     if (!acctId || prevAccountIdRef.current === acctId) return;
     prevAccountIdRef.current = acctId;
+    recordedReceivedIdsRef.current.clear();
+    resolvedOfferIdsRef.current.clear();
     setLedger(
       loadDriverLedger(
         {
@@ -385,6 +439,57 @@ export default function App() {
     if (!activeAccount?.id) return;
     saveDriverLedger(ledger, activeAccount.id);
   }, [ledger, activeAccount?.id]);
+
+  const recordOfferReceived = useCallback((offer: TripOffer) => {
+    if (recordedReceivedIdsRef.current.has(offer.id)) return;
+    recordedReceivedIdsRef.current.add(offer.id);
+    setLedger((prev) => ({
+      ...prev,
+      tripStats: {
+        ...prev.tripStats,
+        totalReceived: prev.tripStats.totalReceived + 1,
+      },
+    }));
+  }, []);
+
+  const recordOfferDecision = useCallback(
+    (
+      offer: TripOffer,
+      status: TripActivityStatus,
+      offerTypeOverride?: TripActivityEntry['offerType']
+    ) => {
+      if (resolvedOfferIdsRef.current.has(offer.id)) return;
+      resolvedOfferIdsRef.current.add(offer.id);
+      const alreadyReceived = recordedReceivedIdsRef.current.has(offer.id);
+      if (!alreadyReceived) {
+        recordedReceivedIdsRef.current.add(offer.id);
+      }
+      const now = new Date();
+      const entry: TripActivityEntry = {
+        id: `act-${offer.id}-${now.getTime()}`,
+        offerId: offer.id,
+        serviceName: offer.serviceName,
+        offerType: offerTypeOverride ?? offer.type,
+        status,
+        fare: offer.fare,
+        pickupArea: offer.pickupArea,
+        dropoffArea: offer.dropoffArea,
+        timestamp: now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+        dateKey: getLocalDateKey(now),
+      };
+      setLedger((prev) => ({
+        ...prev,
+        tripStats: {
+          totalReceived: prev.tripStats.totalReceived + (alreadyReceived ? 0 : 1),
+          accepted: prev.tripStats.accepted + (status === 'accepted' ? 1 : 0),
+          declined: prev.tripStats.declined + (status === 'declined' ? 1 : 0),
+          radarLost: prev.tripStats.radarLost + (status === 'radar_lost' ? 1 : 0),
+          history: [entry, ...prev.tripStats.history].slice(0, 80),
+        },
+      }));
+    },
+    []
+  );
 
   const todayEarnings = ledger.dailyTotals[todayDateKey] ?? 0;
   const weeklyEarnings = useMemo(
@@ -404,6 +509,39 @@ export default function App() {
     }
     return INITIAL_PREFERENCES;
   });
+
+  const servicePrefs = useMemo<ServicePrefsInput>(
+    () => ({
+      uberX: preferences.uberX,
+      comfort: preferences.comfort,
+      uberXL: preferences.uberXL,
+      uberPet: preferences.uberPet,
+      deliveries: preferences.deliveries,
+      intercity: preferences.intercity,
+    }),
+    [
+      preferences.uberX,
+      preferences.comfort,
+      preferences.uberXL,
+      preferences.uberPet,
+      preferences.deliveries,
+      preferences.intercity,
+    ]
+  );
+
+  const availableReserves = useMemo(() => {
+    const generated = generateLocalReserveTrips(
+      driverPos,
+      !anchoredToLastJobRef.current &&
+        isWithinUKBounds(realCoords?.lat ?? 0, realCoords?.lng ?? 0)
+        ? realCoords
+        : undefined,
+      reserveSeed,
+      6,
+      servicePrefs
+    );
+    return generated.filter((r) => !acceptedReserveIds.includes(r.id));
+  }, [driverPos, realCoords, reserveSeed, localGeoVersion, acceptedReserveIds, servicePrefs]);
 
   // Sync Tailwind v4 class-based Night Mode onto <html>
   useEffect(() => {
@@ -637,13 +775,15 @@ export default function App() {
       }
 
       if (isWithinUKBounds(latitude, longitude)) {
-        void prefetchLocalPlaces(latitude, longitude).then(() => {
-          setLocalGeoVersion((v) => v + 1);
-        });
-        if (tripStageRef.current === 'idle') {
-          setDriverPos(clampMapCoords(projectLatLngToMap(latitude, longitude)));
-          if (typeof heading === 'number' && !Number.isNaN(heading)) {
-            setDriverHeading(heading);
+        if (!anchoredToLastJobRef.current) {
+          void prefetchLocalPlaces(latitude, longitude).then(() => {
+            setLocalGeoVersion((v) => v + 1);
+          });
+          if (tripStageRef.current === 'idle') {
+            setDriverPos(clampMapCoords(projectLatLngToMap(latitude, longitude)));
+            if (typeof heading === 'number' && !Number.isNaN(heading)) {
+              setDriverHeading(heading);
+            }
           }
         }
       }
@@ -735,11 +875,13 @@ export default function App() {
 
     refreshPerms();
     void setNativeImmersiveNavHidden(onlineStatus === 'online');
+    void setNativeBubbleAlertMode(preferences.floatingDotAlertMode ?? 'dot');
 
     if (onlineStatus === 'online') {
       void startNativeOnlineBubbleService(
         getResolvedLocalCityName(driverPosRef.current),
-        activeAccount?.name ?? 'Driver'
+        activeAccount?.name ?? 'Driver',
+        preferences.floatingDotAlertMode ?? 'dot'
       );
     }
 
@@ -762,7 +904,8 @@ export default function App() {
           driverPosRef.current,
           getActiveGpsLatLng(),
           preferences.intercity,
-          offerIndex
+          offerIndex,
+          servicePrefs
         );
         const upcoming = activePool[0];
         if (upcoming) {
@@ -797,6 +940,8 @@ export default function App() {
     onlineStatus,
     activeAccount?.name,
     preferences.intercity,
+    preferences.floatingDotAlertMode,
+    servicePrefs,
     offerIndex,
     handleNativeOverlayAction,
     getActiveGpsLatLng,
@@ -812,6 +957,7 @@ export default function App() {
         seedIndex: nextBatch * 2,
         forceType: 'radar',
         includeIntercity: preferences.intercity,
+        servicePrefs,
       });
       const second = generateLocalTripOffer({
         anchorCoords: driverPosRef.current,
@@ -819,10 +965,11 @@ export default function App() {
         seedIndex: nextBatch * 2 + 1,
         forceType: 'radar',
         includeIntercity: preferences.intercity,
+        servicePrefs,
       });
       setRadarOffers([first, second]);
     },
-    [getActiveGpsLatLng, preferences.intercity]
+    [getActiveGpsLatLng, preferences.intercity, servicePrefs]
   );
 
   useEffect(() => {
@@ -868,17 +1015,40 @@ export default function App() {
             realLatLng: getActiveGpsLatLng(),
             seedIndex: offerIndex,
             includeIntercity: preferences.intercity,
+            servicePrefs,
           });
-          setPendingOffer(next);
           setOfferIndex((i) => i + 1);
-          pushDriverAlert(
-            `${
-              next.isIntercity ? 'Intercity' : next.type === 'radar' ? 'Trip Radar' : 'Exclusive'
-            } · £${next.fare.toFixed(2)}`,
-            `${next.serviceName} · ${next.pickupArea} → ${next.dropoffArea} (${next.pickupMinutes} min away)`,
-            `offer-${next.id}`,
-            () => setActiveTab('home')
-          );
+          if (preferences.autoAccept && next.type === 'exclusive') {
+            recordOfferDecision(next, 'accepted');
+            uberSounds.play('accept');
+            setPendingOffer(null);
+            setActiveTrip(next);
+            setStopVisited(false);
+            const initialDist = Math.max(
+              20,
+              Math.hypot(
+                next.pickupCoords.x - driverPosRef.current.x,
+                next.pickupCoords.y - driverPosRef.current.y
+              )
+            );
+            setLegStartDistPx(initialDist);
+            setNavNowMs(Date.now());
+            setTripStage('pickup');
+            setActiveTab('home');
+            setRecenterSignal((s) => s + 1);
+            showToast(`Auto-accepted ${next.serviceName} · £${next.fare.toFixed(2)}`);
+          } else {
+            recordOfferReceived(next);
+            setPendingOffer(next);
+            pushDriverAlert(
+              `${
+                next.isIntercity ? 'Intercity' : next.type === 'radar' ? 'Trip Radar' : 'Exclusive'
+              } · £${next.fare.toFixed(2)}`,
+              `${next.serviceName} · ${next.pickupArea} → ${next.dropoffArea} (${next.pickupMinutes} min away)`,
+              `offer-${next.id}`,
+              () => setActiveTab('home')
+            );
+          }
           return null;
         }
         return prev - 1;
@@ -893,8 +1063,13 @@ export default function App() {
     showRadarList,
     offerIndex,
     preferences.intercity,
+    preferences.autoAccept,
+    servicePrefs,
     pushDriverAlert,
     getActiveGpsLatLng,
+    showToast,
+    recordOfferReceived,
+    recordOfferDecision,
   ]);
 
   // Compute road-snapped UK turn-by-turn route (OSRM with instant fallback)
@@ -947,6 +1122,56 @@ export default function App() {
       cancelled = true;
     };
   }, [activeTrip, pendingOffer, tripStage, stopVisited]);
+
+  // Compute Pickup -> Dropoff preview leg while an incoming job card is displayed on the map
+  useEffect(() => {
+    if (!pendingOffer || activeTrip || tripStage !== 'idle') {
+      setOfferTripRoute(null);
+      return;
+    }
+
+    let cancelled = false;
+    const pickup = pendingOffer.pickupCoords;
+    const stop = pendingOffer.stopCoords;
+    const dropoff = pendingOffer.dropoffCoords;
+
+    if (stop) {
+      const fb1 = buildFallbackUKRoute(pickup, stop, pendingOffer.stopAddress || 'Stop 1');
+      const fb2 = buildFallbackUKRoute(stop, dropoff, pendingOffer.dropoffAddress);
+      setOfferTripRoute({
+        polyline: [...fb1.polyline, ...fb2.polyline.slice(1)],
+        steps: [...fb1.steps, ...fb2.steps],
+        totalDistanceMeters: fb1.totalDistanceMeters + fb2.totalDistanceMeters,
+        totalDurationSec: fb1.totalDurationSec + fb2.totalDurationSec,
+        source: fb1.source,
+      });
+
+      Promise.all([
+        fetchUKRoute(pickup, stop, pendingOffer.stopAddress || 'Stop 1'),
+        fetchUKRoute(stop, dropoff, pendingOffer.dropoffAddress),
+      ]).then(([leg1, leg2]) => {
+        if (cancelled) return;
+        setOfferTripRoute({
+          polyline: [...leg1.polyline, ...leg2.polyline.slice(1)],
+          steps: [...leg1.steps, ...leg2.steps],
+          totalDistanceMeters: leg1.totalDistanceMeters + leg2.totalDistanceMeters,
+          totalDurationSec: leg1.totalDurationSec + leg2.totalDurationSec,
+          source: leg1.source === 'osrm' && leg2.source === 'osrm' ? 'osrm' : 'uk-corridor',
+        });
+      });
+    } else {
+      const fallback = buildFallbackUKRoute(pickup, dropoff, pendingOffer.dropoffAddress);
+      setOfferTripRoute(fallback);
+      fetchUKRoute(pickup, dropoff, pendingOffer.dropoffAddress).then((computed) => {
+        if (cancelled) return;
+        setOfferTripRoute(computed);
+      });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingOffer, activeTrip, tripStage]);
 
   // Speak turn-by-turn instruction aloud whenever current step advances during active nav
   useEffect(() => {
@@ -1255,7 +1480,9 @@ export default function App() {
       anchorCoords: activeTrip.dropoffCoords,
       seedIndex: offerIndex + 1,
       includeIntercity: preferences.intercity,
+      servicePrefs,
     });
+    recordOfferReceived(candidate);
     setQueuedOffer(candidate);
     uberSounds.play(candidate.type === 'exclusive' ? 'exclusiveDispatch' : 'dispatch');
   }, [
@@ -1266,8 +1493,10 @@ export default function App() {
     acceptedNextOffer,
     preferences.stopNewRequests,
     preferences.intercity,
+    servicePrefs,
     stopVisited,
     offerIndex,
+    recordOfferReceived,
   ]);
 
   // Speed & Bus-Lane Camera proximity warning during active UK navigation
@@ -1305,13 +1534,17 @@ export default function App() {
   const completeGoOnline = useCallback(() => {
     uberSounds.unlock();
     uberSounds.play('online');
+    const now = Date.now();
     setOnlineStatus('online');
+    setOnlineStartedAt(now);
+    setOnlineElapsedSec(0);
     setRadarOffers([]); // Trip Radar shows no job and is hidden until timer triggers
     setRadarRefreshSecLeft(60);
     setActiveTab('home');
     void startNativeOnlineBubbleService(
       getResolvedLocalCityName(driverPosRef.current),
-      activeAccount?.name ?? 'Driver'
+      activeAccount?.name ?? 'Driver',
+      preferences.floatingDotAlertMode ?? 'dot'
     );
     void setNativeImmersiveNavHidden(true);
     // In mobile/Samsung browsers (non-APK), hide system Back/Home navigation bar while Online
@@ -1332,7 +1565,7 @@ export default function App() {
       return;
     }
     showToast("You're online — Trip Radar active");
-  }, [activeAccount?.name, nativeBubblePerms.overlayGranted, showToast]);
+  }, [activeAccount?.name, nativeBubblePerms.overlayGranted, preferences.floatingDotAlertMode, showToast]);
 
   const handleToggleOnline = () => {
     uberSounds.unlock();
@@ -1344,8 +1577,11 @@ export default function App() {
       }
       completeGoOnline();
     } else {
+      const finalElapsedLabel = formatOnlineTimer(onlineElapsedSec);
       uberSounds.play('offline');
       setOnlineStatus('offline');
+      setOnlineStartedAt(null);
+      setOnlineElapsedSec(0);
       setPendingOffer(null);
       setShowRadarList(false);
       setRadarMatchingId(null);
@@ -1356,12 +1592,17 @@ export default function App() {
       if (!isNativeAndroidApk() && document.fullscreenElement && document.exitFullscreen) {
         void document.exitFullscreen().catch(() => {});
       }
-      showToast("You're offline");
+      showToast(`You're offline · Online ${finalElapsedLabel}`);
     }
   };
 
   const handleAcceptOffer = useCallback(
     (offer: TripOffer) => {
+      recordOfferDecision(
+        offer,
+        'accepted',
+        offer.id.startsWith('active-res-') ? 'reserve' : offer.type
+      );
       uberSounds.unlock();
       uberSounds.play('accept');
       setPendingOffer(null);
@@ -1395,7 +1636,7 @@ export default function App() {
       setActiveTab('home');
       setRecenterSignal((s) => s + 1);
     },
-    [activeAccount?.id]
+    [activeAccount?.id, recordOfferDecision]
   );
 
   const handleDispatchIntercity = useCallback(() => {
@@ -1408,12 +1649,16 @@ export default function App() {
       seedIndex: intercityIdx,
       forceIntercity: true,
       includeIntercity: true,
+      servicePrefs,
     });
     setIntercityIdx((i) => i + 1);
     if (onlineStatus === 'offline') {
       setOnlineStatus('online');
+      setOnlineStartedAt(Date.now());
+      setOnlineElapsedSec(0);
     }
     setShowRadarList(false);
+    recordOfferReceived(offer);
     setPendingOffer(offer);
     setActiveTab('home');
     setRecenterSignal((s) => s + 1);
@@ -1421,7 +1666,15 @@ export default function App() {
     showToast(
       `Intercity dispatch: ${offer.pickupArea} → ${offer.dropoffArea.split('·')[0].trim()}`
     );
-  }, [intercityIdx, onlineStatus, preferences.intercity, showToast, getActiveGpsLatLng]);
+  }, [
+    intercityIdx,
+    onlineStatus,
+    preferences.intercity,
+    servicePrefs,
+    showToast,
+    getActiveGpsLatLng,
+    recordOfferReceived,
+  ]);
 
   const handleRechargeVehicle = useCallback(() => {
     if (!activeAccount?.id) return;
@@ -1436,17 +1689,19 @@ export default function App() {
   const handleMoveToRadarMatch = useCallback(
     (offer: TripOffer) => {
       uberSounds.unlock();
+      recordOfferReceived(offer);
       setPendingOffer(null);
       setRadarOffers([offer]);
       setRadarMatchingId(offer.id);
       setShowRadarList(true);
       showToast('Sent to Trip Radar — matching for 10s...');
     },
-    [showToast]
+    [showToast, recordOfferReceived]
   );
 
   const handleRadarMatchFailed = useCallback(
-    (_offer: TripOffer) => {
+    (failedOffer: TripOffer) => {
+      recordOfferDecision(failedOffer, 'radar_lost', 'radar');
       uberSounds.play('decline');
       setRadarMatchingId(null);
       setRadarOffers([]);
@@ -1456,20 +1711,32 @@ export default function App() {
         realLatLng: getActiveGpsLatLng(),
         seedIndex: offerIndex + 1,
         includeIntercity: preferences.intercity,
+        servicePrefs,
       });
       setOfferIndex((i) => i + 1);
       showToast('Another driver matched — loading next available job...');
       setTimeout(() => {
         if (onlineStatus === 'online' && tripStageRef.current === 'idle') {
+          recordOfferReceived(next);
           setPendingOffer(next);
         }
       }, 700);
     },
-    [onlineStatus, preferences.intercity, offerIndex, showToast, getActiveGpsLatLng]
+    [
+      onlineStatus,
+      preferences.intercity,
+      servicePrefs,
+      offerIndex,
+      showToast,
+      getActiveGpsLatLng,
+      recordOfferDecision,
+      recordOfferReceived,
+    ]
   );
 
   const handleDeclineOffer = useCallback(
     (offer: TripOffer) => {
+      recordOfferDecision(offer, 'declined');
       uberSounds.play('decline');
       setPendingOffer(null);
       setRadarMatchingId(null);
@@ -1486,7 +1753,7 @@ export default function App() {
         showToast('Request declined');
       }
     },
-    [activeAccount?.id, showToast]
+    [activeAccount?.id, showToast, recordOfferDecision]
   );
 
   const handleAcceptReserve = useCallback(
@@ -1527,7 +1794,8 @@ export default function App() {
         setOnlineStatus('online');
         void startNativeOnlineBubbleService(
           getResolvedLocalCityName(driverPosRef.current),
-          activeAccount?.name ?? 'Driver'
+          activeAccount?.name ?? 'Driver',
+          preferences.floatingDotAlertMode ?? 'dot'
         );
         void setNativeImmersiveNavHidden(true);
       }
@@ -1560,7 +1828,7 @@ export default function App() {
       handleAcceptOffer(convertedOffer);
       showToast(`Starting Uber Reserve pickup · ${trip.pickupAddress}`);
     },
-    [onlineStatus, activeAccount?.name, handleAcceptOffer, showToast]
+    [onlineStatus, activeAccount?.name, preferences.floatingDotAlertMode, handleAcceptOffer, showToast]
   );
 
   nativeActionHandlersRef.current = {
@@ -1571,6 +1839,7 @@ export default function App() {
 
   const handleDeclineRadarItem = useCallback(
     (offer: TripOffer) => {
+      recordOfferDecision(offer, 'declined', 'radar');
       uberSounds.play('decline');
       setRadarMatchingId(null);
       setRadarOffers((prev) => {
@@ -1582,7 +1851,7 @@ export default function App() {
       });
       showToast(`Declined ${offer.serviceName} (£${offer.fare.toFixed(2)})`);
     },
-    [showToast]
+    [showToast, recordOfferDecision]
   );
 
   const handleArrivePickup = () => {
@@ -1685,6 +1954,7 @@ export default function App() {
     };
 
     setLedger((prev) => ({
+      ...prev,
       dailyTotals: {
         ...prev.dailyTotals,
         [currentKey]: Number(
@@ -1752,6 +2022,18 @@ export default function App() {
       };
       setInboxThreads((prev) => [lostThread, ...prev]);
       showToast('Lost item thread opened in Inbox (+£15.00 return fee eligible)');
+    }
+
+    // Anchor driver position to the previous job's dropoff area so GPS watch does not pull them back
+    if (activeTrip) {
+      const dropoffCoords = activeTrip.dropoffCoords;
+      anchoredToLastJobRef.current = true;
+      driverPosRef.current = dropoffCoords;
+      setDriverPos(dropoffCoords);
+      const dropLatLng = mapToLatLng(dropoffCoords);
+      void prefetchLocalPlaces(dropLatLng.lat, dropLatLng.lng).then(() => {
+        setLocalGeoVersion((v) => v + 1);
+      });
     }
 
     const nextQueued = acceptedNextOffer;
@@ -1862,7 +2144,68 @@ export default function App() {
   };
 
   const handleTogglePreference = (key: keyof DriverPreferences) => {
-    setPreferences((prev) => ({ ...prev, [key]: !prev[key] }));
+    const SERVICE_KEYS: Array<keyof ServicePrefsInput> = [
+      'uberX',
+      'comfort',
+      'intercity',
+      'uberXL',
+      'uberPet',
+      'deliveries',
+    ];
+    const SERVICE_LABELS: Partial<Record<keyof DriverPreferences, string>> = {
+      uberX: 'UberX',
+      comfort: 'Comfort',
+      intercity: 'Intercity',
+      uberXL: 'UberXL',
+      uberPet: 'Uber Pet',
+      deliveries: 'Uber Eats',
+    };
+
+    const isServiceKey = (SERVICE_KEYS as Array<keyof DriverPreferences>).includes(key);
+    if (isServiceKey && preferences[key]) {
+      const enabledCount = SERVICE_KEYS.filter((k) => Boolean(preferences[k])).length;
+      if (enabledCount <= 1) {
+        showToast('Keep at least one trip service active');
+        return;
+      }
+    }
+
+    const nextPrefs = { ...preferences, [key]: !preferences[key] };
+    setPreferences(nextPrefs);
+
+    if (isServiceKey) {
+      const label = SERVICE_LABELS[key] || String(key);
+      showToast(`${label} ${nextPrefs[key] ? 'enabled for dispatch' : 'paused'}`);
+      if (radarOffers.length > 0) {
+        const nextServiceFilter: ServicePrefsInput = {
+          uberX: nextPrefs.uberX,
+          comfort: nextPrefs.comfort,
+          uberXL: nextPrefs.uberXL,
+          uberPet: nextPrefs.uberPet,
+          deliveries: nextPrefs.deliveries,
+          intercity: nextPrefs.intercity,
+        };
+        const gps = getActiveGpsLatLng();
+        setRadarOffers([
+          generateLocalTripOffer({
+            anchorCoords: driverPosRef.current,
+            realLatLng: gps,
+            seedIndex: radarBatchIdx * 2,
+            forceType: 'radar',
+            includeIntercity: nextPrefs.intercity,
+            servicePrefs: nextServiceFilter,
+          }),
+          generateLocalTripOffer({
+            anchorCoords: driverPosRef.current,
+            realLatLng: gps,
+            seedIndex: radarBatchIdx * 2 + 1,
+            forceType: 'radar',
+            includeIntercity: nextPrefs.intercity,
+            servicePrefs: nextServiceFilter,
+          }),
+        ]);
+      }
+    }
   };
 
   const handleToggleNightMode = () => {
@@ -1895,6 +2238,7 @@ export default function App() {
       saveRememberedLogin(null);
       setRememberedLogin(null);
     }
+    anchoredToLastJobRef.current = false;
     setIsSignedOut(false);
     setOnlineStatus('offline');
     setPendingOffer(null);
@@ -2019,6 +2363,9 @@ export default function App() {
 
     if (parsed.ledger && typeof parsed.ledger === 'object') {
       const rawLedger = parsed.ledger as Partial<DriverLedger>;
+      const restoredTrips = Array.isArray(rawLedger.completedTrips)
+        ? rawLedger.completedTrips
+        : [];
       const restoredLedger: DriverLedger = {
         dailyTotals: rawLedger.dailyTotals ?? {},
         walletBalance:
@@ -2031,9 +2378,35 @@ export default function App() {
           typeof rawLedger.questCompletedCount === 'number'
             ? rawLedger.questCompletedCount
             : 0,
-        completedTrips: Array.isArray(rawLedger.completedTrips)
-          ? rawLedger.completedTrips
-          : [],
+        completedTrips: restoredTrips,
+        tripStats: rawLedger.tripStats
+          ? {
+              totalReceived:
+                typeof rawLedger.tripStats.totalReceived === 'number'
+                  ? rawLedger.tripStats.totalReceived
+                  : restoredTrips.length,
+              accepted:
+                typeof rawLedger.tripStats.accepted === 'number'
+                  ? rawLedger.tripStats.accepted
+                  : restoredTrips.length,
+              declined:
+                typeof rawLedger.tripStats.declined === 'number'
+                  ? rawLedger.tripStats.declined
+                  : 0,
+              radarLost:
+                typeof rawLedger.tripStats.radarLost === 'number'
+                  ? rawLedger.tripStats.radarLost
+                  : 0,
+              history: Array.isArray(rawLedger.tripStats.history)
+                ? rawLedger.tripStats.history
+                : [],
+            }
+          : {
+              ...EMPTY_TRIP_STATS,
+              totalReceived: restoredTrips.length,
+              accepted: restoredTrips.length,
+              history: [],
+            },
       };
       saveDriverLedger(restoredLedger, restoredAcct.id);
       prevAccountIdRef.current = restoredAcct.id;
@@ -2277,29 +2650,39 @@ export default function App() {
     () =>
       generateLocalTripOffer({
         anchorCoords: driverPos,
-        realLatLng: isLiveGpsInUK ? realCoords : undefined,
+        realLatLng: !anchoredToLastJobRef.current && isLiveGpsInUK ? realCoords : undefined,
         seedIndex: offerIndex,
         forceType: 'radar',
         includeIntercity: preferences.intercity,
+        servicePrefs,
       }),
-    [driverPos, isLiveGpsInUK, realCoords, offerIndex, preferences.intercity, localGeoVersion]
+    [driverPos, isLiveGpsInUK, realCoords, offerIndex, preferences.intercity, servicePrefs, localGeoVersion]
   );
 
   // If user signed out, show full-screen Driver UK Sign-In Gate
   if (isSignedOut || !activeAccount) {
     return (
-      <AccountModal
-        accounts={accounts}
-        activeAccount={activeAccount}
-        rememberedLogin={rememberedLogin}
-        isSignedOutGate
-        onSelectAccount={handleSelectAccount}
-        onSignInCredentials={handleSignInCredentials}
-        onRegisterAccount={handleRegisterAccount}
-        onExportBackupCode={handleExportBackupCode}
-        onRestoreBackupCode={handleRestoreBackupCode}
-        onSignOut={handleSignOut}
-      />
+      <>
+        {showBootScreen && (
+          <BootScreen
+            driverName={rememberedLogin?.name}
+            city={activeAccount?.city}
+            onFinish={() => setShowBootScreen(false)}
+          />
+        )}
+        <AccountModal
+          accounts={accounts}
+          activeAccount={activeAccount}
+          rememberedLogin={rememberedLogin}
+          isSignedOutGate
+          onSelectAccount={handleSelectAccount}
+          onSignInCredentials={handleSignInCredentials}
+          onRegisterAccount={handleRegisterAccount}
+          onExportBackupCode={handleExportBackupCode}
+          onRestoreBackupCode={handleRestoreBackupCode}
+          onSignOut={handleSignOut}
+        />
+      </>
     );
   }
 
@@ -2327,8 +2710,16 @@ export default function App() {
 
   return (
     <div className="h-[100dvh] w-full flex flex-col bg-[#F6F6F6] dark:bg-[#0E0F12] overflow-hidden">
+      {showBootScreen && (
+        <BootScreen
+          driverName={activeAccount?.name}
+          city={activeAccount?.city}
+          onFinish={() => setShowBootScreen(false)}
+        />
+      )}
       <DynamicIsland
         onlineStatus={onlineStatus}
+        onlineElapsedSec={onlineElapsedSec}
         tripStage={tripStage}
         activeTrip={activeTrip}
         pendingOffer={pendingOffer}
@@ -2403,6 +2794,7 @@ export default function App() {
             pendingOffer={pendingOffer}
             routePolyline={remainingRoutePolyline}
             fullRoutePolyline={activeRoute?.polyline}
+            offerTripPolyline={offerTripRoute?.polyline}
             surgeZones={INITIAL_SURGE_ZONES}
             busySoonZones={BUSY_SOON_ZONES}
             mapReports={mapReports}
@@ -2758,8 +3150,10 @@ export default function App() {
                             realLatLng: getActiveGpsLatLng(),
                             seedIndex: offerIndex,
                             includeIntercity: preferences.intercity,
+                            servicePrefs,
                           });
                           setOfferIndex((i) => i + 1);
+                          recordOfferReceived(sample);
                           void previewNativeFloatingOfferCard(sample);
                           showToast(`Overlay job card open (${sample.pickupArea}) — tap Accept or X!`);
                         }}
@@ -2888,7 +3282,11 @@ export default function App() {
             <button
               type="button"
               onClick={() => {
-                if (isLiveGpsInUK && realCoords && tripStage === 'idle') {
+                if (anchoredToLastJobRef.current) {
+                  showToast(
+                    `Centered on previous job area · ${getResolvedLocalCityName(driverPos)}`
+                  );
+                } else if (isLiveGpsInUK && realCoords && tripStage === 'idle') {
                   const projected = clampMapCoords(
                     projectLatLngToMap(realCoords.lat, realCoords.lng)
                   );
@@ -2970,12 +3368,16 @@ export default function App() {
                 onNoShowCancel={handleNoShowCancel}
                 onAcceptQueued={() => {
                   if (!queuedOffer) return;
+                  recordOfferDecision(queuedOffer, 'accepted', 'queued');
                   uberSounds.play('accept');
                   setAcceptedNextOffer(queuedOffer);
                   setQueuedOffer(null);
                   showToast(`Next ride queued (${queuedOffer.serviceName}) · Starts after dropoff`);
                 }}
                 onDeclineQueued={() => {
+                  if (queuedOffer) {
+                    recordOfferDecision(queuedOffer, 'declined', 'queued');
+                  }
                   uberSounds.play('decline');
                   setQueuedOffer(null);
                   showToast('Queued ride declined');
@@ -3062,9 +3464,10 @@ export default function App() {
                     </div>
                     {onlineStatus === 'online' && (
                       <p className="text-[11.5px] font-semibold text-[#276EF1] tabular-nums truncate">
+                        Online {formatOnlineTimer(onlineElapsedSec)} ·{' '}
                         {nextOfferSecLeft !== null
-                          ? `Next request ~${formatSecMmSs(nextOfferSecLeft)} · Pull up to Stop`
-                          : 'Pull up for Stop menu'}
+                          ? `Next request ~${formatSecMmSs(nextOfferSecLeft)}`
+                          : 'Pull up to Stop'}
                       </p>
                     )}
                   </button>
@@ -3092,7 +3495,10 @@ export default function App() {
                   <div className="px-4 pb-3 flex items-center justify-center">
                     <button
                       type="button"
-                      onClick={() => setShowRadarList(true)}
+                      onClick={() => {
+                        radarOffers.forEach(recordOfferReceived);
+                        setShowRadarList(true);
+                      }}
                       className="h-9 px-4 rounded-full bg-black dark:bg-[#276EF1] text-white text-[12.5px] font-bold flex items-center gap-2 hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] active:scale-95 transition-all shadow-md tabular-nums"
                     >
                       <Radar className="w-3.5 h-3.5 text-[#5B9BF8] dark:text-white" />
@@ -3117,9 +3523,11 @@ export default function App() {
             <HomeMenuView
               account={activeAccount}
               onlineStatus={onlineStatus}
+              onlineElapsedSec={onlineElapsedSec}
               todayEarnings={todayEarnings}
               privacyHidden={privacyHidden}
               questCompletedCount={ledger.questCompletedCount}
+              tripStats={ledger.tripStats}
               preferences={preferences}
               nextOfferSecLeft={nextOfferSecLeft}
               radarRefreshSecLeft={radarRefreshSecLeft}
@@ -3137,15 +3545,38 @@ export default function App() {
               onOpenSafety={() => setShowSafetyModal(true)}
               onOpenPreferences={() => setShowPreferencesModal(true)}
               onOpenOpportunities={(section) => setOpportunitiesModalMode(section)}
+              onOpenTrips={() => {
+                setTripsReturnTab('hub');
+                setActiveTab('trips');
+              }}
               onOpenEarnings={() => setActiveTab('earnings')}
               onOpenAccountMenu={() => setActiveTab('menu')}
               onOpenTripRadar={() => {
+                radarOffers.forEach(recordOfferReceived);
                 setActiveTab('home');
                 setShowRadarList(true);
               }}
               onOpenPermissions={() => setShowPermissionsModal(true)}
               onDispatchIntercity={handleDispatchIntercity}
               onRechargeVehicle={handleRechargeVehicle}
+            />
+          )}
+
+          {activeTab === 'trips' && (
+            <TripsMenuView
+              tripStats={ledger.tripStats}
+              completedTrips={ledger.completedTrips}
+              privacyHidden={privacyHidden}
+              onResetStats={() => {
+                recordedReceivedIdsRef.current.clear();
+                resolvedOfferIdsRef.current.clear();
+                setLedger((prev) => ({
+                  ...prev,
+                  tripStats: { ...EMPTY_TRIP_STATS, history: [] },
+                }));
+                showToast('Trip counters reset');
+              }}
+              onBack={() => setActiveTab(tripsReturnTab)}
             />
           )}
 
@@ -3203,6 +3634,7 @@ export default function App() {
               proPoints={ledger.proPoints}
               walletBalance={ledger.walletBalance}
               totalBusinessMiles={totalBusinessMiles}
+              tripStats={ledger.tripStats}
               preferences={preferences}
               notificationPermission={notificationPermission}
               lastRefreshedAt={lastRefreshedAt}
@@ -3221,6 +3653,10 @@ export default function App() {
               onOpenSafety={() => setShowSafetyModal(true)}
               onOpenPreferences={() => setShowPreferencesModal(true)}
               onOpenOpportunities={() => setOpportunitiesModalMode('opportunities')}
+              onOpenTrips={() => {
+                setTripsReturnTab('menu');
+                setActiveTab('trips');
+              }}
               onOpenEarnings={() => setActiveTab('earnings')}
               onOpenInbox={() => setActiveTab('inbox')}
               onToggleNotifications={handleToggleNotifications}
@@ -3238,7 +3674,7 @@ export default function App() {
       {tripStage === 'idle' && !pendingOffer && !showRadarList && (
         <div className="shrink-0">
           <BottomNav
-            activeTab={activeTab === 'hub' ? 'home' : activeTab}
+            activeTab={activeTab === 'hub' ? 'home' : activeTab === 'trips' ? 'menu' : activeTab}
             unreadInboxCount={unreadInboxCount}
             scheduledReserveCount={scheduledReserves.length}
             onChangeTab={setActiveTab}
@@ -3309,6 +3745,7 @@ export default function App() {
               realLatLng: getActiveGpsLatLng(),
               seedIndex: offerIndex,
               includeIntercity: preferences.intercity,
+              servicePrefs,
             });
             setOfferIndex((i) => i + 1);
             setShowPermissionsModal(false);
@@ -3356,6 +3793,15 @@ export default function App() {
         <PreferencesSheet
           preferences={preferences}
           onTogglePreference={handleTogglePreference}
+          onSetFloatingDotMode={(mode: 'dot' | 'card') => {
+            setPreferences((prev) => ({ ...prev, floatingDotAlertMode: mode }));
+            void setNativeBubbleAlertMode(mode);
+            showToast(
+              mode === 'dot'
+                ? 'Floating bubble set to Dot Only (Default)'
+                : 'Floating bubble set to Auto-Show Job Card'
+            );
+          }}
           onSetNavProvider={(provider: NavProvider) => {
             setPreferences((prev) => ({ ...prev, navProvider: provider }));
             showToast(
@@ -3370,7 +3816,10 @@ export default function App() {
               }`
             );
           }}
-          onResetDefaults={() => setPreferences(INITIAL_PREFERENCES)}
+          onResetDefaults={() => {
+            setPreferences(INITIAL_PREFERENCES);
+            void setNativeBubbleAlertMode(INITIAL_PREFERENCES.floatingDotAlertMode);
+          }}
           onClose={() => setShowPreferencesModal(false)}
         />
       )}
@@ -3401,7 +3850,10 @@ export default function App() {
                 <h3 className="text-[20px] font-extrabold text-black dark:text-white">
                   {statusSwapOnline ? "You're online" : 'Finding trips...'}
                 </h3>
-                <p className="text-[13px] text-[#545454] dark:text-neutral-400">
+                <p className="text-[13px] font-semibold text-[#276EF1] tabular-nums mt-0.5">
+                  Time online · {formatOnlineTimer(onlineElapsedSec)}
+                </p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400 mt-0.5">
                   Tap Stop to go offline and pause incoming trip requests
                 </p>
               </div>

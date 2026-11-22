@@ -1,4 +1,4 @@
-export type MainTab = 'home' | 'hub' | 'reserve' | 'earnings' | 'inbox' | 'menu';
+export type MainTab = 'home' | 'hub' | 'trips' | 'reserve' | 'earnings' | 'inbox' | 'menu';
 
 export type DriverOnlineStatus = 'offline' | 'online';
 
@@ -189,6 +189,29 @@ export interface CompletedTrip {
   tags?: string[];
 }
 
+export type TripActivityStatus = 'accepted' | 'declined' | 'radar_lost';
+
+export interface TripActivityEntry {
+  id: string;
+  offerId: string;
+  serviceName: string;
+  offerType: 'exclusive' | 'radar' | 'reserve' | 'queued';
+  status: TripActivityStatus;
+  fare: number;
+  pickupArea: string;
+  dropoffArea: string;
+  timestamp: string;
+  dateKey: string;
+}
+
+export interface TripStats {
+  totalReceived: number;
+  accepted: number;
+  declined: number;
+  radarLost: number;
+  history: TripActivityEntry[];
+}
+
 export interface InboxMessage {
   id: string;
   sender: 'agent' | 'driver';
@@ -242,4 +265,5 @@ export interface DriverPreferences {
   dailyGoalGbp: number;
   weeklyGoalGbp: number;
   rushNav: boolean;
+  floatingDotAlertMode: 'dot' | 'card';
 }

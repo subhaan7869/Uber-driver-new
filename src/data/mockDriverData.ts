@@ -546,6 +546,7 @@ export const INITIAL_PREFERENCES: DriverPreferences = {
   dailyGoalGbp: 180,
   weeklyGoalGbp: 950,
   rushNav: false,
+  floatingDotAlertMode: 'dot',
 };
 
 export const BUSY_SOON_ZONES: BusySoonZone[] = [

@@ -65,6 +65,7 @@ public class UberBubbleService extends Service {
     public static final String EXTRA_OFFER_SUBTITLE = "offer_subtitle";
     public static final String EXTRA_EXPIRES_SEC = "expires_sec";
     public static final String EXTRA_DELAY_MS = "delay_ms";
+    public static final String EXTRA_AUTO_EXPAND_CARD = "auto_expand_card";
 
     private static final String CHANNEL_ONLINE_ID = "uber_driver_online_v1";
     private static final String CHANNEL_OFFERS_ID = "uber_driver_offers_v1";
@@ -76,6 +77,7 @@ public class UberBubbleService extends Service {
     private static volatile boolean desiredOnline = false;
     private static volatile boolean desiredInForeground = true;
     private static volatile String desiredCity = "London";
+    private static volatile boolean desiredAutoExpandCard = false;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
@@ -102,6 +104,7 @@ public class UberBubbleService extends Service {
     private boolean previewMode = false;
     private boolean previewCardMode = false;
     private boolean cardCollapsedToDot = false;
+    private boolean autoExpandCard = false;
     private String currentCity = "London";
 
     // Active Offer State
@@ -178,6 +181,20 @@ public class UberBubbleService extends Service {
         }
     }
 
+    public static void setAutoExpandCardDirect(boolean autoExpand) {
+        desiredAutoExpandCard = autoExpand;
+        UberBubbleService inst = instance;
+        if (inst != null) {
+            inst.mainHandler.post(() -> {
+                inst.autoExpandCard = desiredAutoExpandCard;
+                if (inst.activeOfferId != null && !inst.appInForeground) {
+                    inst.cardCollapsedToDot = !desiredAutoExpandCard;
+                    inst.updateOverlayVisibility();
+                }
+            });
+        }
+    }
+
     public static void updateOfferDirect(
         String offerId,
         String offerJson,
@@ -247,6 +264,7 @@ public class UberBubbleService extends Service {
         isServiceRunning = true;
         isOnline = desiredOnline;
         appInForeground = desiredInForeground;
+        autoExpandCard = desiredAutoExpandCard;
         currentCity = desiredCity;
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         createNotificationChannels();
@@ -258,6 +276,7 @@ public class UberBubbleService extends Service {
             if (isOnline || desiredOnline) {
                 isOnline = true;
                 appInForeground = desiredInForeground;
+                autoExpandCard = desiredAutoExpandCard;
                 startOnlineForeground();
                 updateOverlayVisibility();
             }
@@ -274,6 +293,10 @@ public class UberBubbleService extends Service {
                 isOnline = true;
                 desiredOnline = true;
                 appInForeground = desiredInForeground;
+                if (intent.hasExtra(EXTRA_AUTO_EXPAND_CARD)) {
+                    desiredAutoExpandCard = intent.getBooleanExtra(EXTRA_AUTO_EXPAND_CARD, false);
+                }
+                autoExpandCard = desiredAutoExpandCard;
                 String city = intent.getStringExtra(EXTRA_CITY);
                 if (city != null && !city.isEmpty()) {
                     currentCity = city;
@@ -640,7 +663,7 @@ public class UberBubbleService extends Service {
             : String.format(Locale.UK, "£%.0f", offerFare);
         activeOfferTotalSec = Math.max(5, expiresSec);
         activeOfferSecLeft = activeOfferTotalSec;
-        cardCollapsedToDot = false;
+        cardCollapsedToDot = !previewCardMode && !autoExpandCard;
 
         updateOverlayVisibility();
 
@@ -1048,9 +1071,15 @@ public class UberBubbleService extends Service {
         headerRow.setGravity(Gravity.CENTER_VERTICAL);
         body.addView(headerRow);
 
-        // Service Pill (e.g. UberX / Comfort / Intercity)
+        // Service Pill (e.g. UberX / Comfort / UberXL / Uber Pet / Uber Eats / Intercity)
+        String radarPrefix = "👤 ";
+        if (offerServiceName != null && offerServiceName.toLowerCase(Locale.UK).contains("eats")) {
+            radarPrefix = "📦 ";
+        } else if (offerServiceName != null && offerServiceName.toLowerCase(Locale.UK).contains("pet")) {
+            radarPrefix = "🐾 ";
+        }
         headerRow.addView(makePill(
-            isRadar && !offerIsIntercity ? ("👤 " + offerServiceName) : offerServiceName,
+            isRadar && !offerIsIntercity ? (radarPrefix + offerServiceName) : offerServiceName,
             offerIsIntercity
                 ? Color.parseColor("#7A1C79")
                 : (isRadar ? Color.parseColor("#737373") : Color.parseColor("#000000")),

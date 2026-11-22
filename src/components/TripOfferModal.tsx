@@ -1,6 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Route, Star, User, X } from 'lucide-react';
+import { Package, PawPrint, Route, Star, User, X } from 'lucide-react';
 import { TripOffer } from '../types/driver';
+
+function renderServiceIcon(item: TripOffer, sizeClass = 'w-3 h-3') {
+  if (item.isIntercity) return <Route className={sizeClass} />;
+  if (item.serviceName === 'Uber Eats') return <Package className={sizeClass} />;
+  if (item.serviceName === 'Uber Pet') return <PawPrint className={sizeClass} />;
+  return <User className={`${sizeClass} fill-white`} />;
+}
 
 interface TripOfferModalProps {
   offer: TripOffer;
@@ -167,11 +174,7 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="inline-flex items-center gap-1 bg-[#737373] dark:bg-neutral-600 text-white text-[12px] font-semibold px-2 py-0.5 rounded-[5px] leading-tight">
-                          {item.isIntercity ? (
-                            <Route className="w-3 h-3" />
-                          ) : (
-                            <User className="w-3 h-3 fill-white" />
-                          )}
+                          {renderServiceIcon(item, 'w-3 h-3')}
                           <span>{item.serviceName}</span>
                         </span>
                         {item.isIntercity && (
@@ -290,11 +293,7 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1 bg-[#737373] dark:bg-neutral-600 text-white text-[12px] font-semibold px-2 py-0.5 rounded-[5px] leading-tight">
-                  {offer.isIntercity ? (
-                    <Route className="w-3 h-3" />
-                  ) : (
-                    <User className="w-3 h-3 fill-white" />
-                  )}
+                  {renderServiceIcon(offer, 'w-3 h-3')}
                   <span>{offer.serviceName}</span>
                 </span>
                 {offer.isIntercity && (
@@ -410,11 +409,7 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                 offer.isIntercity ? 'bg-[#7A1C79]' : 'bg-black dark:bg-[#276EF1]'
               }`}
             >
-              {offer.isIntercity ? (
-                <Route className="w-3.5 h-3.5" />
-              ) : (
-                <User className="w-3.5 h-3.5 fill-white" />
-              )}
+              {renderServiceIcon(offer, 'w-3.5 h-3.5')}
               {offer.serviceName}
             </span>
             {offer.isIntercity && (

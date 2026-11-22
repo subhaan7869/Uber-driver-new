@@ -32,6 +32,7 @@ interface UberMapProps {
   pendingOffer: TripOffer | null;
   routePolyline?: Coordinates[];
   fullRoutePolyline?: Coordinates[];
+  offerTripPolyline?: Coordinates[];
   surgeZones: SurgeZone[];
   busySoonZones?: BusySoonZone[];
   mapReports: MapReportPin[];
@@ -422,6 +423,7 @@ export const UberMap: React.FC<UberMapProps> = ({
   pendingOffer,
   routePolyline,
   fullRoutePolyline,
+  offerTripPolyline,
   surgeZones,
   busySoonZones = [],
   mapReports,
@@ -476,6 +478,7 @@ export const UberMap: React.FC<UberMapProps> = ({
   const prevTripStageRef = useRef(tripStage);
   const prevRecenterRef = useRef(recenterSignal);
   const prevNav3DRef = useRef(isNav3DActive);
+  const prevPendingOfferIdRef = useRef<string | null>(pendingOffer?.id ?? null);
   const isEasingUntilRef = useRef<number>(0);
 
   const styleReqIdRef = useRef(0);
@@ -577,19 +580,51 @@ export const UberMap: React.FC<UberMapProps> = ({
     }
   }, [nightMode]);
 
-  // Handle recenter signal, tripStage transitions & 2D/3D camera toggle
+  // Handle recenter signal, tripStage transitions, pending offer bounds & 2D/3D camera toggle
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
+    const pendingOfferId = pendingOffer?.id ?? null;
     const stageChanged = prevTripStageRef.current !== tripStage;
     const recenterChanged = prevRecenterRef.current !== recenterSignal;
     const nav3DChanged = prevNav3DRef.current !== isNav3DActive;
+    const offerChanged = prevPendingOfferIdRef.current !== pendingOfferId;
+    const wasOfferOpen = prevPendingOfferIdRef.current !== null;
+
     prevTripStageRef.current = tripStage;
     prevRecenterRef.current = recenterSignal;
     prevNav3DRef.current = isNav3DActive;
+    prevPendingOfferIdRef.current = pendingOfferId;
 
-    if (recenterChanged || stageChanged) {
+    if (pendingOffer && !activeTrip && tripStage === 'idle' && (offerChanged || recenterChanged || stageChanged)) {
+      setHasManualPan(false);
+      setRouteOverviewMode(false);
+      const pts: [number, number][] = [
+        driverPos,
+        pendingOffer.pickupCoords,
+        ...(pendingOffer.stopCoords ? [pendingOffer.stopCoords] : []),
+        pendingOffer.dropoffCoords,
+        ...(routePolyline || []),
+        ...(offerTripPolyline || []),
+      ].map((p) => {
+        const ll = mapToLatLng(p);
+        return [ll.lng, ll.lat] as [number, number];
+      });
+      const bounds = new maplibregl.LngLatBounds(pts[0], pts[0]);
+      pts.forEach((pt) => bounds.extend(pt));
+      const ch = containerRef.current?.clientHeight || 740;
+      const topPad = Math.min(115, Math.round(ch * 0.16));
+      const bottomPad = Math.min(410, Math.round(ch * 0.52));
+      isEasingUntilRef.current = performance.now() + 550;
+      map.fitBounds(bounds, {
+        padding: { top: topPad, bottom: bottomPad, left: 48, right: 48 },
+        maxZoom: 14.2,
+        pitch: 0,
+        bearing: 0,
+        duration: 500,
+      });
+    } else if (recenterChanged || stageChanged || (offerChanged && wasOfferOpen && !pendingOffer)) {
       setHasManualPan(false);
       setRouteOverviewMode(false);
       const ll = mapToLatLng(driverPos);
@@ -621,6 +656,10 @@ export const UberMap: React.FC<UberMapProps> = ({
   }, [
     recenterSignal,
     tripStage,
+    activeTrip,
+    pendingOffer,
+    routePolyline,
+    offerTripPolyline,
     driverPos,
     driverHeading,
     isIntercityActive,
@@ -866,7 +905,122 @@ export const UberMap: React.FC<UberMapProps> = ({
     const destSource = map.getSource('dest-route-source') as maplibregl.GeoJSONSource | undefined;
 
     const trip = activeTrip || pendingOffer;
-    if (trip) {
+    const isOfferPreview = Boolean(pendingOffer && !activeTrip && tripStage === 'idle');
+    if (trip && isOfferPreview) {
+      const approachPts: Coordinates[] =
+        routePolyline && routePolyline.length >= 2
+          ? [driverPos, ...routePolyline.slice(1)]
+          : [driverPos, trip.pickupCoords];
+      const approachLngLats = approachPts.map((p) => {
+        const ll = mapToLatLng(p);
+        return [ll.lng, ll.lat] as [number, number];
+      });
+
+      const tripPts: Coordinates[] =
+        offerTripPolyline && offerTripPolyline.length >= 2
+          ? offerTripPolyline
+          : trip.stopCoords
+          ? [trip.pickupCoords, trip.stopCoords, trip.dropoffCoords]
+          : [trip.pickupCoords, trip.dropoffCoords];
+      const tripLngLats = tripPts.map((p) => {
+        const ll = mapToLatLng(p);
+        return [ll.lng, ll.lat] as [number, number];
+      });
+
+      const isIntercity = Boolean(trip.isIntercity);
+      const tripMainColor = isIntercity ? '#9333EA' : nightMode ? '#5B9BF8' : '#000000';
+      const tripCasingColor = isIntercity
+        ? 'rgba(122,28,121,0.34)'
+        : nightMode
+        ? 'rgba(91,155,248,0.34)'
+        : 'rgba(0,0,0,0.22)';
+
+      if (fullSource) fullSource.setData(EMPTY_FC);
+      if (destSource) destSource.setData(EMPTY_FC);
+      if (activeSource) {
+        activeSource.setData({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {
+                mainColor: '#05944F',
+                casingColor: 'rgba(5,148,79,0.22)',
+              },
+              geometry: { type: 'LineString', coordinates: approachLngLats },
+            },
+            {
+              type: 'Feature',
+              properties: {
+                mainColor: tripMainColor,
+                casingColor: tripCasingColor,
+              },
+              geometry: { type: 'LineString', coordinates: tripLngLats },
+            },
+          ],
+        });
+      }
+
+      const pickupLL = mapToLatLng(trip.pickupCoords);
+      const pickupShort = trip.pickupArea.split('·')[0].trim();
+      const pickupEl = document.createElement('div');
+      pickupEl.style.pointerEvents = 'none';
+      pickupEl.innerHTML = `
+        <div style="position:relative;display:flex;flex-direction:column;align-items:center;">
+          <div style="position:absolute;bottom:22px;background:#05944F;color:#fff;font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:8px;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.3);">Pickup · ${escapeHtml(
+            pickupShort
+          )}</div>
+          <div style="width:15px;height:15px;border-radius:9999px;background:#05944F;border:2.5px solid #FFFFFF;box-shadow:0 2px 8px rgba(0,0,0,0.34);"></div>
+        </div>
+      `;
+      routeMarkersRef.current.push(
+        new maplibregl.Marker({ element: pickupEl, anchor: 'center' })
+          .setLngLat([pickupLL.lng, pickupLL.lat])
+          .addTo(map)
+      );
+
+      if (trip.stopCoords) {
+        const stopLL = mapToLatLng(trip.stopCoords);
+        const stopEl = document.createElement('div');
+        stopEl.style.pointerEvents = 'none';
+        stopEl.innerHTML = `
+          <div style="position:relative;display:flex;flex-direction:column;align-items:center;">
+            <div style="position:absolute;bottom:20px;background:#F59E0B;color:#000;font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:6px;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,0.25);">Stop 1</div>
+            <div style="width:14px;height:14px;border-radius:9999px;background:#F59E0B;border:2.5px solid #FFFFFF;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>
+          </div>
+        `;
+        routeMarkersRef.current.push(
+          new maplibregl.Marker({ element: stopEl, anchor: 'center' })
+            .setLngLat([stopLL.lng, stopLL.lat])
+            .addTo(map)
+        );
+      }
+
+      const dropoffLL = mapToLatLng(trip.dropoffCoords);
+      const dropoffShort = trip.dropoffArea.split('·')[0].trim();
+      const dropoffLabel = isIntercity
+        ? `${dropoffShort} (Intercity)`
+        : `Dropoff · ${dropoffShort}`;
+      const dropoffEl = document.createElement('div');
+      dropoffEl.style.pointerEvents = 'none';
+      dropoffEl.innerHTML = `
+        <div style="position:relative;display:flex;flex-direction:column;align-items:center;">
+          <div style="position:absolute;bottom:22px;background:${
+            isIntercity ? '#7A1C79' : '#000000'
+          };color:#fff;font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:8px;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.3);">${escapeHtml(
+            dropoffLabel
+          )}</div>
+          <div style="width:15px;height:15px;border-radius:3px;background:${
+            isIntercity ? '#9333EA' : '#000000'
+          };border:2.5px solid #FFFFFF;box-shadow:0 2px 8px rgba(0,0,0,0.34);"></div>
+        </div>
+      `;
+      routeMarkersRef.current.push(
+        new maplibregl.Marker({ element: dropoffEl, anchor: 'center' })
+          .setLngLat([dropoffLL.lng, dropoffLL.lat])
+          .addTo(map)
+      );
+    } else if (trip) {
       const isDropoff =
         tripStage === 'enroute' || tripStage === 'stop_wait' || tripStage === 'dropoff_arrived';
       const endCoord = isDropoff ? trip.dropoffCoords : trip.pickupCoords;
@@ -1019,6 +1173,7 @@ export const UberMap: React.FC<UberMapProps> = ({
     tripStage,
     routePolyline,
     fullRoutePolyline,
+    offerTripPolyline,
     driverPos,
     destination,
     nightMode,

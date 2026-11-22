@@ -1,0 +1,353 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default-deny all unmatched paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== GLOBAL PRIMITIVES ====================
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isBoundedStr(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isBoundedNum(val, minVal, maxVal) {
+      return val is number && val >= minVal && val <= maxVal;
+    }
+
+    // ==================== ENTITY VALIDATION BLUEPRINTS ====================
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'email', 'city', 'tier', 'vehicle', 'vehicleColor',
+          'licensePlate', 'phvBadge', 'rating', 'proPoints', 'acceptanceRate',
+          'cancellationRate', 'drivingMinutesUsedToday', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'email', 'city', 'tier', 'vehicle', 'vehicleColor',
+          'licensePlate', 'phvBadge', 'rating', 'proPoints', 'acceptanceRate',
+          'cancellationRate', 'drivingMinutesUsedToday', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && isBoundedStr(data.displayName, 1, 80)
+        && isBoundedStr(data.email, 3, 120)
+        && isBoundedStr(data.city, 1, 60)
+        && data.tier in ['Diamond', 'Platinum', 'Gold']
+        && isBoundedStr(data.vehicle, 1, 80)
+        && isBoundedStr(data.vehicleColor, 1, 40)
+        && isBoundedStr(data.licensePlate, 1, 20)
+        && isBoundedStr(data.phvBadge, 1, 32)
+        && isBoundedNum(data.rating, 1, 5)
+        && isBoundedNum(data.proPoints, 0, 1000000)
+        && isBoundedNum(data.acceptanceRate, 0, 100)
+        && isBoundedNum(data.cancellationRate, 0, 100)
+        && isBoundedNum(data.drivingMinutesUsedToday, 0, 1440)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDriverLedgerState(data, userId) {
+      return data.keys().hasAll([
+          'ownerUid', 'walletBalance', 'proPoints', 'questCompletedCount',
+          'totalReceived', 'acceptedCount', 'declinedCount', 'radarLostCount',
+          'dailyTotals', 'preferences', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid', 'walletBalance', 'proPoints', 'questCompletedCount',
+          'totalReceived', 'acceptedCount', 'declinedCount', 'radarLostCount',
+          'dailyTotals', 'preferences', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.ownerUid == userId
+        && isBoundedNum(data.walletBalance, 0, 1000000)
+        && isBoundedNum(data.proPoints, 0, 1000000)
+        && isBoundedNum(data.questCompletedCount, 0, 10000)
+        && isBoundedNum(data.totalReceived, 0, 1000000)
+        && isBoundedNum(data.acceptedCount, 0, 1000000)
+        && isBoundedNum(data.declinedCount, 0, 1000000)
+        && isBoundedNum(data.radarLostCount, 0, 1000000)
+        && data.dailyTotals is map
+        && data.dailyTotals.size() <= 400
+        && data.preferences is map
+        && data.preferences.size() <= 40
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCompletedTrip(data, userId, tripId) {
+      return data.keys().hasAll([
+          'ownerUid', 'tripId', 'riderName', 'serviceName', 'fare', 'tip',
+          'waitFee', 'netPayout', 'distanceMiles', 'durationMin',
+          'pickupArea', 'dropoffArea', 'completedAtLabel', 'dateKey',
+          'isIntercity', 'isNoShowFee', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid', 'tripId', 'riderName', 'serviceName', 'fare', 'tip',
+          'waitFee', 'netPayout', 'distanceMiles', 'durationMin',
+          'pickupArea', 'dropoffArea', 'completedAtLabel', 'dateKey',
+          'isIntercity', 'isNoShowFee', 'createdAt'
+        ])
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.ownerUid == userId
+        && isValidId(data.tripId)
+        && data.tripId == tripId
+        && isBoundedStr(data.riderName, 1, 80)
+        && isBoundedStr(data.serviceName, 1, 40)
+        && isBoundedNum(data.fare, 0, 50000)
+        && isBoundedNum(data.tip, 0, 5000)
+        && isBoundedNum(data.waitFee, 0, 5000)
+        && isBoundedNum(data.netPayout, 0, 55000)
+        && isBoundedNum(data.distanceMiles, 0, 2000)
+        && isBoundedNum(data.durationMin, 0, 1440)
+        && isBoundedStr(data.pickupArea, 1, 100)
+        && isBoundedStr(data.dropoffArea, 1, 100)
+        && isBoundedStr(data.completedAtLabel, 1, 24)
+        && data.dateKey is string
+        && data.dateKey.size() == 10
+        && data.dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.isIntercity is bool
+        && data.isNoShowFee is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTripActivity(data, userId) {
+      return data.keys().hasAll([
+          'ownerUid', 'offerId', 'serviceName', 'offerType', 'status',
+          'fare', 'pickupArea', 'dropoffArea', 'timestampLabel', 'dateKey', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid', 'offerId', 'serviceName', 'offerType', 'status',
+          'fare', 'pickupArea', 'dropoffArea', 'timestampLabel', 'dateKey', 'createdAt'
+        ])
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.ownerUid == userId
+        && isValidId(data.offerId)
+        && isBoundedStr(data.serviceName, 1, 40)
+        && data.offerType in ['exclusive', 'radar', 'reserve', 'queued']
+        && data.status in ['accepted', 'declined', 'radar_lost']
+        && isBoundedNum(data.fare, 0, 50000)
+        && isBoundedStr(data.pickupArea, 1, 100)
+        && isBoundedStr(data.dropoffArea, 1, 100)
+        && isBoundedStr(data.timestampLabel, 1, 24)
+        && data.dateKey is string
+        && data.dateKey.size() == 10
+        && data.dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.createdAt is timestamp;
+    }
+
+    function isValidReserveBooking(data, userId, reserveId) {
+      return data.keys().hasAll([
+          'ownerUid', 'reserveId', 'category', 'serviceName', 'scheduledAtMs',
+          'dayLabel', 'timeLabel', 'onlineByLabel', 'estimatedFare', 'reserveFee',
+          'riderName', 'pickupAddress', 'pickupArea', 'dropoffAddress', 'dropoffArea',
+          'tripMiles', 'tripMinutes', 'pickupLat', 'pickupLng', 'dropoffLat',
+          'dropoffLng', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid', 'reserveId', 'category', 'serviceName', 'scheduledAtMs',
+          'dayLabel', 'timeLabel', 'onlineByLabel', 'estimatedFare', 'reserveFee',
+          'riderName', 'pickupAddress', 'pickupArea', 'dropoffAddress', 'dropoffArea',
+          'tripMiles', 'tripMinutes', 'pickupLat', 'pickupLng', 'dropoffLat',
+          'dropoffLng', 'status', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.ownerUid)
+        && data.ownerUid == request.auth.uid
+        && data.ownerUid == userId
+        && isValidId(data.reserveId)
+        && data.reserveId == reserveId
+        && data.category in ['local', 'airport', 'executive']
+        && isBoundedStr(data.serviceName, 1, 40)
+        && isBoundedNum(data.scheduledAtMs, 1000000000000, 9999999999999)
+        && isBoundedStr(data.dayLabel, 1, 32)
+        && isBoundedStr(data.timeLabel, 1, 16)
+        && isBoundedStr(data.onlineByLabel, 1, 16)
+        && isBoundedNum(data.estimatedFare, 0, 50000)
+        && isBoundedNum(data.reserveFee, 0, 5000)
+        && isBoundedStr(data.riderName, 1, 80)
+        && isBoundedStr(data.pickupAddress, 1, 120)
+        && isBoundedStr(data.pickupArea, 1, 100)
+        && isBoundedStr(data.dropoffAddress, 1, 120)
+        && isBoundedStr(data.dropoffArea, 1, 100)
+        && isBoundedNum(data.tripMiles, 0, 2000)
+        && isBoundedNum(data.tripMinutes, 0, 1440)
+        && isBoundedNum(data.pickupLat, -90, 90)
+        && isBoundedNum(data.pickupLng, -180, 180)
+        && isBoundedNum(data.dropoffLat, -90, 90)
+        && isBoundedNum(data.dropoffLng, -180, 180)
+        && data.status in ['scheduled', 'completed', 'cancelled']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ==================== COLLECTION RULES ====================
+
+    match /users/{userId} {
+      // PII isolated strictly to owner; collection listing disabled
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Update driver profile / vehicle info
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName', 'city', 'vehicle', 'vehicleColor',
+            'licensePlate', 'phvBadge', 'updatedAt'
+          ]) ||
+          // Action 2: Sync Pro points / driving hours / tier metrics after trip activity
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'tier', 'rating', 'proPoints', 'acceptanceRate',
+            'cancellationRate', 'drivingMinutesUsedToday', 'updatedAt'
+          ])
+        );
+
+      allow delete: if false;
+
+      // Driver Ledger & Preferences State
+      match /state/{stateId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(stateId);
+        allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(stateId)
+          && isValidDriverLedgerState(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(stateId)
+          && isValidDriverLedgerState(incoming(), userId)
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            // Action 1: Update wallet balance, daily earnings, Pro points, or Quest count
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'walletBalance', 'proPoints', 'questCompletedCount', 'dailyTotals', 'updatedAt'
+            ]) ||
+            // Action 2: Update trip request telemetry counters
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'totalReceived', 'acceptedCount', 'declinedCount', 'radarLostCount', 'updatedAt'
+            ]) ||
+            // Action 3: Update driving preferences
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'preferences', 'updatedAt'
+            ]) ||
+            // Action 4: Combined trip completion sync (earnings + points + stats)
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'walletBalance', 'proPoints', 'questCompletedCount', 'dailyTotals',
+              'totalReceived', 'acceptedCount', 'declinedCount', 'radarLostCount', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(stateId);
+      }
+
+      // Immutable Completed Trips Ledger
+      match /trips/{tripId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(tripId);
+        allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(tripId)
+          && isValidCompletedTrip(incoming(), userId, tripId)
+          && incoming().createdAt == request.time;
+
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(tripId);
+      }
+
+      // Immutable Trip Activity Log (Received / Accepted / Declined / Radar Lost)
+      match /activity/{activityId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(activityId);
+        allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(activityId)
+          && isValidTripActivity(incoming(), userId)
+          && incoming().createdAt == request.time;
+
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(activityId);
+      }
+
+      // Uber Reserve Bookings with Terminal State Locking
+      match /reserves/{reserveId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(reserveId);
+        allow list: if isOwner(userId) && existing().ownerUid == request.auth.uid;
+
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(reserveId)
+          && isValidReserveBooking(incoming(), userId, reserveId)
+          && incoming().status == 'scheduled'
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+
+        allow update: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(reserveId)
+          && isValidReserveBooking(incoming(), userId, reserveId)
+          && existing().status == 'scheduled'
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().reserveId == existing().reserveId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            // Action: Transition scheduled Reserve booking to completed or cancelled (terminal)
+            (incoming().status in ['completed', 'cancelled']
+              && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          );
+
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(reserveId);
+      }
+    }
+  }
+}

@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Car,
   Check,
+  CircleDot,
   Clock,
   ExternalLink,
   Layers,
@@ -22,6 +23,7 @@ interface PreferencesSheetProps {
   preferences: DriverPreferences;
   onTogglePreference: (key: keyof DriverPreferences) => void;
   onSetNavProvider?: (provider: NavProvider) => void;
+  onSetFloatingDotMode?: (mode: 'dot' | 'card') => void;
   onResetDefaults: () => void;
   onClose: () => void;
 }
@@ -74,6 +76,7 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
   preferences,
   onTogglePreference,
   onSetNavProvider,
+  onSetFloatingDotMode,
   onResetDefaults,
   onClose,
 }) => {
@@ -317,6 +320,60 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
               />
             </div>
           </button>
+
+          {/* Floating Dot Overlay Behavior (Dot Default vs Auto Job Card) */}
+          {onSetFloatingDotMode && (
+            <div className="pt-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[14px] font-bold text-black dark:text-white flex items-center gap-1.5">
+                  <CircleDot className="w-3.5 h-3.5 text-[#276EF1]" />
+                  <span>Floating Dot Alert Mode</span>
+                </p>
+                <span className="text-[11.5px] text-[#545454] dark:text-neutral-400">
+                  When minimized
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {(
+                  [
+                    {
+                      id: 'dot',
+                      title: 'Dot Only (Default)',
+                      desc: 'Stay as a compact dot; tap dot to view card',
+                    },
+                    {
+                      id: 'card',
+                      title: 'Auto-Show Job Card',
+                      desc: 'Pop open the full job card automatically',
+                    },
+                  ] as const
+                ).map((opt) => {
+                  const active = (preferences.floatingDotAlertMode ?? 'dot') === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onSetFloatingDotMode(opt.id)}
+                      className={`p-2.5 rounded-xl border text-left transition-all ${
+                        active
+                          ? 'bg-black dark:bg-[#276EF1] text-white border-black dark:border-[#276EF1]'
+                          : 'bg-[#F6F6F6] dark:bg-white/5 text-black dark:text-white border-transparent hover:bg-[#EAEAEA] dark:hover:bg-white/10'
+                      }`}
+                    >
+                      <p className="text-[12.5px] font-bold leading-tight">{opt.title}</p>
+                      <p
+                        className={`text-[10.5px] mt-0.5 leading-snug ${
+                          active ? 'text-white/80' : 'text-[#545454] dark:text-neutral-400'
+                        }`}
+                      >
+                        {opt.desc}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Navigation App Provider (Uber Nav vs 3rd-party Maps) */}
           {onSetNavProvider && (

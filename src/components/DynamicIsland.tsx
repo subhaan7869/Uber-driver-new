@@ -8,9 +8,11 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { DriverOnlineStatus, TripOffer, TripStage } from '../types/driver';
+import { formatOnlineTimer } from '../utils/timeFormat';
 
 interface DynamicIslandProps {
   onlineStatus: DriverOnlineStatus;
+  onlineElapsedSec?: number;
   tripStage: TripStage;
   activeTrip: TripOffer | null;
   pendingOffer: TripOffer | null;
@@ -30,6 +32,7 @@ interface DynamicIslandProps {
 
 export const DynamicIsland: React.FC<DynamicIslandProps> = ({
   onlineStatus,
+  onlineElapsedSec = 0,
   tripStage,
   activeTrip,
   pendingOffer,
@@ -139,6 +142,10 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
                 </span>
               ) : pendingOffer ? (
                 <span className="text-[11px] font-extrabold text-[#5B9BF8]">Offer</span>
+              ) : onlineStatus === 'online' ? (
+                <span className="text-[12px] font-extrabold text-[#5B9BF8] tabular-nums">
+                  {formatOnlineTimer(onlineElapsedSec)}
+                </span>
               ) : isLocationActive ? (
                 <div className="flex items-end gap-[2px] h-3">
                   <span className="w-[2.5px] h-1.5 bg-[#276EF1] rounded-full" />
@@ -187,11 +194,11 @@ export const DynamicIsland: React.FC<DynamicIslandProps> = ({
                 )}
               </div>
               <div className="min-w-0">
-                <p className="text-[14px] font-extrabold leading-tight truncate">
+                <p className="text-[14px] font-extrabold leading-tight truncate tabular-nums">
                   {isTripActive
                     ? `${activeTrip.serviceName} · ${activeTrip.riderName}`
                     : onlineStatus === 'online'
-                    ? 'Uber Driver · Using Location'
+                    ? `Online ${formatOnlineTimer(onlineElapsedSec)} · GPS`
                     : isLocationActive
                     ? 'Uber Driver · Blue GPS Active'
                     : 'Uber Driver · Offline'}

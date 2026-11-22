@@ -207,6 +207,9 @@ public class UberFloatingBubblePlugin extends Plugin {
     @PluginMethod
     public void startOnlineService(PluginCall call) {
         String city = call.getString("city", "London");
+        String alertMode = call.getString("alertMode", "dot");
+        boolean autoExpand = "card".equals(alertMode);
+        UberBubbleService.setAutoExpandCardDirect(autoExpand);
         UberBubbleService.setDesiredOnlineState(true, city);
         MainActivity.setOnlineImmersiveMode(true);
 
@@ -214,6 +217,7 @@ public class UberFloatingBubblePlugin extends Plugin {
         svc.setAction(UberBubbleService.ACTION_START_ONLINE);
         svc.putExtra(UberBubbleService.EXTRA_CITY, city);
         svc.putExtra(UberBubbleService.EXTRA_DRIVER_NAME, call.getString("driverName", "Driver"));
+        svc.putExtra(UberBubbleService.EXTRA_AUTO_EXPAND_CARD, autoExpand);
         startServiceCompat(svc);
         call.resolve();
     }
@@ -236,6 +240,14 @@ public class UberFloatingBubblePlugin extends Plugin {
     public void setAppInForeground(PluginCall call) {
         boolean inForeground = Boolean.TRUE.equals(call.getBoolean("inForeground", true));
         UberBubbleService.updateForegroundState(inForeground);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setBubbleAlertMode(PluginCall call) {
+        String mode = call.getString("mode", "dot");
+        boolean autoExpand = "card".equals(mode);
+        UberBubbleService.setAutoExpandCardDirect(autoExpand);
         call.resolve();
     }
 

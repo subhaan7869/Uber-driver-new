@@ -1,6 +1,14 @@
-import { CompletedTrip } from '../types/driver';
+import { CompletedTrip, TripStats } from '../types/driver';
 
 const LEDGER_STORAGE_KEY = 'uber_driver_uk_ledger_v1';
+
+export const EMPTY_TRIP_STATS: TripStats = {
+  totalReceived: 0,
+  accepted: 0,
+  declined: 0,
+  radarLost: 0,
+  history: [],
+};
 
 export interface DriverLedger {
   dailyTotals: Record<string, number>;
@@ -8,6 +16,7 @@ export interface DriverLedger {
   proPoints: number;
   questCompletedCount: number;
   completedTrips: CompletedTrip[];
+  tripStats: TripStats;
 }
 
 export function getLocalDateKey(date: Date = new Date()): string {
@@ -80,6 +89,38 @@ export function loadDriverLedger(
       (accountId === 'acct-alex' ? localStorage.getItem(LEDGER_STORAGE_KEY) : null);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<DriverLedger>;
+      const completedTrips = Array.isArray(parsed.completedTrips)
+        ? parsed.completedTrips
+        : [];
+      const fallbackHistory = completedTrips.slice(0, 80).map((t) => ({
+        id: `hist-${t.id}`,
+        offerId: t.id,
+        serviceName: t.serviceName,
+        offerType: 'exclusive' as const,
+        status: 'accepted' as const,
+        fare: t.fare,
+        pickupArea: t.pickupArea,
+        dropoffArea: t.dropoffArea,
+        timestamp: t.completedAt,
+        dateKey: t.dateKey ?? getLocalDateKey(),
+      }));
+      const rawStats = parsed.tripStats;
+      const tripStats: TripStats = rawStats
+        ? {
+            totalReceived:
+              typeof rawStats.totalReceived === 'number' ? rawStats.totalReceived : 0,
+            accepted: typeof rawStats.accepted === 'number' ? rawStats.accepted : 0,
+            declined: typeof rawStats.declined === 'number' ? rawStats.declined : 0,
+            radarLost: typeof rawStats.radarLost === 'number' ? rawStats.radarLost : 0,
+            history: Array.isArray(rawStats.history) ? rawStats.history : [],
+          }
+        : {
+            totalReceived: completedTrips.length,
+            accepted: completedTrips.length,
+            declined: 0,
+            radarLost: 0,
+            history: fallbackHistory,
+          };
       return {
         dailyTotals: parsed.dailyTotals ?? {},
         walletBalance:
@@ -94,9 +135,8 @@ export function loadDriverLedger(
           typeof parsed.questCompletedCount === 'number'
             ? parsed.questCompletedCount
             : initialDefaults.questCompletedCount,
-        completedTrips: Array.isArray(parsed.completedTrips)
-          ? parsed.completedTrips
-          : [],
+        completedTrips,
+        tripStats,
       };
     }
   } catch {
@@ -109,6 +149,7 @@ export function loadDriverLedger(
     proPoints: initialDefaults.proPoints,
     questCompletedCount: initialDefaults.questCompletedCount,
     completedTrips: [],
+    tripStats: { ...EMPTY_TRIP_STATS, history: [] },
   };
 }
 

@@ -4,8 +4,10 @@ import {
   Check,
   CircleDot,
   Clock,
+  Compass,
   ExternalLink,
   Layers,
+  Lock,
   Moon,
   Package,
   PawPrint,
@@ -21,9 +23,11 @@ import { uberSounds } from '../utils/uberSounds';
 
 interface PreferencesSheetProps {
   preferences: DriverPreferences;
+  accountTier?: 'Diamond' | 'Platinum' | 'Gold';
   onTogglePreference: (key: keyof DriverPreferences) => void;
   onSetNavProvider?: (provider: NavProvider) => void;
   onSetFloatingDotMode?: (mode: 'dot' | 'card') => void;
+  onSetAreaPreference?: (area: NonNullable<DriverPreferences['areaPreference']>) => void;
   onResetDefaults: () => void;
   onClose: () => void;
 }
@@ -74,12 +78,15 @@ const SERVICE_OPTIONS: Array<{
 
 export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
   preferences,
+  accountTier = 'Diamond',
   onTogglePreference,
   onSetNavProvider,
   onSetFloatingDotMode,
+  onSetAreaPreference,
   onResetDefaults,
   onClose,
 }) => {
+  const areaUnlocked = accountTier === 'Platinum' || accountTier === 'Diamond';
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white dark:bg-[#141416] w-full sm:max-w-[430px] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl border border-black/10 dark:border-white/10 max-h-[88vh] overflow-y-auto">
@@ -372,6 +379,64 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Uber Pro Area Preference Filter (Unlocked for Platinum / Diamond) */}
+          {onSetAreaPreference && (
+            <div className="pt-2 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[14px] font-bold text-black dark:text-white flex items-center gap-1.5">
+                  <Compass className="w-3.5 h-3.5 text-[#7C3AED]" />
+                  <span>Area Preference Filter</span>
+                </p>
+                <span
+                  className={`text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                    areaUnlocked
+                      ? 'bg-[#7C3AED]/15 text-[#7C3AED] dark:text-[#C4B5FD]'
+                      : 'bg-[#F3F3F3] dark:bg-white/10 text-[#6B6B6B] dark:text-neutral-400'
+                  }`}
+                >
+                  {!areaUnlocked && <Lock className="w-3 h-3" />}
+                  {areaUnlocked ? `${accountTier} Unlocked` : 'Platinum / Diamond'}
+                </span>
+              </div>
+              <div className="grid grid-cols-5 gap-1.5">
+                {(
+                  [
+                    { id: 'all', label: 'All UK' },
+                    { id: 'central', label: 'Central' },
+                    { id: 'east', label: 'East' },
+                    { id: 'west', label: 'West/LHR' },
+                    { id: 'local', label: 'Local' },
+                  ] as const
+                ).map((opt) => {
+                  const active = (preferences.areaPreference ?? 'all') === opt.id;
+                  const disabled = !areaUnlocked && opt.id !== 'all';
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => onSetAreaPreference(opt.id)}
+                      className={`h-9 rounded-xl text-[11px] font-bold border transition-all ${
+                        active
+                          ? 'bg-[#7C3AED] text-white border-[#7C3AED]'
+                          : disabled
+                          ? 'bg-[#F3F3F3] dark:bg-white/5 text-[#A0A0A0] dark:text-neutral-600 border-transparent opacity-60 cursor-not-allowed'
+                          : 'bg-[#F6F6F6] dark:bg-white/5 text-black dark:text-white border-transparent hover:bg-[#EAEAEA] dark:hover:bg-white/10'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {!areaUnlocked && (
+                <p className="text-[11px] text-[#545454] dark:text-neutral-400">
+                  Reach 300 Pro Points &amp; 80% Acceptance Rate (Platinum) to filter dropoff zones.
+                </p>
+              )}
             </div>
           )}
 

@@ -8,6 +8,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Cloud,
+  CloudOff,
   Copy,
   Diamond,
   Download,
@@ -26,7 +28,8 @@ import {
   User,
   Zap,
 } from 'lucide-react';
-import { DriverAccount, DriverPreferences, TripStats } from '../types/driver';
+import { useFirebase } from '../contexts/FirebaseContext';
+import { ComplimentCounts, DriverAccount, DriverPreferences, TripStats } from '../types/driver';
 import { NotificationPermissionState } from '../utils/notifications';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -36,6 +39,8 @@ interface MenuViewProps {
   walletBalance: number;
   totalBusinessMiles?: number;
   tripStats: TripStats;
+  compliments?: ComplimentCounts;
+  streakCount?: number;
   preferences: DriverPreferences;
   notificationPermission: NotificationPermissionState;
   lastRefreshedAt: number;
@@ -60,6 +65,12 @@ interface MenuViewProps {
   onTriggerRefreshNow: () => void;
   onOpenPermissions: () => void;
   onNotifyToast: (msg: string) => void;
+  onUpdateComplianceDoc?: (
+    docId: string,
+    nextStatus: 'verified' | 'expiring_soon' | 'expired'
+  ) => void;
+  onResetRestLock?: () => void;
+  onExportTaxCsv?: () => void;
 }
 
 type MenuSubView =
@@ -104,6 +115,13 @@ export const MenuView: React.FC<MenuViewProps> = ({
   walletBalance,
   totalBusinessMiles = 0,
   tripStats,
+  compliments = {
+    greatConversation: 142,
+    spotlessCar: 198,
+    expertNavigation: 164,
+    aboveAndBeyond: 49,
+  },
+  streakCount = 0,
   preferences,
   notificationPermission,
   lastRefreshedAt,
@@ -128,7 +146,18 @@ export const MenuView: React.FC<MenuViewProps> = ({
   onTriggerRefreshNow,
   onOpenPermissions,
   onNotifyToast,
+  onUpdateComplianceDoc,
+  onResetRestLock,
+  onExportTaxCsv,
 }) => {
+  const {
+    user: googleUser,
+    authLoading,
+    syncStatus,
+    lastCloudSyncAt,
+    signInWithGoogle,
+    signOutGoogle,
+  } = useFirebase();
   const [subView, setSubView] = useState<MenuSubView>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState('veh-1');
   const [openGuideId, setOpenGuideId] = useState<string | null>('res-1');
@@ -258,11 +287,35 @@ export const MenuView: React.FC<MenuViewProps> = ({
               </div>
 
               {profileSection === 'metrics' ? (
-                <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181D] space-y-2 text-[14px]">
-                  <p className="font-bold text-black dark:text-white">Rider compliment badges</p>
-                  <p className="text-[#545454] dark:text-neutral-400">
-                    Great Conversation (142) · Spotless Car (198) · Expert Navigation (164)
-                  </p>
+                <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181D] space-y-3 text-[14px]">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-bold text-black dark:text-white">Live Rider Compliments</p>
+                    {streakCount > 0 && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[11px] font-bold tabular-nums">
+                        {streakCount}/3 Trip Streak
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 tabular-nums">
+                    {[
+                      { label: 'Spotless Car', count: compliments.spotlessCar },
+                      { label: 'Expert Navigation', count: compliments.expertNavigation },
+                      { label: 'Great Conversation', count: compliments.greatConversation },
+                      { label: 'Above & Beyond', count: compliments.aboveAndBeyond },
+                    ].map((badge) => (
+                      <div
+                        key={badge.label}
+                        className="p-2.5 rounded-xl bg-[#FAFAFA] dark:bg-white/5 border border-black/5 dark:border-white/5"
+                      >
+                        <p className="text-[18px] font-extrabold text-black dark:text-white">
+                          {badge.count}
+                        </p>
+                        <p className="text-[11.5px] text-[#545454] dark:text-neutral-400">
+                          {badge.label}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181D] space-y-2 text-[14px]">
@@ -388,26 +441,67 @@ export const MenuView: React.FC<MenuViewProps> = ({
                 );
               })}
 
-              <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181D] space-y-2.5 text-[14px]">
-                <p className="text-[12px] font-bold uppercase tracking-wide text-[#545454] dark:text-neutral-400">
-                  UK Compliance & Expiry Tracker
-                </p>
-                <div className="flex justify-between">
-                  <span className="font-medium text-black dark:text-white">UK Driving Licence</span>
-                  <span className="font-bold text-[#05944F]">Verified · No points</span>
+              <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181D] space-y-3 text-[13.5px]">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[12px] font-bold uppercase tracking-wide text-[#545454] dark:text-neutral-400">
+                    UK PHV Compliance Vault
+                  </p>
+                  <span className="text-[11px] font-bold text-[#276EF1]">
+                    Required to go online
+                  </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="font-medium text-black dark:text-white">PHV Hire & Reward Insurance</span>
-                  <span className="font-bold text-[#05944F]">142 days left</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-medium text-black dark:text-white">6-Month PHV MOT</span>
-                  <span className="font-bold text-[#276EF1]">Due in 64 days</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="font-medium text-black dark:text-white">PHV Badge ({account.phvBadge})</span>
-                  <span className="font-bold text-[#05944F]">Approved · Nov 2027</span>
-                </div>
+                {(account.complianceDocs ?? []).map((docItem) => {
+                  const isExpired = docItem.status === 'expired';
+                  const isExpiring = docItem.status === 'expiring_soon';
+                  return (
+                    <div
+                      key={docItem.id}
+                      className="p-3 rounded-xl bg-[#FAFAFA] dark:bg-white/5 border border-black/5 dark:border-white/10 flex items-center justify-between gap-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-bold text-black dark:text-white truncate">
+                          {docItem.title}
+                        </p>
+                        <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate">
+                          {docItem.subtitle}
+                        </p>
+                        <p
+                          className={`text-[11px] font-bold mt-0.5 tabular-nums ${
+                            isExpired
+                              ? 'text-[#E11900]'
+                              : isExpiring
+                              ? 'text-[#D97706]'
+                              : 'text-[#05944F]'
+                          }`}
+                        >
+                          {isExpired
+                            ? 'Expired · Upload renewal to drive'
+                            : isExpiring
+                            ? `Expiring in ${docItem.daysRemaining} days`
+                            : `Approved · ${docItem.daysRemaining} days remaining`}
+                        </p>
+                      </div>
+                      {onUpdateComplianceDoc && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateComplianceDoc(
+                              docItem.id,
+                              isExpired || isExpiring ? 'verified' : 'expired'
+                            )
+                          }
+                          className={`px-2.5 h-8 rounded-lg text-[11.5px] font-bold shrink-0 whitespace-nowrap transition-colors ${
+                            isExpired || isExpiring
+                              ? 'bg-[#276EF1] text-white hover:bg-[#1E5CD4]'
+                              : 'bg-[#F3F3F3] dark:bg-white/10 text-[#545454] dark:text-neutral-300 hover:bg-[#E5E5E5]'
+                          }`}
+                        >
+                          {isExpired || isExpiring ? 'Upload / Renew' : 'Test Expiry'}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Vehicle Maintenance & Service Health */}
@@ -526,15 +620,19 @@ export const MenuView: React.FC<MenuViewProps> = ({
 
               <button
                 type="button"
-                onClick={() =>
-                  onNotifyToast(
-                    `2026 HMRC Summary: £${(totalBusinessMiles * 0.45).toFixed(2)} mileage relief ready`
-                  )
-                }
+                onClick={() => {
+                  if (onExportTaxCsv) {
+                    onExportTaxCsv();
+                  } else {
+                    onNotifyToast(
+                      `2026 HMRC Summary: £${(totalBusinessMiles * 0.45).toFixed(2)} mileage relief ready`
+                    );
+                  }
+                }}
                 className="w-full h-12 rounded-xl bg-[#F3F3F3] dark:bg-white/10 text-black dark:text-white text-[14px] font-bold hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center gap-2 transition-colors"
               >
                 <Download className="w-4 h-4" />
-                Download HMRC Tax Summary
+                Download HMRC Tax CSV
               </button>
             </div>
           )}
@@ -699,7 +797,7 @@ export const MenuView: React.FC<MenuViewProps> = ({
       </div>
 
       {/* Trips Menu Entry Card */}
-      <div className="px-5 mb-5">
+      <div className="px-5 mb-4 space-y-2.5">
         <button
           type="button"
           onClick={onOpenTrips}
@@ -719,6 +817,48 @@ export const MenuView: React.FC<MenuViewProps> = ({
           </div>
           <ChevronRight className="w-5 h-5 text-[#6B6B6B] shrink-0" />
         </button>
+
+        {/* Cloud Firestore Sync Card */}
+        <div className="p-3.5 rounded-2xl border border-[#276EF1]/25 bg-[#F4F8FF] dark:bg-[#161F33] flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-[#276EF1] text-white flex items-center justify-center shrink-0">
+              {googleUser ? <Cloud className="w-4 h-4" /> : <CloudOff className="w-4 h-4" />}
+            </div>
+            <div className="min-w-0">
+              <p className="text-[13.5px] font-bold text-black dark:text-white truncate">
+                {googleUser ? `Cloud Sync · ${googleUser.displayName || 'Connected'}` : 'Cloud Backup Offline'}
+              </p>
+              <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate">
+                {googleUser
+                  ? syncStatus === 'syncing'
+                    ? 'Syncing ledger & trips to Firestore...'
+                    : lastCloudSyncAt
+                    ? `Synced ${new Date(lastCloudSyncAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${googleUser.email}`
+                    : googleUser.email
+                  : 'Connect Google to sync earnings, trips & reserves'}
+              </p>
+            </div>
+          </div>
+          {googleUser ? (
+            <button
+              type="button"
+              disabled={authLoading}
+              onClick={() => void signOutGoogle()}
+              className="px-2.5 h-8 rounded-lg bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[11.5px] font-bold text-[#E11900] dark:text-red-300 shrink-0"
+            >
+              Sign Out
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={authLoading}
+              onClick={() => void signInWithGoogle()}
+              className="px-3 h-8 rounded-lg bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[12px] font-bold shrink-0"
+            >
+              {authLoading ? '...' : 'Google Sync'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Night Mode, Face ID Check & UK Driving Hours */}
@@ -794,18 +934,35 @@ export const MenuView: React.FC<MenuViewProps> = ({
         <div className="rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] p-3.5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-9 h-9 rounded-xl bg-white dark:bg-white/10 border border-black/5 dark:border-white/10 flex items-center justify-center shrink-0">
-              <Clock className="w-4 h-4 text-[#05944F]" />
+              <Clock className={`w-4 h-4 ${remainingMin <= 0 ? 'text-[#E11900]' : 'text-[#05944F]'}`} />
             </div>
             <div className="min-w-0">
               <p className="text-[14px] font-bold text-black dark:text-white">UK Driving Time Limit</p>
               <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate">
-                12h legal UK daily driving allowance
+                {remainingMin <= 0
+                  ? '12h daily limit reached · 6h mandatory UK rest'
+                  : '12h legal UK daily driving allowance'}
               </p>
             </div>
           </div>
-          <span className="text-[13px] font-extrabold text-black dark:text-white tabular-nums shrink-0">
-            {remHours}h {remMins}m left
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className={`text-[13px] font-extrabold tabular-nums ${
+                remainingMin <= 0 ? 'text-[#E11900]' : 'text-black dark:text-white'
+              }`}
+            >
+              {remHours}h {remMins}m left
+            </span>
+            {onResetRestLock && account.drivingMinutesUsedToday > 0 && (
+              <button
+                type="button"
+                onClick={onResetRestLock}
+                className="px-2.5 h-7 rounded-lg bg-[#276EF1] text-white text-[11px] font-bold"
+              >
+                6h Rest
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

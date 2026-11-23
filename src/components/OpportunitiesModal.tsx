@@ -20,19 +20,28 @@ import {
 interface OpportunitiesModalProps {
   initialSection?: 'opportunities' | 'trends' | 'airports';
   questCompletedCount: number;
+  enrolledIds?: string[];
+  onToggleEnroll?: (id: string) => void;
   onClose: () => void;
 }
 
 export const OpportunitiesModal: React.FC<OpportunitiesModalProps> = ({
   initialSection = 'opportunities',
   questCompletedCount,
+  enrolledIds: controlledEnrolledIds,
+  onToggleEnroll,
   onClose,
 }) => {
   const [section, setSection] = useState<'opportunities' | 'trends' | 'airports'>(initialSection);
-  const [enrolledIds, setEnrolledIds] = useState<string[]>(['opp-1', 'opp-2']);
+  const [localEnrolledIds, setLocalEnrolledIds] = useState<string[]>(['opp-1', 'opp-2']);
+  const enrolledIds = controlledEnrolledIds ?? localEnrolledIds;
 
   const toggleEnroll = (id: string) => {
-    setEnrolledIds((prev) =>
+    if (onToggleEnroll) {
+      onToggleEnroll(id);
+      return;
+    }
+    setLocalEnrolledIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   };
@@ -237,38 +246,50 @@ export const OpportunitiesModal: React.FC<OpportunitiesModalProps> = ({
         ) : (
           <div className="space-y-3">
             <p className="text-[12.5px] text-[#545454] dark:text-neutral-400">
-              Live FIFO waiting bays across UK airports. Diamond drivers receive priority airport rematch.
+              Live FIFO waiting bays & incoming UK flight arrival waves. Diamond drivers receive priority airport rematch.
             </p>
             {UK_AIRPORT_QUEUES.map((aq) => (
               <div
                 key={aq.id}
-                className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#1B1D22] flex items-center justify-between gap-3"
+                className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#1B1D22] space-y-2.5"
               >
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-xl bg-black dark:bg-white/10 text-white flex items-center justify-center shrink-0">
-                    <Plane className="w-5 h-5" />
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-black dark:bg-white/10 text-white flex items-center justify-center shrink-0">
+                      <Plane className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[14.5px] font-bold text-black dark:text-white truncate">
+                        {aq.airport}
+                      </p>
+                      <p className="text-[12px] text-[#545454] dark:text-neutral-400 truncate">
+                        {aq.zone}
+                      </p>
+                      <p className="text-[12px] font-semibold text-[#276EF1] mt-1 tabular-nums">
+                        {aq.carsAhead} cars ahead · ~{aq.estWait} wait
+                      </p>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-[14.5px] font-bold text-black dark:text-white truncate">
-                      {aq.airport}
-                    </p>
-                    <p className="text-[12px] text-[#545454] dark:text-neutral-400 truncate">
-                      {aq.zone}
-                    </p>
-                    <p className="text-[12px] font-semibold text-[#276EF1] mt-1 tabular-nums">
-                      {aq.carsAhead} cars ahead · ~{aq.estWait} wait
-                    </p>
-                  </div>
+                  <span
+                    className={`px-2.5 py-1 rounded-full text-[11.5px] font-bold shrink-0 ${
+                      aq.demand === 'High'
+                        ? 'bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F]'
+                        : 'bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300'
+                    }`}
+                  >
+                    {aq.demand}
+                  </span>
                 </div>
-                <span
-                  className={`px-2.5 py-1 rounded-full text-[11.5px] font-bold shrink-0 ${
-                    aq.demand === 'High'
-                      ? 'bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F]'
-                      : 'bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300'
-                  }`}
-                >
-                  {aq.demand}
-                </span>
+                {aq.flightWave && (
+                  <div className="pt-2 border-t border-black/5 dark:border-white/10 flex items-center justify-between gap-2 text-[11.5px]">
+                    <span className="font-semibold text-black dark:text-neutral-200 truncate">
+                      {aq.flightWave}
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-[#276EF1]/15 text-[#276EF1] dark:text-[#7AB0FF] font-bold whitespace-nowrap shrink-0 tabular-nums">
+                      {aq.peakWindow}
+                    </span>
+                  </div>
+                )}
               </div>
             ))}
           </div>

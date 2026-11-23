@@ -167,9 +167,33 @@
   animation: boot-progress 1.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+@keyframes uk-rain-fall {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: -32px 128px;
+  }
+}
+
+.weather-rain-overlay {
+  background-image: repeating-linear-gradient(
+    102deg,
+    transparent,
+    transparent 18px,
+    rgba(91, 155, 248, 0.24) 18px,
+    rgba(91, 155, 248, 0.24) 19.5px,
+    transparent 19.5px,
+    transparent 44px
+  );
+  background-size: 160px 128px;
+  animation: uk-rain-fall 0.85s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-boot-reveal,
-  .animate-boot-progress {
+  .animate-boot-progress,
+  .weather-rain-overlay {
     animation: none;
   }
 }

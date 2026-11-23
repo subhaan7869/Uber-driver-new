@@ -6,18 +6,21 @@ import {
   Camera,
   CheckCircle2,
   ChevronUp,
+  Coffee,
   Compass,
   CornerUpLeft,
   CornerUpRight,
   Diamond,
   Eye,
   EyeOff,
+  Flame,
   GitMerge,
   LayoutGrid,
   List,
   MapPin,
   MessageSquarePlus,
   Moon,
+  Plane,
   Radar,
   RefreshCw,
   Route,
@@ -47,11 +50,13 @@ import { OpportunitiesModal } from './components/OpportunitiesModal';
 import { PermissionsModal } from './components/PermissionsModal';
 import { PreferencesSheet } from './components/PreferencesSheet';
 import { PWAInstallButton } from './components/PWAInstallButton';
+import { RapidChargersModal } from './components/RapidChargersModal';
 import { ReserveView } from './components/ReserveView';
 import { SafetyToolkitModal } from './components/SafetyToolkitModal';
 import { TripOfferModal } from './components/TripOfferModal';
 import { TripsMenuView } from './components/TripsMenuView';
 import { UberMap } from './components/UberMap';
+import { useFirebase } from './contexts/FirebaseContext';
 import {
   BUSY_SOON_ZONES,
   DEFAULT_DESTINATION,
@@ -61,6 +66,16 @@ import {
 } from './data/mockDriverData';
 import { useBackgroundRefresh } from './hooks/useBackgroundRefresh';
 import {
+  ensureUserProfile,
+  subscribeDriverCloudData,
+  syncCompletedTrip,
+  syncDriverLedgerState,
+  syncDriverPreferencesState,
+  syncReserveBooking,
+  syncTripActivity,
+  syncUserProfileMetrics,
+} from './services/firestoreSync';
+import {
   BusySoonZone,
   CompletedTrip,
   ComputedRoute,
@@ -69,6 +84,7 @@ import {
   DriverAccount,
   DriverOnlineStatus,
   DriverPreferences,
+  ExpenseEntry,
   InboxThread,
   MainTab,
   MapReportCategory,
@@ -81,8 +97,10 @@ import {
   TripActivityStatus,
   TripOffer,
   TripStage,
+  UKWeatherCondition,
 } from './types/driver';
 import {
+  buildDefaultComplianceDocs,
   exportAccountBackupCode,
   getActiveAccountId,
   importAccountBackupCode,
@@ -96,6 +114,7 @@ import {
   storeBrowserCredential,
 } from './utils/authStorage';
 import {
+  DEFAULT_COMPLIMENTS,
   DriverLedger,
   EMPTY_TRIP_STATS,
   getLocalDateKey,
@@ -149,6 +168,14 @@ import {
   prefetchLocalPlaces,
   ServicePrefsInput,
 } from './utils/localDispatch';
+import {
+  computeUberProTier,
+  detectUKZoneSurcharge,
+  downloadHMRCTaxCsv,
+  getNearbyAirportQueuePin,
+  getStickySurgeAtCoords,
+  getUKDemandContext,
+} from './utils/ukRealism';
 import {
   buildFallbackUKRoute,
   fetchUKRoute,
@@ -412,6 +439,111 @@ export default function App() {
     )
   );
 
+  const {
+    user: googleUser,
+    authReady,
+    setSyncStatus,
+    setLastCloudSyncAt,
+  } = useFirebase();
+
+  const runCloudSync = useCallback(
+    async (task: () => Promise<void>) => {
+      if (!googleUser?.emailVerified) return;
+      setSyncStatus('syncing');
+      try {
+        await task();
+        setSyncStatus('synced');
+        setLastCloudSyncAt(Date.now());
+      } catch {
+        setSyncStatus('error');
+      }
+    },
+    [googleUser?.emailVerified, setSyncStatus, setLastCloudSyncAt]
+  );
+
+  // Realism features state (Enrolled Opportunities, Sticky Surge, Airport Queue, Traffic/Rider Changes, Chargers)
+  const [enrolledOppIds, setEnrolledOppIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('uber_driver_enrolled_opps_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // Ignore storage error
+    }
+    return ['opp-1', 'opp-2'];
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('uber_driver_enrolled_opps_v1', JSON.stringify(enrolledOppIds));
+    } catch {
+      // Ignore storage error
+    }
+  }, [enrolledOppIds]);
+
+  const activeBoostBonus = enrolledOppIds.includes('opp-2') ? 4.5 : 0;
+
+  const [lockedSurgeBonus, setLockedSurgeBonus] = useState<number>(0);
+  const [lockedSurgeLabel, setLockedSurgeLabel] = useState<string | null>(null);
+  const [airportQueue, setAirportQueue] = useState<{
+    code: string;
+    name: string;
+    position: number;
+  } | null>(null);
+  const [demandNow, setDemandNow] = useState<Date>(() => new Date());
+  const WEATHER_CYCLE: UKWeatherCondition[] = ['Clear', 'Light Drizzle', 'Heavy Rain', 'Thames Fog'];
+  const [weatherCondition, setWeatherCondition] = useState<UKWeatherCondition>('Clear');
+  const [streakCount, setStreakCount] = useState<number>(0);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setDemandNow(new Date()), 60000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setWeatherCondition((prev) => {
+        const idx = WEATHER_CYCLE.indexOf(prev);
+        return WEATHER_CYCLE[(idx + 1) % WEATHER_CYCLE.length];
+      });
+    }, 240000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const demandContext = useMemo(
+    () => getUKDemandContext(demandNow, weatherCondition),
+    [demandNow, weatherCondition]
+  );
+
+  const [trafficAlert, setTrafficAlert] = useState<{
+    delayMin: number;
+    routeSavedMin: number;
+  } | null>(null);
+  const [riderChangeOffer, setRiderChangeOffer] = useState<{
+    kind: 'dropoff' | 'stop';
+    title: string;
+    subtitle: string;
+    extraFare: number;
+    extraMiles: number;
+    extraMin: number;
+    nextCoords: Coordinates;
+    nextAddress: string;
+  } | null>(null);
+  const [stackedEatsOffer, setStackedEatsOffer] = useState<{
+    restaurantName: string;
+    orderCode: string;
+    extraFare: number;
+    extraMiles: number;
+    extraMin: number;
+    stopCoords: Coordinates;
+    stopAddress: string;
+  } | null>(null);
+  const [isOnBreak, setIsOnBreak] = useState<boolean>(false);
+  const [breakSecondsLeft, setBreakSecondsLeft] = useState<number>(0);
+  const delayedTipTimersRef = useRef<number[]>([]);
+  const [showChargersModal, setShowChargersModal] = useState<boolean>(false);
+
   const prevAccountIdRef = useRef<string | undefined>(activeAccount?.id);
   const recordedReceivedIdsRef = useRef<Set<string>>(new Set());
   const resolvedOfferIdsRef = useRef<Set<string>>(new Set());
@@ -487,8 +619,11 @@ export default function App() {
           history: [entry, ...prev.tripStats.history].slice(0, 80),
         },
       }));
+      if (googleUser?.emailVerified) {
+        void runCloudSync(() => syncTripActivity(googleUser.uid, entry));
+      }
     },
-    []
+    [googleUser?.emailVerified, googleUser?.uid, runCloudSync]
   );
 
   const todayEarnings = ledger.dailyTotals[todayDateKey] ?? 0;
@@ -629,6 +764,173 @@ export default function App() {
     }
   }, [preferences]);
 
+  // Cloud Firestore real-time hydration & continuous state sync
+  const ledgerRef = useRef(ledger);
+  ledgerRef.current = ledger;
+  const preferencesRef = useRef(preferences);
+  preferencesRef.current = preferences;
+  const activeAccountRef = useRef(activeAccount);
+  activeAccountRef.current = activeAccount;
+  const cloudStateInitializedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!authReady || !googleUser?.emailVerified || !activeAccountRef.current) {
+      cloudStateInitializedRef.current = null;
+      return;
+    }
+
+    const uid = googleUser.uid;
+    let active = true;
+    let sawCloudState = false;
+    let unsubscribe = () => {};
+
+    void (async () => {
+      setSyncStatus('syncing');
+      try {
+        if (activeAccountRef.current) {
+          await ensureUserProfile(googleUser, activeAccountRef.current);
+        }
+        if (!active) return;
+
+        unsubscribe = subscribeDriverCloudData(uid, {
+          onState: (cloudState) => {
+            if (!active) return;
+            sawCloudState = true;
+            const firstHydrate = cloudStateInitializedRef.current !== uid;
+            cloudStateInitializedRef.current = uid;
+
+            setLedger((prev) => {
+              const mergedDaily: Record<string, number> = { ...prev.dailyTotals };
+              for (const [k, v] of Object.entries(cloudState.dailyTotals || {})) {
+                mergedDaily[k] = Math.max(mergedDaily[k] ?? 0, Number(v) || 0);
+              }
+              return {
+                ...prev,
+                dailyTotals: mergedDaily,
+                walletBalance: Math.max(prev.walletBalance, Number(cloudState.walletBalance) || 0),
+                proPoints: Math.max(prev.proPoints, Number(cloudState.proPoints) || 0),
+                questCompletedCount: Math.max(
+                  prev.questCompletedCount,
+                  Number(cloudState.questCompletedCount) || 0
+                ),
+                tripStats: {
+                  ...prev.tripStats,
+                  totalReceived: Math.max(
+                    prev.tripStats.totalReceived,
+                    Number(cloudState.totalReceived) || 0
+                  ),
+                  accepted: Math.max(
+                    prev.tripStats.accepted,
+                    Number(cloudState.acceptedCount) || 0
+                  ),
+                  declined: Math.max(
+                    prev.tripStats.declined,
+                    Number(cloudState.declinedCount) || 0
+                  ),
+                  radarLost: Math.max(
+                    prev.tripStats.radarLost,
+                    Number(cloudState.radarLostCount) || 0
+                  ),
+                },
+              };
+            });
+
+            if (firstHydrate && cloudState.preferences) {
+              setPreferences((prev) => ({
+                ...prev,
+                ...(cloudState.preferences as Partial<DriverPreferences>),
+              }));
+            }
+            setSyncStatus('synced');
+            setLastCloudSyncAt(Date.now());
+          },
+          onTrips: (cloudTrips) => {
+            if (!active || cloudTrips.length === 0) return;
+            setLedger((prev) => {
+              const byId = new Map(prev.completedTrips.map((t) => [t.id, t]));
+              for (const ct of cloudTrips) {
+                if (!byId.has(ct.id)) {
+                  byId.set(ct.id, ct);
+                }
+              }
+              return {
+                ...prev,
+                completedTrips: Array.from(byId.values()).slice(0, 100),
+              };
+            });
+          },
+          onActivity: (cloudEntries) => {
+            if (!active || cloudEntries.length === 0) return;
+            setLedger((prev) => {
+              const byId = new Map(prev.tripStats.history.map((e) => [e.id, e]));
+              for (const ce of cloudEntries) {
+                if (!byId.has(ce.id)) {
+                  byId.set(ce.id, ce);
+                }
+              }
+              return {
+                ...prev,
+                tripStats: {
+                  ...prev.tripStats,
+                  history: Array.from(byId.values()).slice(0, 80),
+                },
+              };
+            });
+          },
+          onReserves: (cloudReserves) => {
+            if (!active || cloudReserves.length === 0) return;
+            setScheduledReserves((prev) => {
+              const byId = new Map(prev.map((r) => [r.id, r]));
+              for (const cr of cloudReserves) {
+                if (!byId.has(cr.id)) {
+                  byId.set(cr.id, cr);
+                }
+              }
+              return Array.from(byId.values()).sort(
+                (a, b) => a.scheduledAtMs - b.scheduledAtMs
+              );
+            });
+          },
+          onError: () => {
+            if (active) setSyncStatus('error');
+          },
+        });
+
+        window.setTimeout(() => {
+          if (!active || sawCloudState) return;
+          cloudStateInitializedRef.current = uid;
+          void runCloudSync(() =>
+            syncDriverLedgerState(uid, ledgerRef.current, preferencesRef.current)
+          );
+        }, 1200);
+      } catch {
+        if (active) setSyncStatus('error');
+      }
+    })();
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [authReady, googleUser, runCloudSync, setSyncStatus, setLastCloudSyncAt]);
+
+  // Debounced sync of ledger + metrics + preferences to Firestore
+  useEffect(() => {
+    if (!googleUser?.emailVerified || cloudStateInitializedRef.current !== googleUser.uid) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void runCloudSync(async () => {
+        await syncDriverLedgerState(googleUser.uid, ledger, preferences);
+        await syncDriverPreferencesState(googleUser.uid, preferences);
+        if (activeAccount) {
+          await syncUserProfileMetrics(googleUser.uid, activeAccount);
+        }
+      });
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [ledger, preferences, activeAccount, googleUser?.emailVerified, googleUser?.uid, runCloudSync]);
+
   const checkMidnightRollover = useCallback(() => {
     const currentKey = getLocalDateKey();
     setTodayDateKey((prev) => (prev !== currentKey ? currentKey : prev));
@@ -650,9 +952,58 @@ export default function App() {
     };
   }, [checkMidnightRollover]);
 
-  // Track UK 12-hour driving time limit while online
+  // Cleanup delayed post-trip tip timers on unmount
   useEffect(() => {
-    if (onlineStatus !== 'online' || !activeAccount?.id) return;
+    return () => {
+      delayedTipTimersRef.current.forEach((t) => window.clearTimeout(t));
+      delayedTipTimersRef.current = [];
+    };
+  }, []);
+
+  // Automatically recalculate Uber Pro tier (Gold / Platinum / Diamond) from Pro Points & Rates
+  useEffect(() => {
+    if (!activeAccount?.id) return;
+    const computedTier = computeUberProTier(
+      ledger.proPoints,
+      activeAccount.acceptanceRate,
+      activeAccount.cancellationRate
+    );
+    if (computedTier !== activeAccount.tier || ledger.proPoints !== activeAccount.proPoints) {
+      setAccounts((prev) =>
+        prev.map((acct) =>
+          acct.id === activeAccount.id
+            ? { ...acct, tier: computedTier, proPoints: ledger.proPoints }
+            : acct
+        )
+      );
+    }
+  }, [
+    activeAccount?.id,
+    activeAccount?.tier,
+    activeAccount?.proPoints,
+    activeAccount?.acceptanceRate,
+    activeAccount?.cancellationRate,
+    ledger.proPoints,
+  ]);
+
+  // Coffee Break countdown timer while online
+  useEffect(() => {
+    if (onlineStatus !== 'online' || !isOnBreak) return;
+    const timer = window.setInterval(() => {
+      setBreakSecondsLeft((prev) => {
+        if (prev <= 1) {
+          setIsOnBreak(false);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [onlineStatus, isOnBreak]);
+
+  // Track UK 12-hour driving time limit & online hours while online & not paused on break
+  useEffect(() => {
+    if (onlineStatus !== 'online' || isOnBreak || !activeAccount?.id) return;
     const id = setInterval(() => {
       setAccounts((prev) =>
         prev.map((acct) =>
@@ -664,9 +1015,13 @@ export default function App() {
             : acct
         )
       );
+      setLedger((prev) => ({
+        ...prev,
+        onlineMinutesTotal: (prev.onlineMinutesTotal ?? 60) + 1,
+      }));
     }, 60000);
     return () => clearInterval(id);
-  }, [onlineStatus, activeAccount?.id]);
+  }, [onlineStatus, isOnBreak, activeAccount?.id]);
 
   const {
     lastRefreshedAt,
@@ -905,7 +1260,9 @@ export default function App() {
           getActiveGpsLatLng(),
           preferences.intercity,
           offerIndex,
-          servicePrefs
+          servicePrefs,
+          preferences.areaPreference,
+          Boolean(activeAccount?.isEV)
         );
         const upcoming = activePool[0];
         if (upcoming) {
@@ -958,6 +1315,11 @@ export default function App() {
         forceType: 'radar',
         includeIntercity: preferences.intercity,
         servicePrefs,
+        surgeLockedBonus: lockedSurgeBonus,
+        boostBonus: activeBoostBonus,
+        ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
+        areaPreference: preferences.areaPreference,
+        isEV: Boolean(activeAccount?.isEV),
       });
       const second = generateLocalTripOffer({
         anchorCoords: driverPosRef.current,
@@ -966,10 +1328,25 @@ export default function App() {
         forceType: 'radar',
         includeIntercity: preferences.intercity,
         servicePrefs,
+        surgeLockedBonus: lockedSurgeBonus,
+        boostBonus: activeBoostBonus,
+        ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
+        areaPreference: preferences.areaPreference,
+        isEV: Boolean(activeAccount?.isEV),
       });
       setRadarOffers([first, second]);
     },
-    [getActiveGpsLatLng, preferences.intercity, servicePrefs]
+    [
+      getActiveGpsLatLng,
+      preferences.intercity,
+      preferences.areaPreference,
+      activeAccount?.isEV,
+      servicePrefs,
+      lockedSurgeBonus,
+      activeBoostBonus,
+      ledger.ccPaidDateKey,
+      todayDateKey,
+    ]
   );
 
   useEffect(() => {
@@ -995,14 +1372,21 @@ export default function App() {
     return () => clearInterval(tick);
   }, [onlineStatus, radarOffers.length, rotateRadarOffers]);
 
-  // Job request timer when online & idle (starts hidden, triggers local job card around driver GPS)
+  // Job request timer when online, idle, and not on Coffee Break
   useEffect(() => {
-    if (onlineStatus !== 'online' || tripStage !== 'idle' || pendingOffer || showRadarList) {
+    if (
+      onlineStatus !== 'online' ||
+      isOnBreak ||
+      tripStage !== 'idle' ||
+      pendingOffer ||
+      showRadarList
+    ) {
       setNextOfferSecLeft(null);
       return;
     }
 
-    const randomDelaySec = Math.floor(Math.random() * 25) + 8;
+    const span = Math.max(1, demandContext.dispatchMaxSec - demandContext.dispatchMinSec + 1);
+    const randomDelaySec = demandContext.dispatchMinSec + Math.floor(Math.random() * span);
     setNextOfferSecLeft(randomDelaySec);
 
     const countdownInterval = setInterval(() => {
@@ -1016,11 +1400,19 @@ export default function App() {
             seedIndex: offerIndex,
             includeIntercity: preferences.intercity,
             servicePrefs,
+            surgeLockedBonus: lockedSurgeBonus,
+            boostBonus: activeBoostBonus,
+            ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
+            airportQueueCode: airportQueue?.position === 1 ? airportQueue.code : undefined,
+            areaPreference: preferences.areaPreference,
+            isEV: Boolean(activeAccount?.isEV),
           });
           setOfferIndex((i) => i + 1);
           if (preferences.autoAccept && next.type === 'exclusive') {
             recordOfferDecision(next, 'accepted');
             uberSounds.play('accept');
+            setLockedSurgeBonus(0);
+            setLockedSurgeLabel(null);
             setPendingOffer(null);
             setActiveTrip(next);
             setStopVisited(false);
@@ -1058,19 +1450,266 @@ export default function App() {
     return () => clearInterval(countdownInterval);
   }, [
     onlineStatus,
+    isOnBreak,
     tripStage,
     pendingOffer,
     showRadarList,
     offerIndex,
     preferences.intercity,
     preferences.autoAccept,
+    preferences.areaPreference,
+    activeAccount?.isEV,
     servicePrefs,
+    demandContext.dispatchMinSec,
+    demandContext.dispatchMaxSec,
+    lockedSurgeBonus,
+    activeBoostBonus,
+    ledger.ccPaidDateKey,
+    todayDateKey,
+    airportQueue?.position,
+    airportQueue?.code,
     pushDriverAlert,
     getActiveGpsLatLng,
     showToast,
     recordOfferReceived,
     recordOfferDecision,
   ]);
+
+  // Sticky Surge Lock when driver enters a surge zone while online & idle
+  useEffect(() => {
+    if (onlineStatus !== 'online' || tripStage !== 'idle') return;
+    const hit = getStickySurgeAtCoords(driverPos, INITIAL_SURGE_ZONES);
+    if (hit && hit.bonusAmount > lockedSurgeBonus) {
+      setLockedSurgeBonus(hit.bonusAmount);
+      setLockedSurgeLabel(hit.zoneLabel);
+      showToast(`Sticky Surge Locked: +£${hit.bonusAmount.toFixed(2)} guaranteed on next trip`);
+    }
+  }, [driverPos, onlineStatus, tripStage, lockedSurgeBonus, showToast]);
+
+  // Live Airport FIFO Waiting Queue progression near UK airport bays
+  useEffect(() => {
+    if (onlineStatus !== 'online') {
+      setAirportQueue(null);
+      return;
+    }
+    if (tripStage !== 'idle') return;
+    const nearbyAp = getNearbyAirportQueuePin(driverPos);
+    if (!nearbyAp) {
+      setAirportQueue(null);
+      return;
+    }
+    setAirportQueue((prev) => {
+      if (prev && prev.code === nearbyAp.code) return prev;
+      return {
+        code: nearbyAp.code,
+        name: nearbyAp.name,
+        position: Math.floor(Math.random() * 6) + 5,
+      };
+    });
+  }, [driverPos, onlineStatus, tripStage]);
+
+  useEffect(() => {
+    if (onlineStatus !== 'online' || tripStage !== 'idle' || !airportQueue || airportQueue.position <= 1) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setAirportQueue((prev) => {
+        if (!prev || prev.position <= 1) return prev;
+        const nextPos = prev.position - 1;
+        if (nextPos === 1) {
+          showToast(`${prev.code} Airport Queue #1 — Next terminal pickup ready!`);
+        }
+        return { ...prev, position: nextPos };
+      });
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [onlineStatus, tripStage, airportQueue?.code, airportQueue?.position, showToast]);
+
+  // Dynamic Traffic Delays & Live Rerouting during enroute phase
+  useEffect(() => {
+    if (tripStage !== 'enroute' || !activeTrip) {
+      setTrafficAlert(null);
+      return;
+    }
+    const tripId = activeTrip.id;
+    const shouldTrigger = activeTrip.tripMinutes >= 5 && Math.random() < 0.4;
+    if (!shouldTrigger) return;
+
+    const timer = window.setTimeout(() => {
+      if (tripStageRef.current !== 'enroute') return;
+      const delayMin = 4 + Math.floor(Math.random() * 5);
+      const routeSavedMin = 3 + Math.floor(Math.random() * 4);
+      setTrafficAlert({ delayMin, routeSavedMin });
+      showToast(`Traffic delay ahead (+${delayMin} min) on ${tripId.slice(-4)} — reroute ready`);
+    }, 8000);
+
+    return () => window.clearTimeout(timer);
+  }, [tripStage, activeTrip?.id, activeTrip?.tripMinutes, showToast]);
+
+  // Mid-Trip Rider Change (added Stop 1 or extended dropoff) during enroute
+  useEffect(() => {
+    if (
+      tripStage !== 'enroute' ||
+      !activeTrip ||
+      activeTrip.stopCoords ||
+      activeTrip.isIntercity ||
+      activeTrip.serviceName === 'Uber Eats'
+    ) {
+      setRiderChangeOffer(null);
+      return;
+    }
+    if (Math.random() >= 0.28) return;
+
+    const timer = window.setTimeout(() => {
+      if (tripStageRef.current !== 'enroute' || !activeTrip) return;
+      const isStop = Math.random() < 0.5;
+      const dx = (Math.random() > 0.5 ? 1 : -1) * (10 + Math.random() * 14);
+      const dy = (Math.random() > 0.5 ? 1 : -1) * (10 + Math.random() * 14);
+      const nextCoords = clampMapCoords({
+        x: activeTrip.dropoffCoords.x + dx,
+        y: activeTrip.dropoffCoords.y + dy,
+      });
+      const extraMiles = Number((1.1 + Math.random() * 1.4).toFixed(1));
+      const extraMin = 4 + Math.floor(Math.random() * 4);
+      const extraFare = Number((extraMiles * 2.35 + extraMin * 0.25).toFixed(2));
+      const cityShort = getResolvedLocalCityName(nextCoords);
+
+      setRiderChangeOffer({
+        kind: isStop ? 'stop' : 'dropoff',
+        title: isStop ? 'Add quick stop (Tesco Express)' : `Extend dropoff to ${cityShort} High St`,
+        subtitle: isStop
+          ? `${activeTrip.riderName} requested a 2-min drop-in stop`
+          : `${activeTrip.riderName} updated destination +${extraMiles} mi further`,
+        extraFare,
+        extraMiles,
+        extraMin,
+        nextCoords,
+        nextAddress: isStop ? `Tesco Express, ${cityShort}` : `${cityShort} High St & Rail`,
+      });
+    }, 12000);
+
+    return () => window.clearTimeout(timer);
+  }, [tripStage, activeTrip?.id, activeTrip?.stopCoords, activeTrip?.isIntercity, activeTrip?.serviceName]);
+
+  // Stacked / Double Uber Eats Batch Offer while collecting food at pickup/waiting
+  useEffect(() => {
+    if (
+      !activeTrip ||
+      activeTrip.serviceName !== 'Uber Eats' ||
+      activeTrip.stopCoords ||
+      (tripStage !== 'pickup' && tripStage !== 'waiting')
+    ) {
+      setStackedEatsOffer(null);
+      return;
+    }
+    if (Math.random() >= 0.72) return;
+
+    const timer = window.setTimeout(() => {
+      if (tripStageRef.current !== 'pickup' && tripStageRef.current !== 'waiting') return;
+      const dx = (Math.random() > 0.5 ? 1 : -1) * (6 + Math.random() * 10);
+      const dy = (Math.random() > 0.5 ? 1 : -1) * (6 + Math.random() * 10);
+      const stopCoords = clampMapCoords({
+        x: (activeTrip.pickupCoords.x + activeTrip.dropoffCoords.x) / 2 + dx,
+        y: (activeTrip.pickupCoords.y + activeTrip.dropoffCoords.y) / 2 + dy,
+      });
+      const cityShort = getResolvedLocalCityName(stopCoords);
+      const batchRestaurants = ['Pret A Manger', 'Wagamama', "Nando's", 'Five Guys', 'Greggs'];
+      const restaurantName = batchRestaurants[Math.floor(Math.random() * batchRestaurants.length)];
+      const orderCode = `#UE-${Math.floor(1000 + Math.random() * 8999).toString(16).toUpperCase()}`;
+      const extraMiles = Number((0.9 + Math.random() * 1.1).toFixed(1));
+      const extraMin = 4 + Math.floor(Math.random() * 4);
+      const extraFare = Number((3.6 + extraMiles * 1.35).toFixed(2));
+
+      setStackedEatsOffer({
+        restaurantName,
+        orderCode,
+        extraFare,
+        extraMiles,
+        extraMin,
+        stopCoords,
+        stopAddress: `${restaurantName} · ${cityShort} High St`,
+      });
+      uberSounds.play('dispatch');
+    }, 5500);
+
+    return () => window.clearTimeout(timer);
+  }, [tripStage, activeTrip?.id, activeTrip?.serviceName, activeTrip?.stopCoords]);
+
+  // Mid-Approach Rider Cancellation (~1 in 12 pickups cancels en route to pickup, +£4.50 fee)
+  useEffect(() => {
+    if (
+      tripStage !== 'pickup' ||
+      !activeTrip ||
+      activeTrip.id.startsWith('active-res-') ||
+      activeTrip.serviceName === 'Uber Eats'
+    ) {
+      return;
+    }
+    if (Math.random() >= 1 / 12) return;
+
+    const delayMs = 7500 + Math.floor(Math.random() * 3500);
+    const timer = window.setTimeout(() => {
+      if (tripStageRef.current !== 'pickup' || !activeTrip) return;
+      const fee = 4.5;
+      const currentKey = getLocalDateKey();
+      setTodayDateKey(currentKey);
+      const timeLabel = new Date().toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      const cancelFeeRecord: CompletedTrip = {
+        id: `rcancel-${Date.now()}`,
+        riderName: activeTrip.riderName,
+        serviceName: activeTrip.serviceName,
+        fare: fee,
+        tip: 0,
+        waitFee: 0,
+        netPayout: fee,
+        cancellationFee: true,
+        distanceMiles: 0,
+        durationMin: 3,
+        pickupArea: activeTrip.pickupArea.split(',')[0],
+        dropoffArea: 'Rider Cancelled (Pickup Fee)',
+        completedAt: `Today, ${timeLabel}`,
+        dateKey: currentKey,
+        isNoShowFee: false,
+      };
+
+      setLedger((prev) => ({
+        ...prev,
+        dailyTotals: {
+          ...prev.dailyTotals,
+          [currentKey]: Number(((prev.dailyTotals[currentKey] ?? 0) + fee).toFixed(2)),
+        },
+        walletBalance: Number((prev.walletBalance + fee).toFixed(2)),
+        completedTrips: [cancelFeeRecord, ...prev.completedTrips],
+      }));
+
+      if (googleUser?.emailVerified) {
+        void runCloudSync(() => syncCompletedTrip(googleUser.uid, cancelFeeRecord));
+      }
+
+      uberSounds.play('decline');
+      setActiveTrip(null);
+      setActiveRoute(null);
+      setTripWaitFee(0);
+      setStopVisited(false);
+      setQueuedOffer(null);
+      setAcceptedNextOffer(null);
+      setTrafficAlert(null);
+      setRiderChangeOffer(null);
+      setTripStage('idle');
+      pushDriverAlert(
+        `Rider cancelled pickup · +£${fee.toFixed(2)} fee`,
+        '0% driver cancel impact · Fee added to Today’s Earnings',
+        cancelFeeRecord.id,
+        () => setActiveTab('earnings')
+      );
+    }, delayMs);
+
+    return () => window.clearTimeout(timer);
+  }, [tripStage, activeTrip?.id, googleUser?.emailVerified, googleUser?.uid, pushDriverAlert, runCloudSync]);
 
   // Compute road-snapped UK turn-by-turn route (OSRM with instant fallback)
   const driverPosRef = useRef<Coordinates>(driverPos);
@@ -1481,6 +2120,10 @@ export default function App() {
       seedIndex: offerIndex + 1,
       includeIntercity: preferences.intercity,
       servicePrefs,
+      boostBonus: activeBoostBonus,
+      ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
+      areaPreference: preferences.areaPreference,
+      isEV: Boolean(activeAccount?.isEV),
     });
     recordOfferReceived(candidate);
     setQueuedOffer(candidate);
@@ -1493,10 +2136,15 @@ export default function App() {
     acceptedNextOffer,
     preferences.stopNewRequests,
     preferences.intercity,
+    preferences.areaPreference,
+    activeAccount?.isEV,
     servicePrefs,
     stopVisited,
     offerIndex,
     recordOfferReceived,
+    activeBoostBonus,
+    ledger.ccPaidDateKey,
+    todayDateKey,
   ]);
 
   // Speed & Bus-Lane Camera proximity warning during active UK navigation
@@ -1570,6 +2218,31 @@ export default function App() {
   const handleToggleOnline = () => {
     uberSounds.unlock();
     if (onlineStatus === 'offline') {
+      const expiredDoc = activeAccount?.complianceDocs?.find((d) => d.status === 'expired');
+      if (expiredDoc) {
+        uberSounds.play('decline');
+        showToast(`Renew expired ${expiredDoc.title} in Menu → Vehicles & Documents`);
+        setActiveTab('menu');
+        return;
+      }
+      const isAtDrivingCap =
+        (activeAccount?.drivingMinutesUsedToday ?? 0) >= 12 * 60 ||
+        ((activeAccount?.restLockedUntil ?? 0) > Date.now());
+      if (isAtDrivingCap) {
+        uberSounds.play('decline');
+        if (activeAccount?.id && !activeAccount.restLockedUntil) {
+          setAccounts((prev) =>
+            prev.map((acct) =>
+              acct.id === activeAccount.id
+                ? { ...acct, restLockedUntil: Date.now() + 6 * 60 * 60 * 1000 }
+                : acct
+            )
+          );
+        }
+        showToast('12h UK driving cap reached · Complete 6h Rest in Menu to drive');
+        setActiveTab('menu');
+        return;
+      }
       if (!isFaceVerifiedRecently(activeAccount)) {
         setPendingGoOnlineAfterVerify(true);
         setShowFaceVerifyModal(true);
@@ -1582,6 +2255,9 @@ export default function App() {
       setOnlineStatus('offline');
       setOnlineStartedAt(null);
       setOnlineElapsedSec(0);
+      setIsOnBreak(false);
+      setBreakSecondsLeft(0);
+      setStreakCount(0);
       setPendingOffer(null);
       setShowRadarList(false);
       setRadarMatchingId(null);
@@ -1596,6 +2272,20 @@ export default function App() {
     }
   };
 
+  const handleToggleBreak = useCallback(() => {
+    if (onlineStatus !== 'online') return;
+    if (isOnBreak) {
+      setIsOnBreak(false);
+      setBreakSecondsLeft(0);
+      showToast('Break ended — finding UK trips again');
+    } else {
+      setIsOnBreak(true);
+      setBreakSecondsLeft(20 * 60);
+      setPendingOffer(null);
+      showToast('Coffee Break active (20:00) · Online timer & Airport FIFO preserved');
+    }
+  }, [onlineStatus, isOnBreak, showToast]);
+
   const handleAcceptOffer = useCallback(
     (offer: TripOffer) => {
       recordOfferDecision(
@@ -1605,6 +2295,8 @@ export default function App() {
       );
       uberSounds.unlock();
       uberSounds.play('accept');
+      setLockedSurgeBonus(0);
+      setLockedSurgeLabel(null);
       setPendingOffer(null);
       setShowRadarList(false);
       setRadarMatchingId(null);
@@ -1650,6 +2342,10 @@ export default function App() {
       forceIntercity: true,
       includeIntercity: true,
       servicePrefs,
+      surgeLockedBonus: lockedSurgeBonus,
+      boostBonus: activeBoostBonus,
+      ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
+      isEV: Boolean(activeAccount?.isEV),
     });
     setIntercityIdx((i) => i + 1);
     if (onlineStatus === 'offline') {
@@ -1671,6 +2367,11 @@ export default function App() {
     onlineStatus,
     preferences.intercity,
     servicePrefs,
+    lockedSurgeBonus,
+    activeBoostBonus,
+    ledger.ccPaidDateKey,
+    todayDateKey,
+    activeAccount?.isEV,
     showToast,
     getActiveGpsLatLng,
     recordOfferReceived,
@@ -1683,8 +2384,131 @@ export default function App() {
         acct.id === activeAccount.id ? { ...acct, batteryPct: 100 } : acct
       )
     );
-    showToast('EV battery rapid-charged to 100% (~250 mi range)');
-  }, [activeAccount?.id, showToast]);
+    showToast(
+      activeAccount.isEV
+        ? 'EV battery rapid-charged to 100% (~250 mi range)'
+        : 'Fuel tank refuelled to 100% (~420 mi range)'
+    );
+  }, [activeAccount?.id, activeAccount?.isEV, showToast]);
+
+  const handleSelectCharge = useCallback(
+    (payload: {
+      label: string;
+      category: 'charging' | 'fuel';
+      amount: number;
+      kwhOrLitres: number;
+    }) => {
+      if (!activeAccount?.id) return;
+      const currentKey = getLocalDateKey();
+      const timeLabel = new Date().toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const entry: ExpenseEntry = {
+        id: `exp-${Date.now()}`,
+        label: payload.label,
+        category: payload.category,
+        amount: payload.amount,
+        kwhOrLitres: payload.kwhOrLitres,
+        dateKey: currentKey,
+        timestamp: timeLabel,
+      };
+      setAccounts((prev) =>
+        prev.map((acct) =>
+          acct.id === activeAccount.id ? { ...acct, batteryPct: 100 } : acct
+        )
+      );
+      setLedger((prev) => ({
+        ...prev,
+        expenses: [entry, ...(prev.expenses ?? [])].slice(0, 60),
+      }));
+      showToast(
+        `${payload.category === 'fuel' ? 'Refuelled' : 'Charged'} to 100% · −£${payload.amount.toFixed(2)} expense logged`
+      );
+    },
+    [activeAccount?.id, showToast]
+  );
+
+  const handleTakeFasterRoute = useCallback(() => {
+    if (!activeTrip || !trafficAlert) return;
+    const saved = trafficAlert.routeSavedMin;
+    setActiveTrip((prev) =>
+      prev
+        ? {
+            ...prev,
+            tripMinutes: Math.max(2, prev.tripMinutes - saved),
+            trafficDelayMin: undefined,
+          }
+        : null
+    );
+    setTrafficAlert(null);
+    uberSounds.play('accept');
+    showToast(`Rerouted around congestion · Saved ${saved} min`);
+  }, [activeTrip, trafficAlert, showToast]);
+
+  const handleAcceptRiderChange = useCallback(() => {
+    if (!activeTrip || !riderChangeOffer) return;
+    uberSounds.play('accept');
+    setActiveTrip((prev) => {
+      if (!prev) return null;
+      const nextFare = Number((prev.fare + riderChangeOffer.extraFare).toFixed(2));
+      const nextMiles = Number((prev.tripMiles + riderChangeOffer.extraMiles).toFixed(1));
+      const nextMin = prev.tripMinutes + riderChangeOffer.extraMin;
+      if (riderChangeOffer.kind === 'stop') {
+        return {
+          ...prev,
+          fare: nextFare,
+          tripMiles: nextMiles,
+          tripMinutes: nextMin,
+          stopAddress: riderChangeOffer.nextAddress,
+          stopCoords: riderChangeOffer.nextCoords,
+        };
+      }
+      return {
+        ...prev,
+        fare: nextFare,
+        tripMiles: nextMiles,
+        tripMinutes: nextMin,
+        dropoffAddress: riderChangeOffer.nextAddress,
+        dropoffCoords: riderChangeOffer.nextCoords,
+      };
+    });
+    showToast(
+      `Rider update accepted · +£${riderChangeOffer.extraFare.toFixed(2)} added`
+    );
+    setRiderChangeOffer(null);
+  }, [activeTrip, riderChangeOffer, showToast]);
+
+  const handleDeclineRiderChange = useCallback(() => {
+    uberSounds.play('decline');
+    setRiderChangeOffer(null);
+    showToast('Kept original destination route');
+  }, [showToast]);
+
+  const handleAcceptStackedEats = useCallback(() => {
+    if (!activeTrip || !stackedEatsOffer) return;
+    uberSounds.play('accept');
+    setActiveTrip((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        fare: Number((prev.fare + stackedEatsOffer.extraFare).toFixed(2)),
+        tripMiles: Number((prev.tripMiles + stackedEatsOffer.extraMiles).toFixed(1)),
+        tripMinutes: prev.tripMinutes + stackedEatsOffer.extraMin,
+        stopAddress: stackedEatsOffer.stopAddress,
+        stopCoords: stackedEatsOffer.stopCoords,
+        eatsOrderCode: `${prev.eatsOrderCode || '#UE-MAIN'} + ${stackedEatsOffer.orderCode}`,
+      };
+    });
+    showToast(`Stacked ${stackedEatsOffer.restaurantName} · +£${stackedEatsOffer.extraFare.toFixed(2)}`);
+    setStackedEatsOffer(null);
+  }, [activeTrip, stackedEatsOffer, showToast]);
+
+  const handleDeclineStackedEats = useCallback(() => {
+    uberSounds.play('decline');
+    setStackedEatsOffer(null);
+    showToast('Kept single Uber Eats order');
+  }, [showToast]);
 
   const handleMoveToRadarMatch = useCallback(
     (offer: TripOffer) => {
@@ -1712,6 +2536,11 @@ export default function App() {
         seedIndex: offerIndex + 1,
         includeIntercity: preferences.intercity,
         servicePrefs,
+        surgeLockedBonus: lockedSurgeBonus,
+        boostBonus: activeBoostBonus,
+        ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
+        areaPreference: preferences.areaPreference,
+        isEV: Boolean(activeAccount?.isEV),
       });
       setOfferIndex((i) => i + 1);
       showToast('Another driver matched — loading next available job...');
@@ -1725,8 +2554,14 @@ export default function App() {
     [
       onlineStatus,
       preferences.intercity,
+      preferences.areaPreference,
+      activeAccount?.isEV,
       servicePrefs,
       offerIndex,
+      lockedSurgeBonus,
+      activeBoostBonus,
+      ledger.ccPaidDateKey,
+      todayDateKey,
       showToast,
       getActiveGpsLatLng,
       recordOfferDecision,
@@ -1741,6 +2576,7 @@ export default function App() {
       setPendingOffer(null);
       setRadarMatchingId(null);
       if (offer.type === 'exclusive' && activeAccount?.id) {
+        setStreakCount(0);
         setAccounts((prev) =>
           prev.map((acct) =>
             acct.id === activeAccount.id
@@ -1748,37 +2584,49 @@ export default function App() {
               : acct
           )
         );
-        showToast('Exclusive declined · Acceptance rate updated');
+        showToast(
+          streakCount > 0
+            ? 'Exclusive declined · Streak reset & acceptance updated'
+            : 'Exclusive declined · Acceptance rate updated'
+        );
       } else {
         showToast('Request declined');
       }
     },
-    [activeAccount?.id, showToast, recordOfferDecision]
+    [activeAccount?.id, showToast, recordOfferDecision, streakCount]
   );
 
   const handleAcceptReserve = useCallback(
     (trip: ReserveTrip) => {
       uberSounds.unlock();
       uberSounds.play('accept');
+      const scheduledTrip: ReserveTrip = { ...trip, status: 'scheduled' };
       setAcceptedReserveIds((prev) => [...prev, trip.id]);
       setScheduledReserves((prev) => {
         if (prev.some((r) => r.id === trip.id)) return prev;
-        return [{ ...trip, status: 'scheduled' as const }, ...prev].sort(
+        return [scheduledTrip, ...prev].sort(
           (a, b) => a.scheduledAtMs - b.scheduledAtMs
         );
       });
+      if (googleUser?.emailVerified) {
+        void runCloudSync(() => syncReserveBooking(googleUser.uid, scheduledTrip));
+      }
       showToast(`Reserve confirmed · ${trip.dayLabel}, ${trip.timeLabel}`);
     },
-    [showToast]
+    [googleUser?.emailVerified, googleUser?.uid, runCloudSync, showToast]
   );
 
   const handleCancelReserve = useCallback(
     (tripId: string) => {
       uberSounds.play('decline');
+      const target = scheduledReserves.find((r) => r.id === tripId);
       setScheduledReserves((prev) => prev.filter((r) => r.id !== tripId));
+      if (target && googleUser?.emailVerified) {
+        void runCloudSync(() => syncReserveBooking(googleUser.uid, target, 'cancelled'));
+      }
       showToast('Reserve trip cancelled');
     },
-    [showToast]
+    [scheduledReserves, googleUser?.emailVerified, googleUser?.uid, runCloudSync, showToast]
   );
 
   const handleRefreshReserves = useCallback(() => {
@@ -1800,6 +2648,9 @@ export default function App() {
         void setNativeImmersiveNavHidden(true);
       }
       setScheduledReserves((prev) => prev.filter((r) => r.id !== trip.id));
+      if (googleUser?.emailVerified) {
+        void runCloudSync(() => syncReserveBooking(googleUser.uid, trip, 'completed'));
+      }
       const convertedOffer: TripOffer = {
         id: `active-${trip.id}`,
         type: 'exclusive',
@@ -1819,6 +2670,7 @@ export default function App() {
         pickupCoords: trip.pickupCoords,
         dropoffCoords: trip.dropoffCoords,
         surgeBonus: trip.reserveFee,
+        boostBonus: activeBoostBonus,
         pinCode: trip.pinCode,
         surchargeLabel: 'Uber Reserve Fee',
         surchargeAmount: trip.reserveFee,
@@ -1828,7 +2680,17 @@ export default function App() {
       handleAcceptOffer(convertedOffer);
       showToast(`Starting Uber Reserve pickup · ${trip.pickupAddress}`);
     },
-    [onlineStatus, activeAccount?.name, preferences.floatingDotAlertMode, handleAcceptOffer, showToast]
+    [
+      onlineStatus,
+      activeAccount?.name,
+      preferences.floatingDotAlertMode,
+      activeBoostBonus,
+      googleUser?.emailVerified,
+      googleUser?.uid,
+      runCloudSync,
+      handleAcceptOffer,
+      showToast,
+    ]
   );
 
   nativeActionHandlersRef.current = {
@@ -1920,9 +2782,12 @@ export default function App() {
     uberSounds.play('completeTrip');
     const currentKey = getLocalDateKey();
     setTodayDateKey(currentKey);
+    setTrafficAlert(null);
+    setRiderChangeOffer(null);
 
     const tipAmt = activeTrip.riderName === 'Joséfina' ? 2.5 : activeTrip.isIntercity ? 5.0 : 0;
     const surcharge = activeTrip.surchargeAmount ?? 0;
+    const boostBonus = activeTrip.boostBonus ?? 0;
     const waitFee = tripWaitFee;
     const uberFee = Number((Math.max(0, activeTrip.fare - surcharge) * 0.25).toFixed(2));
     const totalGross = Number((activeTrip.fare + waitFee + tipAmt).toFixed(2));
@@ -1944,6 +2809,8 @@ export default function App() {
       surchargeLabel: activeTrip.surchargeLabel,
       uberFee,
       netPayout,
+      boostBonus: boostBonus > 0 ? boostBonus : undefined,
+      tollOrZoneFee: surcharge > 0 ? surcharge : undefined,
       distanceMiles: activeTrip.tripMiles,
       durationMin: activeTrip.tripMinutes,
       pickupArea: activeTrip.pickupArea.split(',')[0],
@@ -1951,32 +2818,124 @@ export default function App() {
       completedAt: `Today, ${timeLabel}`,
       dateKey: currentKey,
       isIntercity: activeTrip.isIntercity,
+      peakPeriod: demandContext.isPeakBoostHours || demandContext.demandLevel === 'Night Surge',
     };
 
-    setLedger((prev) => ({
-      ...prev,
-      dailyTotals: {
-        ...prev.dailyTotals,
-        [currentKey]: Number(
-          ((prev.dailyTotals[currentKey] ?? 0) + netPayout).toFixed(2)
-        ),
-      },
-      walletBalance: Number((prev.walletBalance + netPayout).toFixed(2)),
-      proPoints: prev.proPoints + (activeTrip.isIntercity ? 30 : 12),
-      questCompletedCount: prev.questCompletedCount + 1,
-      completedTrips: [newRecord, ...prev.completedTrips],
-    }));
+    const questEnrolled = enrolledOppIds.includes('opp-1');
+    let questBonusAwarded = 0;
+    let streakBonusAwarded = 0;
+    if (onlineStatus === 'online') {
+      const nextStreak = streakCount + 1;
+      if (nextStreak >= 3) {
+        streakBonusAwarded = 12.0;
+        setStreakCount(0);
+      } else {
+        setStreakCount(nextStreak);
+      }
+    }
+    const holidayAdd = Number(((Math.max(0, netPayout - tipAmt)) * 0.1207).toFixed(2));
 
-    // Drain EV battery / fuel based on trip distance
+    setLedger((prev) => {
+      const nextQuestCount = prev.questCompletedCount + 1;
+      const nextCycle = Math.floor(nextQuestCount / 20);
+      const prevCycle = prev.questPaidCycleCount ?? 0;
+      const awarded = questEnrolled && nextQuestCount >= 20 && nextCycle > prevCycle ? 190.0 : 0;
+      questBonusAwarded = awarded;
+
+      const ccTriggered = Boolean(activeTrip.inLondonCC) && prev.ccPaidDateKey !== currentKey;
+      const zoneResult = detectUKZoneSurcharge(
+        activeTrip.pickupCoords,
+        activeTrip.dropoffCoords,
+        prev.ccPaidDateKey === currentKey,
+        Boolean(activeAccount?.isEV)
+      );
+      const addedExpenses: ExpenseEntry[] = [];
+      if (ccTriggered) {
+        addedExpenses.push({
+          id: `exp-cc-${Date.now()}`,
+          label: 'Central London Congestion Charge · Daily Pass',
+          category: 'congestion',
+          amount: 15.0,
+          dateKey: currentKey,
+          timestamp: timeLabel,
+        });
+      }
+      if (zoneResult.zoneExpenseAmount && zoneResult.zoneExpenseLabel && zoneResult.zoneExpenseCategory) {
+        addedExpenses.push({
+          id: `exp-zone-${Date.now() + 1}`,
+          label: zoneResult.zoneExpenseLabel,
+          category: zoneResult.zoneExpenseCategory,
+          amount: zoneResult.zoneExpenseAmount,
+          dateKey: currentKey,
+          timestamp: timeLabel,
+        });
+      }
+      const nextExpenses =
+        addedExpenses.length > 0
+          ? [...addedExpenses, ...(prev.expenses ?? [])].slice(0, 60)
+          : prev.expenses ?? [];
+
+      return {
+        ...prev,
+        dailyTotals: {
+          ...prev.dailyTotals,
+          [currentKey]: Number(
+            ((prev.dailyTotals[currentKey] ?? 0) + netPayout + awarded + streakBonusAwarded).toFixed(2)
+          ),
+        },
+        walletBalance: Number((prev.walletBalance + netPayout + awarded + streakBonusAwarded).toFixed(2)),
+        proPoints: prev.proPoints + (activeTrip.isIntercity ? 30 : 12),
+        questCompletedCount: nextQuestCount,
+        questPaidCycleCount: awarded > 0 ? nextCycle : prevCycle,
+        ccPaidDateKey: ccTriggered ? currentKey : prev.ccPaidDateKey,
+        holidayPayAccrued: Number(((prev.holidayPayAccrued ?? 0) + holidayAdd).toFixed(2)),
+        engagedMinutesTotal: (prev.engagedMinutesTotal ?? 42) + activeTrip.tripMinutes,
+        expenses: nextExpenses,
+        completedTrips: [newRecord, ...prev.completedTrips],
+      };
+    });
+
+    if (googleUser?.emailVerified) {
+      void runCloudSync(() => syncCompletedTrip(googleUser.uid, newRecord));
+    }
+
+    if (questBonusAwarded > 0) {
+      pushDriverAlert(
+        'Weekend Quest Completed! +£190.00',
+        '20/20 trips completed — bonus credited to wallet & today’s earnings',
+        `quest-${Date.now()}`,
+        () => setActiveTab('earnings')
+      );
+    }
+
+    if (streakBonusAwarded > 0) {
+      pushDriverAlert(
+        '3-Trip Streak Completed! +£12.00',
+        'Consecutive trip series bonus credited to wallet & today’s earnings',
+        `streak-${Date.now()}`,
+        () => setActiveTab('earnings')
+      );
+    }
+
+    // Drain EV battery / fuel based on trip distance + alert when <= 20%
     if (activeAccount?.id) {
       const drainPct = Math.max(1, Math.round(activeTrip.tripMiles / 2.5));
+      const nextPct = Math.max(5, (activeAccount.batteryPct ?? 84) - drainPct);
       setAccounts((prev) =>
         prev.map((acct) =>
-          acct.id === activeAccount.id
-            ? { ...acct, batteryPct: Math.max(5, (acct.batteryPct ?? 84) - drainPct) }
-            : acct
+          acct.id === activeAccount.id ? { ...acct, batteryPct: nextPct } : acct
         )
       );
+      if (nextPct <= 20) {
+        pushDriverAlert(
+          activeAccount.isEV ? `Low EV range (${nextPct}%)` : `Low fuel range (${nextPct}%)`,
+          activeAccount.isEV
+            ? 'Tap to locate nearby UK rapid chargers & hubs'
+            : 'Tap to locate nearby Shell, BP & Tesco Extra forecourts',
+          'low-battery',
+          () => setShowChargersModal(true)
+        );
+      }
     }
 
     pushDriverAlert(
@@ -1986,6 +2945,121 @@ export default function App() {
       () => setActiveTab('earnings')
     );
 
+    // Delayed Post-Trip Rider Tip (15-28s later)
+    if (tipAmt === 0 && Math.random() < 0.45) {
+      const delayedTip = Number((2.0 + Math.floor(Math.random() * 5) * 0.75).toFixed(2));
+      const delayedDelayMs = 15000 + Math.floor(Math.random() * 13000);
+      const riderLabel = activeTrip.riderName;
+      const targetTripId = newRecord.id;
+      const tipTimer = window.setTimeout(() => {
+        setLedger((prev) => ({
+          ...prev,
+          dailyTotals: {
+            ...prev.dailyTotals,
+            [currentKey]: Number(((prev.dailyTotals[currentKey] ?? 0) + delayedTip).toFixed(2)),
+          },
+          walletBalance: Number((prev.walletBalance + delayedTip).toFixed(2)),
+          completedTrips: prev.completedTrips.map((item) =>
+            item.id === targetTripId
+              ? {
+                  ...item,
+                  tip: Number((item.tip + delayedTip).toFixed(2)),
+                  netPayout: Number(((item.netPayout ?? netPayout) + delayedTip).toFixed(2)),
+                }
+              : item
+          ),
+        }));
+        uberSounds.play('completeTrip');
+        pushDriverAlert(
+          `${riderLabel} added a £${delayedTip.toFixed(2)} tip!`,
+          'Post-trip tip credited directly to your wallet & today’s earnings',
+          `tip-${targetTripId}`,
+          () => setActiveTab('earnings')
+        );
+      }, delayedDelayMs);
+      delayedTipTimersRef.current.push(tipTimer);
+    }
+
+    // Delayed 5★ Rider Compliment Badge (6-9s later, 55% chance)
+    if (Math.random() < 0.55) {
+      const badgePool = [
+        { key: 'spotlessCar' as const, label: 'Spotless Car' },
+        { key: 'expertNavigation' as const, label: 'Expert Navigation' },
+        { key: 'greatConversation' as const, label: 'Great Conversation' },
+        { key: 'aboveAndBeyond' as const, label: 'Above & Beyond' },
+      ];
+      const chosen = badgePool[Math.floor(Math.random() * badgePool.length)];
+      const riderLabel = activeTrip.riderName;
+      const compTimer = window.setTimeout(() => {
+        setLedger((prev) => {
+          const baseComp = prev.compliments ?? { ...DEFAULT_COMPLIMENTS };
+          return {
+            ...prev,
+            compliments: {
+              ...baseComp,
+              [chosen.key]: baseComp[chosen.key] + 1,
+            },
+          };
+        });
+        pushDriverAlert(
+          `${riderLabel} left 5★ · ${chosen.label}`,
+          'Added to your Uber Pro rider compliment badges',
+          `comp-${newRecord.id}`,
+          () => setActiveTab('menu')
+        );
+      }, 6500 + Math.floor(Math.random() * 2500));
+      delayedTipTimersRef.current.push(compTimer);
+    }
+
+    // Occasional Auto Lost Property Report (14% chance for non-Eats rides)
+    if (activeTrip.serviceName !== 'Uber Eats' && Math.random() < 0.14) {
+      const items = [
+        'iPhone 15 Pro Max',
+        'Black Leather Wallet',
+        'AirPods Pro Case',
+        'House Keys on Fob',
+      ];
+      const itemLabel = items[Math.floor(Math.random() * items.length)];
+      const riderLabel = activeTrip.riderName;
+      const lostTripId = newRecord.id;
+      const lostTimer = window.setTimeout(() => {
+        const lostThread: InboxThread = {
+          id: `thread-auto-lost-${lostTripId}`,
+          tab: 'support',
+          title: `Lost Item · ${itemLabel} (${riderLabel})`,
+          preview: 'Tap to confirm return for +£15.00 UK return fee',
+          timeAgo: 'Just now',
+          statusText: 'Action required',
+          unread: true,
+          iconType: 'chat',
+          lostItemReturn: {
+            tripId: lostTripId,
+            riderName: riderLabel,
+            itemLabel,
+            feeAmount: 15.0,
+            returned: false,
+          },
+          messages: [
+            {
+              id: `msg-auto-lost-${lostTripId}`,
+              sender: 'agent',
+              text: `${riderLabel} reported leaving their ${itemLabel} in your vehicle after your trip. Tap below once returned to receive the £15.00 UK Lost Property return fee.`,
+              timestamp: 'Just now',
+            },
+          ],
+        };
+        setInboxThreads((prev) => [lostThread, ...prev]);
+        pushDriverAlert(
+          `${riderLabel} left ${itemLabel} in vehicle`,
+          'Open Inbox to confirm return for +£15.00 UK return fee',
+          `lost-${lostTripId}`,
+          () => setActiveTab('inbox')
+        );
+      }, 19000 + Math.floor(Math.random() * 6000));
+      delayedTipTimersRef.current.push(lostTimer);
+    }
+
+    setStackedEatsOffer(null);
     setTripStage('completed');
   };
 
@@ -2011,6 +3085,13 @@ export default function App() {
         statusText: 'Action required',
         unread: true,
         iconType: 'chat',
+        lostItemReturn: {
+          tripId: activeTrip.id,
+          riderName: activeTrip.riderName,
+          itemLabel: 'Personal item left on rear seat',
+          feeAmount: 15.0,
+          returned: false,
+        },
         messages: [
           {
             id: `msg-lost-${Date.now()}`,
@@ -2095,12 +3176,18 @@ export default function App() {
       completedTrips: [noShowRecord, ...prev.completedTrips],
     }));
 
+    if (googleUser?.emailVerified) {
+      void runCloudSync(() => syncCompletedTrip(googleUser.uid, noShowRecord));
+    }
+
     setActiveTrip(null);
     setActiveRoute(null);
     setTripWaitFee(0);
     setStopVisited(false);
     setQueuedOffer(null);
     setAcceptedNextOffer(null);
+    setTrafficAlert(null);
+    setRiderChangeOffer(null);
     setTripStage('idle');
     showToast(`Rider no-show fee +£${fee.toFixed(2)} added (0% cancel impact)`);
   };
@@ -2122,6 +3209,8 @@ export default function App() {
     setStopVisited(false);
     setQueuedOffer(null);
     setAcceptedNextOffer(null);
+    setTrafficAlert(null);
+    setRiderChangeOffer(null);
     setTripStage('idle');
     showToast('Trip cancelled · Cancellation rate updated');
   };
@@ -2294,6 +3383,11 @@ export default function App() {
       lastFaceVerifiedAt: null,
       drivingMinutesUsedToday: 0,
       batteryPct: 100,
+      isEV:
+        payload.vehicle.toLowerCase().includes('ev') ||
+        payload.vehicle.toLowerCase().includes('tesla'),
+      complianceDocs: buildDefaultComplianceDocs(payload.phvBadge),
+      restLockedUntil: null,
     };
     const nextList = [newAcct, ...accounts];
     setAccounts(nextList);
@@ -2379,6 +3473,12 @@ export default function App() {
             ? rawLedger.questCompletedCount
             : 0,
         completedTrips: restoredTrips,
+        expenses: Array.isArray(rawLedger.expenses) ? rawLedger.expenses : [],
+        ccPaidDateKey: rawLedger.ccPaidDateKey ?? null,
+        questPaidCycleCount:
+          typeof rawLedger.questPaidCycleCount === 'number'
+            ? rawLedger.questPaidCycleCount
+            : 0,
         tripStats: rawLedger.tripStats
           ? {
               totalReceived:
@@ -2637,6 +3737,191 @@ export default function App() {
     );
   };
 
+  const handleFileTripClaim = useCallback(
+    (tripId: string, kind: 'valeting' | 'fare_review') => {
+      const trip = ledger.completedTrips.find((t) => t.id === tripId);
+      if (!trip || trip.claimFiled) return;
+      const amount = kind === 'valeting' ? 40.0 : 4.8;
+      const targetKey = trip.dateKey || todayDateKey;
+
+      setLedger((prev) => ({
+        ...prev,
+        dailyTotals: {
+          ...prev.dailyTotals,
+          [targetKey]: Number(((prev.dailyTotals[targetKey] ?? 0) + amount).toFixed(2)),
+        },
+        walletBalance: Number((prev.walletBalance + amount).toFixed(2)),
+        completedTrips: prev.completedTrips.map((item) =>
+          item.id === tripId
+            ? {
+                ...item,
+                claimFiled: kind,
+                claimAmount: amount,
+                netPayout: Number(((item.netPayout ?? item.fare) + amount).toFixed(2)),
+              }
+            : item
+        ),
+      }));
+
+      const claimThread: InboxThread = {
+        id: `thread-claim-${Date.now()}`,
+        tab: 'support',
+        title:
+          kind === 'valeting'
+            ? `Valeting Fee Approved (+£${amount.toFixed(2)})`
+            : `Fare Review Credit (+£${amount.toFixed(2)})`,
+        preview: `${trip.pickupArea} → ${trip.dropoffArea} · Credited to wallet`,
+        timeAgo: 'Just now',
+        statusText: 'Approved & Paid',
+        unread: true,
+        iconType: 'doc',
+        messages: [
+          {
+            id: `msg-claim-${Date.now()}`,
+            sender: 'agent',
+            text:
+              kind === 'valeting'
+                ? `Your UK PHV valeting/soiling claim for ${trip.serviceName} (${trip.riderName}) has been approved for £40.00 and credited to your wallet.`
+                : `We reviewed your route & UK wait time telemetry for ${trip.pickupArea} → ${trip.dropoffArea} and credited an extra £4.80 adjustment.`,
+            timestamp: 'Just now',
+          },
+        ],
+      };
+      setInboxThreads((prev) => [claimThread, ...prev]);
+      uberSounds.play('completeTrip');
+      showToast(
+        kind === 'valeting'
+          ? `Valeting claim approved · +£${amount.toFixed(2)} credited`
+          : `Fare review approved · +£${amount.toFixed(2)} credited`
+      );
+    },
+    [ledger.completedTrips, todayDateKey, showToast]
+  );
+
+  const handleCycleWeather = useCallback(() => {
+    setWeatherCondition((prev) => {
+      const idx = WEATHER_CYCLE.indexOf(prev);
+      const next = WEATHER_CYCLE[(idx + 1) % WEATHER_CYCLE.length];
+      showToast(`UK Weather: ${next}`);
+      return next;
+    });
+  }, [showToast]);
+
+  const handleClaimHolidayPay = useCallback(() => {
+    const pot = Number((ledger.holidayPayAccrued ?? 0).toFixed(2));
+    if (pot < 0.5) return;
+    const currentKey = getLocalDateKey();
+    setLedger((prev) => ({
+      ...prev,
+      dailyTotals: {
+        ...prev.dailyTotals,
+        [currentKey]: Number(((prev.dailyTotals[currentKey] ?? 0) + pot).toFixed(2)),
+      },
+      walletBalance: Number((prev.walletBalance + pot).toFixed(2)),
+      holidayPayAccrued: 0,
+      holidayPayClaimedTotal: Number(((prev.holidayPayClaimedTotal ?? 0) + pot).toFixed(2)),
+    }));
+    showToast(`£${pot.toFixed(2)} Holiday Pay credited to your Wallet`);
+  }, [ledger.holidayPayAccrued, showToast]);
+
+  const handleConfirmLostItemReturn = useCallback(
+    (threadId: string) => {
+      const target = inboxThreads.find((t) => t.id === threadId);
+      if (!target?.lostItemReturn || target.lostItemReturn.returned) return;
+      const fee = target.lostItemReturn.feeAmount;
+      const currentKey = getLocalDateKey();
+
+      setLedger((prev) => ({
+        ...prev,
+        dailyTotals: {
+          ...prev.dailyTotals,
+          [currentKey]: Number(((prev.dailyTotals[currentKey] ?? 0) + fee).toFixed(2)),
+        },
+        walletBalance: Number((prev.walletBalance + fee).toFixed(2)),
+      }));
+
+      setInboxThreads((prev) =>
+        prev.map((t) =>
+          t.id === threadId && t.lostItemReturn
+            ? {
+                ...t,
+                unread: false,
+                statusText: `Returned · +£${fee.toFixed(2)} Paid`,
+                preview: `${t.lostItemReturn.itemLabel} returned (+£${fee.toFixed(2)} credited)`,
+                lostItemReturn: { ...t.lostItemReturn, returned: true },
+                messages: [
+                  ...t.messages,
+                  {
+                    id: `msg-returned-${Date.now()}`,
+                    sender: 'agent',
+                    text: `Thank you! Lost property return confirmed for ${t.lostItemReturn.riderName}. £${fee.toFixed(2)} has been credited to your wallet.`,
+                    timestamp: 'Just now',
+                  },
+                ],
+              }
+            : t
+        )
+      );
+      uberSounds.play('completeTrip');
+      showToast(`Lost item return confirmed · +£${fee.toFixed(2)} credited`);
+    },
+    [inboxThreads, showToast]
+  );
+
+  const handleUpdateComplianceDoc = useCallback(
+    (docId: string, nextStatus: 'verified' | 'expiring_soon' | 'expired') => {
+      if (!activeAccount?.id) return;
+      setAccounts((prev) =>
+        prev.map((acct) => {
+          if (acct.id !== activeAccount.id) return acct;
+          const updatedDocs = (acct.complianceDocs ?? buildDefaultComplianceDocs(acct.phvBadge)).map(
+            (docItem) =>
+              docItem.id === docId
+                ? {
+                    ...docItem,
+                    status: nextStatus,
+                    daysRemaining: nextStatus === 'verified' ? 180 : nextStatus === 'expiring_soon' ? 14 : 0,
+                  }
+                : docItem
+          );
+          return { ...acct, complianceDocs: updatedDocs };
+        })
+      );
+      showToast(
+        nextStatus === 'verified'
+          ? 'UK document renewed & verified'
+          : 'Simulated expired document — test going online gate'
+      );
+    },
+    [activeAccount?.id, showToast]
+  );
+
+  const handleResetRestLock = useCallback(() => {
+    if (!activeAccount?.id) return;
+    setAccounts((prev) =>
+      prev.map((acct) =>
+        acct.id === activeAccount.id
+          ? { ...acct, drivingMinutesUsedToday: 0, restLockedUntil: null }
+          : acct
+      )
+    );
+    showToast('6-hour mandatory UK rest completed · 12h allowance reset');
+  }, [activeAccount?.id, showToast]);
+
+  const handleExportTaxCsv = useCallback(() => {
+    const res = downloadHMRCTaxCsv({
+      driverName: activeAccount?.name ?? 'UK Partner Driver',
+      totalBusinessMiles,
+      completedTrips: ledger.completedTrips,
+      expenses: ledger.expenses ?? [],
+    });
+    if (res.ok) {
+      showToast(`Exported ${res.filename} (£${res.taxReliefGbp.toFixed(2)} HMRC relief)`);
+    } else {
+      showToast(`HMRC Summary ready: £${res.taxReliefGbp.toFixed(2)} mileage relief`);
+    }
+  }, [activeAccount?.name, totalBusinessMiles, ledger.completedTrips, ledger.expenses, showToast]);
+
   const formatSecMmSs = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = sec % 60;
@@ -2655,8 +3940,27 @@ export default function App() {
         forceType: 'radar',
         includeIntercity: preferences.intercity,
         servicePrefs,
+        surgeLockedBonus: lockedSurgeBonus,
+        boostBonus: activeBoostBonus,
+        ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
+        areaPreference: preferences.areaPreference,
+        isEV: Boolean(activeAccount?.isEV),
       }),
-    [driverPos, isLiveGpsInUK, realCoords, offerIndex, preferences.intercity, servicePrefs, localGeoVersion]
+    [
+      driverPos,
+      isLiveGpsInUK,
+      realCoords,
+      offerIndex,
+      preferences.intercity,
+      preferences.areaPreference,
+      activeAccount?.isEV,
+      servicePrefs,
+      localGeoVersion,
+      lockedSurgeBonus,
+      activeBoostBonus,
+      ledger.ccPaidDateKey,
+      todayDateKey,
+    ]
   );
 
   // If user signed out, show full-screen Driver UK Sign-In Gate
@@ -2809,6 +4113,7 @@ export default function App() {
               onlineStatus === 'online'
             }
             nightMode={preferences.nightMode}
+            weatherCondition={weatherCondition}
             showTrafficLayer={preferences.showTrafficLayer}
             showUKZones={preferences.showUKZones}
             showSpeedCameras={preferences.speedCameraWarnings}
@@ -2872,6 +4177,14 @@ export default function App() {
                 <span className={preferences.showBusySoonZones ? 'text-[#D97706]' : 'text-neutral-400'}>
                   {preferences.showBusySoonZones ? 'ON' : 'OFF'}
                 </span>
+              </button>
+              <button
+                type="button"
+                onClick={handleCycleWeather}
+                className="w-full flex items-center justify-between text-[12px] font-semibold text-black dark:text-neutral-200 py-1 border-t border-black/10 dark:border-white/10 pt-2"
+              >
+                <span>UK Weather Surge</span>
+                <span className="text-[#276EF1] font-bold">{weatherCondition}</span>
               </button>
             </div>
           )}
@@ -3105,6 +4418,44 @@ export default function App() {
               )}
 
               <div className="pointer-events-auto flex items-center gap-2 flex-wrap justify-center">
+                {onlineStatus === 'online' && !pendingOffer && !showRadarList && (
+                  <button
+                    type="button"
+                    onClick={() => setOpportunitiesModalMode('trends')}
+                    className="h-9 px-3 rounded-full bg-white/95 dark:bg-[#18191D]/95 backdrop-blur-md text-black dark:text-white text-[11.5px] font-bold shadow-md border border-black/10 dark:border-white/10 flex items-center gap-1.5 whitespace-nowrap"
+                  >
+                    <Flame className="w-3.5 h-3.5 text-[#D97706]" />
+                    <span>{demandContext.demandLevel}</span>
+                  </button>
+                )}
+                {onlineStatus === 'online' && streakCount > 0 && !pendingOffer && !showRadarList && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('hub')}
+                    className="h-9 px-3 rounded-full bg-[#FFF3D6] dark:bg-amber-950/90 text-[#B45309] dark:text-amber-300 text-[11.5px] font-extrabold shadow-md border border-[#F59E0B]/30 flex items-center gap-1 whitespace-nowrap tabular-nums"
+                  >
+                    <span>Streak {streakCount}/3 · +£12</span>
+                  </button>
+                )}
+                {lockedSurgeBonus > 0 && !pendingOffer && !showRadarList && (
+                  <div className="h-9 px-3 rounded-full bg-[#7C3AED] text-white text-[11.5px] font-extrabold shadow-lg flex items-center gap-1.5 whitespace-nowrap tabular-nums">
+                    <span>
+                      +£{lockedSurgeBonus.toFixed(2)} {lockedSurgeLabel ? `(${lockedSurgeLabel})` : 'Locked'}
+                    </span>
+                  </div>
+                )}
+                {airportQueue && onlineStatus === 'online' && !pendingOffer && !showRadarList && (
+                  <button
+                    type="button"
+                    onClick={() => setOpportunitiesModalMode('airports')}
+                    className="h-9 px-3 rounded-full bg-[#276EF1] text-white text-[11.5px] font-extrabold shadow-lg flex items-center gap-1.5 whitespace-nowrap tabular-nums"
+                  >
+                    <Plane className="w-3.5 h-3.5" />
+                    <span>
+                      {airportQueue.code} Queue #{airportQueue.position}
+                    </span>
+                  </button>
+                )}
                 {!pendingOffer && !showRadarList && (
                   <button
                     type="button"
@@ -3151,6 +4502,9 @@ export default function App() {
                             seedIndex: offerIndex,
                             includeIntercity: preferences.intercity,
                             servicePrefs,
+                            surgeLockedBonus: lockedSurgeBonus,
+                            boostBonus: activeBoostBonus,
+                            ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
                           });
                           setOfferIndex((i) => i + 1);
                           recordOfferReceived(sample);
@@ -3358,6 +4712,16 @@ export default function App() {
                 stopVisited={stopVisited}
                 queuedOffer={queuedOffer}
                 navProvider={preferences.navProvider}
+                licensePlate={activeAccount.licensePlate}
+                weatherCondition={weatherCondition}
+                trafficAlert={trafficAlert}
+                riderChangeOffer={riderChangeOffer}
+                stackedEatsOffer={stackedEatsOffer}
+                onTakeFasterRoute={handleTakeFasterRoute}
+                onAcceptRiderChange={handleAcceptRiderChange}
+                onDeclineRiderChange={handleDeclineRiderChange}
+                onAcceptStackedEats={handleAcceptStackedEats}
+                onDeclineStackedEats={handleDeclineStackedEats}
                 onArrivePickup={handleArrivePickup}
                 onStartTrip={handleStartTrip}
                 onArriveStop={handleArriveStop}
@@ -3454,6 +4818,8 @@ export default function App() {
                       <p className="text-[18px] font-extrabold text-black dark:text-white truncate">
                         {onlineStatus === 'offline'
                           ? "You're offline"
+                          : isOnBreak
+                          ? 'On Coffee Break'
                           : statusSwapOnline
                           ? "You're online"
                           : 'Finding trips...'}
@@ -3463,11 +4829,18 @@ export default function App() {
                       )}
                     </div>
                     {onlineStatus === 'online' && (
-                      <p className="text-[11.5px] font-semibold text-[#276EF1] tabular-nums truncate">
-                        Online {formatOnlineTimer(onlineElapsedSec)} ·{' '}
-                        {nextOfferSecLeft !== null
-                          ? `Next request ~${formatSecMmSs(nextOfferSecLeft)}`
-                          : 'Pull up to Stop'}
+                      <p
+                        className={`text-[11.5px] font-semibold tabular-nums truncate ${
+                          isOnBreak ? 'text-[#D97706]' : 'text-[#276EF1]'
+                        }`}
+                      >
+                        {isOnBreak
+                          ? `Break ${formatSecMmSs(breakSecondsLeft)} · Dispatches paused`
+                          : `Online ${formatOnlineTimer(onlineElapsedSec)} · ${
+                              nextOfferSecLeft !== null
+                                ? `Next request ~${formatSecMmSs(nextOfferSecLeft)}`
+                                : 'Pull up to Stop'
+                            }`}
                       </p>
                     )}
                   </button>
@@ -3533,6 +4906,13 @@ export default function App() {
               radarRefreshSecLeft={radarRefreshSecLeft}
               radarCount={radarOffers.length}
               permissionsReadyCount={permissionsReadyCount}
+              demandContext={demandContext}
+              airportQueue={airportQueue}
+              lockedSurgeAmount={lockedSurgeBonus}
+              isOnBreak={isOnBreak}
+              breakSecondsLeft={breakSecondsLeft}
+              onToggleBreak={handleToggleBreak}
+              onResetRestLock={handleResetRestLock}
               onBackToMap={() => setActiveTab('home')}
               onToggleOnline={handleToggleOnline}
               onTogglePrivacy={() => setPrivacyHidden((v) => !v)}
@@ -3559,6 +4939,10 @@ export default function App() {
               onOpenPermissions={() => setShowPermissionsModal(true)}
               onDispatchIntercity={handleDispatchIntercity}
               onRechargeVehicle={handleRechargeVehicle}
+              onOpenChargers={() => setShowChargersModal(true)}
+              weatherCondition={weatherCondition}
+              onCycleWeather={handleCycleWeather}
+              streakCount={streakCount}
             />
           )}
 
@@ -3600,6 +4984,7 @@ export default function App() {
               walletBalance={ledger.walletBalance}
               dailyTotals={ledger.dailyTotals}
               completedTrips={ledger.completedTrips}
+              expenses={ledger.expenses}
               questCompletedCount={ledger.questCompletedCount}
               dailyGoalGbp={preferences.dailyGoalGbp}
               weeklyGoalGbp={preferences.weeklyGoalGbp}
@@ -3616,6 +5001,14 @@ export default function App() {
               onBack={() => setActiveTab('home')}
               onCashOut={handleCashOut}
               onOpenOpportunities={() => setOpportunitiesModalMode('opportunities')}
+              onOpenChargers={() => setShowChargersModal(true)}
+              onExportTaxCsv={handleExportTaxCsv}
+              onFileTripClaim={handleFileTripClaim}
+              holidayPayAccrued={ledger.holidayPayAccrued ?? 0}
+              holidayPayClaimedTotal={ledger.holidayPayClaimedTotal ?? 0}
+              engagedMinutesTotal={ledger.engagedMinutesTotal ?? 42}
+              onlineMinutesTotal={ledger.onlineMinutesTotal ?? 60}
+              onClaimHolidayPay={handleClaimHolidayPay}
             />
           )}
 
@@ -3625,6 +5018,7 @@ export default function App() {
               onBack={() => setActiveTab('home')}
               onMarkRead={handleMarkInboxRead}
               onReplyThread={handleReplyInbox}
+              onConfirmLostItemReturn={handleConfirmLostItemReturn}
             />
           )}
 
@@ -3635,6 +5029,8 @@ export default function App() {
               walletBalance={ledger.walletBalance}
               totalBusinessMiles={totalBusinessMiles}
               tripStats={ledger.tripStats}
+              compliments={ledger.compliments}
+              streakCount={streakCount}
               preferences={preferences}
               notificationPermission={notificationPermission}
               lastRefreshedAt={lastRefreshedAt}
@@ -3665,6 +5061,9 @@ export default function App() {
               onTriggerRefreshNow={handleTriggerRefreshNow}
               onOpenPermissions={() => setShowPermissionsModal(true)}
               onNotifyToast={showToast}
+              onUpdateComplianceDoc={handleUpdateComplianceDoc}
+              onResetRestLock={handleResetRestLock}
+              onExportTaxCsv={handleExportTaxCsv}
             />
           )}
         </div>
@@ -3792,6 +5191,7 @@ export default function App() {
       {showPreferencesModal && (
         <PreferencesSheet
           preferences={preferences}
+          accountTier={activeAccount.tier}
           onTogglePreference={handleTogglePreference}
           onSetFloatingDotMode={(mode: 'dot' | 'card') => {
             setPreferences((prev) => ({ ...prev, floatingDotAlertMode: mode }));
@@ -3801,6 +5201,17 @@ export default function App() {
                 ? 'Floating bubble set to Dot Only (Default)'
                 : 'Floating bubble set to Auto-Show Job Card'
             );
+          }}
+          onSetAreaPreference={(area) => {
+            setPreferences((prev) => ({ ...prev, areaPreference: area }));
+            const labels: Record<string, string> = {
+              all: 'All UK Areas',
+              central: 'Central London',
+              east: 'East & Canary Wharf',
+              west: 'West & Heathrow',
+              local: 'Local Area Only',
+            };
+            showToast(`Area preference: ${labels[area] || area}`);
           }}
           onSetNavProvider={(provider: NavProvider) => {
             setPreferences((prev) => ({ ...prev, navProvider: provider }));
@@ -3828,7 +5239,28 @@ export default function App() {
         <OpportunitiesModal
           initialSection={opportunitiesModalMode}
           questCompletedCount={ledger.questCompletedCount}
+          enrolledIds={enrolledOppIds}
+          onToggleEnroll={(id) => {
+            setEnrolledOppIds((prev) => {
+              const removing = prev.includes(id);
+              const next = removing ? prev.filter((item) => item !== id) : [...prev, id];
+              showToast(
+                removing ? 'Opted out of promotion' : 'Enrolled — auto-payouts active!'
+              );
+              return next;
+            });
+          }}
           onClose={() => setOpportunitiesModalMode(null)}
+        />
+      )}
+
+      {showChargersModal && activeAccount && (
+        <RapidChargersModal
+          driverPos={driverPos}
+          batteryPct={activeAccount.batteryPct ?? 84}
+          isEV={Boolean(activeAccount.isEV)}
+          onSelectCharge={handleSelectCharge}
+          onClose={() => setShowChargersModal(false)}
         />
       )}
 
@@ -3890,21 +5322,36 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
+                  handleToggleBreak();
                   setShowStopMenu(false);
-                  setShowPreferencesModal(true);
                 }}
-                className="h-12 rounded-2xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-black dark:text-white text-[14px] font-bold transition-all active:scale-[0.98]"
+                className={`h-12 rounded-2xl text-[13.5px] font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] ${
+                  isOnBreak
+                    ? 'bg-[#05944F] text-white'
+                    : 'bg-[#FFF3D6] dark:bg-amber-950/70 text-[#B45309] dark:text-amber-300'
+                }`}
               >
-                Driving Preferences
+                <Coffee className="w-4 h-4" />
+                <span>{isOnBreak ? `Resume (${formatSecMmSs(breakSecondsLeft)})` : 'Coffee Break'}</span>
               </button>
               <button
                 type="button"
-                onClick={() => setShowStopMenu(false)}
-                className="h-12 rounded-2xl bg-black dark:bg-[#276EF1] text-white text-[14px] font-bold transition-all active:scale-[0.98]"
+                onClick={() => {
+                  setShowStopMenu(false);
+                  setShowPreferencesModal(true);
+                }}
+                className="h-12 rounded-2xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-black dark:text-white text-[13.5px] font-bold transition-all active:scale-[0.98]"
               >
-                Keep Driving
+                Preferences
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => setShowStopMenu(false)}
+              className="w-full h-11 rounded-2xl bg-black dark:bg-[#276EF1] text-white text-[14px] font-bold transition-all active:scale-[0.98]"
+            >
+              Keep Driving
+            </button>
           </div>
         </div>
       )}

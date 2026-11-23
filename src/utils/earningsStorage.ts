@@ -1,6 +1,13 @@
-import { CompletedTrip, TripStats } from '../types/driver';
+import { ComplimentCounts, CompletedTrip, ExpenseEntry, TripStats } from '../types/driver';
 
 const LEDGER_STORAGE_KEY = 'uber_driver_uk_ledger_v1';
+
+export const DEFAULT_COMPLIMENTS: ComplimentCounts = {
+  greatConversation: 142,
+  spotlessCar: 198,
+  expertNavigation: 164,
+  aboveAndBeyond: 49,
+};
 
 export const EMPTY_TRIP_STATS: TripStats = {
   totalReceived: 0,
@@ -17,6 +24,14 @@ export interface DriverLedger {
   questCompletedCount: number;
   completedTrips: CompletedTrip[];
   tripStats: TripStats;
+  expenses: ExpenseEntry[];
+  ccPaidDateKey?: string | null;
+  questPaidCycleCount?: number;
+  holidayPayAccrued?: number;
+  holidayPayClaimedTotal?: number;
+  engagedMinutesTotal?: number;
+  onlineMinutesTotal?: number;
+  compliments?: ComplimentCounts;
 }
 
 export function getLocalDateKey(date: Date = new Date()): string {
@@ -137,6 +152,38 @@ export function loadDriverLedger(
             : initialDefaults.questCompletedCount,
         completedTrips,
         tripStats,
+        expenses: Array.isArray(parsed.expenses) ? parsed.expenses : [],
+        ccPaidDateKey: typeof parsed.ccPaidDateKey === 'string' ? parsed.ccPaidDateKey : null,
+        questPaidCycleCount:
+          typeof parsed.questPaidCycleCount === 'number' ? parsed.questPaidCycleCount : 0,
+        holidayPayAccrued:
+          typeof parsed.holidayPayAccrued === 'number' ? parsed.holidayPayAccrued : 14.85,
+        holidayPayClaimedTotal:
+          typeof parsed.holidayPayClaimedTotal === 'number' ? parsed.holidayPayClaimedTotal : 0,
+        engagedMinutesTotal:
+          typeof parsed.engagedMinutesTotal === 'number' ? parsed.engagedMinutesTotal : 42,
+        onlineMinutesTotal:
+          typeof parsed.onlineMinutesTotal === 'number' ? parsed.onlineMinutesTotal : 60,
+        compliments: parsed.compliments
+          ? {
+              greatConversation:
+                typeof parsed.compliments.greatConversation === 'number'
+                  ? parsed.compliments.greatConversation
+                  : DEFAULT_COMPLIMENTS.greatConversation,
+              spotlessCar:
+                typeof parsed.compliments.spotlessCar === 'number'
+                  ? parsed.compliments.spotlessCar
+                  : DEFAULT_COMPLIMENTS.spotlessCar,
+              expertNavigation:
+                typeof parsed.compliments.expertNavigation === 'number'
+                  ? parsed.compliments.expertNavigation
+                  : DEFAULT_COMPLIMENTS.expertNavigation,
+              aboveAndBeyond:
+                typeof parsed.compliments.aboveAndBeyond === 'number'
+                  ? parsed.compliments.aboveAndBeyond
+                  : DEFAULT_COMPLIMENTS.aboveAndBeyond,
+            }
+          : { ...DEFAULT_COMPLIMENTS },
       };
     }
   } catch {
@@ -150,6 +197,14 @@ export function loadDriverLedger(
     questCompletedCount: initialDefaults.questCompletedCount,
     completedTrips: [],
     tripStats: { ...EMPTY_TRIP_STATS, history: [] },
+    expenses: [],
+    ccPaidDateKey: null,
+    questPaidCycleCount: 0,
+    holidayPayAccrued: 14.85,
+    holidayPayClaimedTotal: 0,
+    engagedMinutesTotal: 42,
+    onlineMinutesTotal: 60,
+    compliments: { ...DEFAULT_COMPLIMENTS },
   };
 }
 

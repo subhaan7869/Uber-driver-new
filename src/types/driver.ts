@@ -48,6 +48,14 @@ export interface ComputedRoute {
   source: 'osrm' | 'uk-corridor';
 }
 
+export interface ComplianceDoc {
+  id: string;
+  title: string;
+  subtitle: string;
+  daysRemaining: number;
+  status: 'verified' | 'expiring_soon' | 'expired';
+}
+
 export interface DriverAccount {
   id: string;
   name: string;
@@ -66,6 +74,18 @@ export interface DriverAccount {
   lastFaceVerifiedAt: number | null;
   drivingMinutesUsedToday: number;
   batteryPct?: number;
+  isEV?: boolean;
+  complianceDocs?: ComplianceDoc[];
+  restLockedUntil?: number | null;
+}
+
+export type UKWeatherCondition = 'Clear' | 'Light Drizzle' | 'Heavy Rain' | 'Thames Fog';
+
+export interface ComplimentCounts {
+  greatConversation: number;
+  spotlessCar: number;
+  expertNavigation: number;
+  aboveAndBeyond: number;
 }
 
 export interface TripOffer {
@@ -95,6 +115,15 @@ export interface TripOffer {
   stopAddress?: string;
   stopCoords?: Coordinates;
   riderNote?: string;
+  eatsOrderCode?: string;
+  boostBonus?: number;
+  surgeLockedBonus?: number;
+  isAirportPickup?: boolean;
+  airportCode?: string;
+  airportBayHint?: string;
+  anprPassCode?: string;
+  inLondonCC?: boolean;
+  trafficDelayMin?: number;
   expiresInSec: number;
 }
 
@@ -178,6 +207,9 @@ export interface CompletedTrip {
   surchargeLabel?: string;
   uberFee?: number;
   netPayout?: number;
+  boostBonus?: number;
+  tollOrZoneFee?: number;
+  cancellationFee?: boolean;
   distanceMiles: number;
   durationMin: number;
   pickupArea: string;
@@ -187,6 +219,19 @@ export interface CompletedTrip {
   isIntercity?: boolean;
   isNoShowFee?: boolean;
   tags?: string[];
+  claimFiled?: 'valeting' | 'fare_review';
+  claimAmount?: number;
+  peakPeriod?: boolean;
+}
+
+export interface ExpenseEntry {
+  id: string;
+  label: string;
+  category: 'charging' | 'fuel' | 'congestion' | 'toll';
+  amount: number;
+  kwhOrLitres?: number;
+  dateKey: string;
+  timestamp: string;
 }
 
 export type TripActivityStatus = 'accepted' | 'declined' | 'radar_lost';
@@ -229,6 +274,13 @@ export interface InboxThread {
   unread: boolean;
   iconType: 'chat' | 'mail' | 'doc' | 'promo';
   messages: InboxMessage[];
+  lostItemReturn?: {
+    tripId: string;
+    riderName: string;
+    itemLabel: string;
+    feeAmount: number;
+    returned: boolean;
+  };
 }
 
 export interface DestinationConfig {
@@ -266,4 +318,5 @@ export interface DriverPreferences {
   weeklyGoalGbp: number;
   rushNav: boolean;
   floatingDotAlertMode: 'dot' | 'card';
+  areaPreference?: 'all' | 'central' | 'east' | 'west' | 'local';
 }

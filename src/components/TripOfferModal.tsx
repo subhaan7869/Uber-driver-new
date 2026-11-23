@@ -311,12 +311,22 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
               </div>
 
               {/* Unboxed Star Rating */}
-              <div className="mt-1.5 flex items-center gap-1.5 text-[14px] font-semibold text-[#222222] dark:text-neutral-200 tabular-nums">
+              <div className="mt-1.5 flex items-center gap-1.5 flex-wrap text-[14px] font-semibold text-[#222222] dark:text-neutral-200 tabular-nums">
                 <Star className="w-3.5 h-3.5 fill-current text-black dark:text-white" />
                 <span>{offer.rating.toFixed(2)}</span>
                 {offer.surgeBonus && (
                   <span className="text-[12px] font-medium text-[#7A1C79] dark:text-purple-300">
-                    · +£{offer.surgeBonus.toFixed(2)} surge
+                    · +£{offer.surgeBonus.toFixed(2)} {offer.surgeLockedBonus ? 'locked surge' : 'surge'}
+                  </span>
+                )}
+                {offer.boostBonus && (
+                  <span className="text-[12px] font-semibold text-[#276EF1]">
+                    · +£{offer.boostBonus.toFixed(2)} Boost+
+                  </span>
+                )}
+                {offer.eatsOrderCode && (
+                  <span className="text-[12px] font-bold text-[#05944F]">
+                    · {offer.eatsOrderCode}
                   </span>
                 )}
               </div>
@@ -452,7 +462,12 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
           </span>
           {offer.surgeBonus && (
             <span className="text-[13px] font-semibold text-[#7A1C79] dark:text-[#E879F9] tabular-nums">
-              Includes +£{offer.surgeBonus.toFixed(2)} surge
+              Includes +£{offer.surgeBonus.toFixed(2)} {offer.surgeLockedBonus ? 'locked surge' : 'surge'}
+            </span>
+          )}
+          {offer.boostBonus && (
+            <span className="px-2 py-0.5 rounded-md bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] text-[12px] font-bold tabular-nums">
+              +£{offer.boostBonus.toFixed(2)} Boost+
             </span>
           )}
         </div>
@@ -463,9 +478,10 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
             <Star className="w-3.5 h-3.5 fill-current" />
             {offer.rating.toFixed(2)}
           </span>
-          {(offer.pinCode || offer.surchargeLabel || offer.intercityCorridor) && (
+          {(offer.pinCode || offer.surchargeLabel || offer.intercityCorridor || offer.eatsOrderCode) && (
             <span className="text-[12px] font-medium text-[#545454] dark:text-neutral-400">
               {[
+                offer.eatsOrderCode ?? null,
                 offer.intercityCorridor ?? null,
                 offer.surchargeLabel && offer.surchargeAmount
                   ? `${offer.surchargeLabel} £${offer.surchargeAmount.toFixed(2)}`

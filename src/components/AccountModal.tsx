@@ -3,6 +3,8 @@ import {
   BookmarkCheck,
   Car,
   Check,
+  Cloud,
+  CloudOff,
   Copy,
   Download,
   LogOut,
@@ -13,6 +15,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
+import { useFirebase } from '../contexts/FirebaseContext';
 import { DriverAccount } from '../types/driver';
 import { RememberedLogin } from '../utils/authStorage';
 
@@ -56,6 +59,15 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   onSignOut,
   onClose,
 }) => {
+  const {
+    user: googleUser,
+    authLoading,
+    authError,
+    syncStatus,
+    signInWithGoogle,
+    signOutGoogle,
+    clearAuthError,
+  } = useFirebase();
   const [mode, setMode] = useState<'list' | 'signin' | 'register'>(
     isSignedOutGate ? 'signin' : 'list'
   );
@@ -76,6 +88,15 @@ export const AccountModal: React.FC<AccountModalProps> = ({
   const [generatedBackupCode, setGeneratedBackupCode] = useState<string | null>(null);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restoreCode, setRestoreCode] = useState('');
+
+  const handleGoogleSyncClick = async () => {
+    clearAuthError();
+    setErrorMsg(null);
+    const signedUser = await signInWithGoogle();
+    if (signedUser && isSignedOutGate) {
+      onClose?.();
+    }
+  };
 
   const handleSignInSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,6 +196,82 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         )}
       </div>
 
+      {/* Google Cloud Sync Card */}
+      <div className="mb-4 p-3.5 rounded-2xl border border-[#276EF1]/25 bg-[#F4F8FF] dark:bg-[#161F33] space-y-2.5">
+        {googleUser ? (
+          <div className="flex items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              {googleUser.photoURL ? (
+                <img
+                  src={googleUser.photoURL}
+                  alt={googleUser.displayName || 'Google Driver'}
+                  referrerPolicy="no-referrer"
+                  className="w-9 h-9 rounded-full object-cover shrink-0 border border-black/10"
+                />
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-[#276EF1] text-white flex items-center justify-center shrink-0">
+                  <Cloud className="w-4 h-4" />
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[13.5px] font-bold text-black dark:text-white truncate">
+                    {googleUser.displayName || 'Google Driver Sync'}
+                  </p>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                      syncStatus === 'error'
+                        ? 'bg-[#FEECEB] text-[#E11900]'
+                        : 'bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F]'
+                    }`}
+                  >
+                    {syncStatus === 'syncing'
+                      ? 'Syncing…'
+                      : syncStatus === 'error'
+                      ? 'Sync Retry'
+                      : 'Cloud Synced'}
+                  </span>
+                </div>
+                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate">
+                  {googleUser.email}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={authLoading}
+              onClick={() => void signOutGoogle()}
+              className="px-2.5 h-8 rounded-lg bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[11.5px] font-bold text-[#E11900] dark:text-red-300 hover:bg-[#FEECEB] shrink-0"
+            >
+              Unlink
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <CloudOff className="w-4 h-4 text-[#276EF1] shrink-0" />
+                <span className="text-[13px] font-bold text-black dark:text-white truncate">
+                  Cloud Sync & Cross-Device Profile
+                </span>
+              </div>
+              <span className="text-[10.5px] font-bold text-[#276EF1] shrink-0">Firestore</span>
+            </div>
+            <button
+              type="button"
+              disabled={authLoading}
+              onClick={() => void handleGoogleSyncClick()}
+              className="w-full h-10 rounded-xl bg-white dark:bg-[#22242A] border border-black/15 dark:border-white/15 hover:bg-[#F3F3F3] dark:hover:bg-[#2B2E36] text-[13.5px] font-bold text-black dark:text-white flex items-center justify-center gap-2 shadow-2xs transition-colors disabled:opacity-60"
+            >
+              <span className="w-4 h-4 rounded-full bg-[#276EF1] text-white text-[10px] font-extrabold flex items-center justify-center">
+                G
+              </span>
+              <span>{authLoading ? 'Connecting Google...' : 'Continue with Google (Cloud Sync)'}</span>
+            </button>
+          </>
+        )}
+      </div>
+
       {/* Segmented Mode Tabs */}
       <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-[#F3F3F3] dark:bg-white/10 mb-4">
         <button
@@ -221,9 +318,9 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         </button>
       </div>
 
-      {errorMsg && (
+      {(errorMsg || authError) && (
         <div className="mb-3 p-3 rounded-xl bg-[#FEECEB] dark:bg-red-950/50 text-[#E11900] dark:text-red-300 text-[12.5px] font-semibold">
-          {errorMsg}
+          {errorMsg || authError}
         </div>
       )}
 

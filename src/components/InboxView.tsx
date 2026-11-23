@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import {
+  CheckCircle2,
   ChevronLeft,
   FileCheck,
   Mail,
   MessageSquare,
+  Package,
   Send,
   Sparkles,
 } from 'lucide-react';
@@ -14,6 +16,7 @@ interface InboxViewProps {
   onBack: () => void;
   onMarkRead: (threadId: string) => void;
   onReplyThread: (threadId: string, text: string) => void;
+  onConfirmLostItemReturn?: (threadId: string) => void;
 }
 
 export const InboxView: React.FC<InboxViewProps> = ({
@@ -21,6 +24,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   onBack,
   onMarkRead,
   onReplyThread,
+  onConfirmLostItemReturn,
 }) => {
   const [subTab, setSubTab] = useState<'notifications' | 'support'>('support');
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -79,6 +83,44 @@ export const InboxView: React.FC<InboxViewProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#FAFAFA] dark:bg-[#141416]">
+          {selectedThread.lostItemReturn && (
+            <div className="p-4 rounded-2xl bg-white dark:bg-[#1E2026] border border-[#276EF1]/30 space-y-2.5 shadow-2xs">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] flex items-center justify-center shrink-0">
+                    <Package className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-extrabold text-black dark:text-white">
+                      Lost Property: {selectedThread.lostItemReturn.itemLabel}
+                    </p>
+                    <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                      Rider: {selectedThread.lostItemReturn.riderName}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[14px] font-extrabold text-[#05944F] tabular-nums">
+                  +£{selectedThread.lostItemReturn.feeAmount.toFixed(2)}
+                </span>
+              </div>
+              {selectedThread.lostItemReturn.returned ? (
+                <div className="h-10 rounded-xl bg-[#E6F4EA] dark:bg-emerald-950/50 text-[#05944F] text-[13px] font-bold flex items-center justify-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Returned · £{selectedThread.lostItemReturn.feeAmount.toFixed(2)} Fee Credited</span>
+                </div>
+              ) : (
+                onConfirmLostItemReturn && (
+                  <button
+                    type="button"
+                    onClick={() => onConfirmLostItemReturn(selectedThread.id)}
+                    className="w-full h-11 rounded-xl bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[13.5px] font-bold transition-colors"
+                  >
+                    Confirm Item Returned (+£{selectedThread.lostItemReturn.feeAmount.toFixed(2)})
+                  </button>
+                )
+              )}
+            </div>
+          )}
           {selectedThread.messages.map((msg) => (
             <div
               key={msg.id}

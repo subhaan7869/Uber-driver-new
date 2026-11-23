@@ -1,4 +1,4 @@
-import { DriverAccount } from '../types/driver';
+import { ComplianceDoc, DriverAccount } from '../types/driver';
 
 const ACCOUNTS_KEY = 'uber_driver_accounts_v1';
 const ACCOUNTS_BACKUP_KEY = 'uber_driver_accounts_backup_v1';
@@ -13,6 +13,46 @@ export interface RememberedLogin {
   city: string;
   rememberMe: boolean;
   lastSignedInAt: number;
+}
+
+export function buildDefaultComplianceDocs(phvBadge: string): ComplianceDoc[] {
+  return [
+    {
+      id: 'doc-licence',
+      title: 'UK DVLA Driving Licence',
+      subtitle: 'Full UK Cat B · Clean (0 pts)',
+      daysRemaining: 840,
+      status: 'verified',
+    },
+    {
+      id: 'doc-insurance',
+      title: 'PHV Hire & Reward Insurance',
+      subtitle: 'Zego / Admiral Comprehensive Fleet',
+      daysRemaining: 142,
+      status: 'verified',
+    },
+    {
+      id: 'doc-mot',
+      title: '6-Month PHV MOT Certificate',
+      subtitle: 'UK Council / TfL 6-month inspection',
+      daysRemaining: 24,
+      status: 'expiring_soon',
+    },
+    {
+      id: 'doc-phv',
+      title: `PHV Driver & Vehicle Licence (${phvBadge})`,
+      subtitle: 'TfL / Local Authority Badge Active',
+      daysRemaining: 310,
+      status: 'verified',
+    },
+    {
+      id: 'doc-ved',
+      title: 'UK Road Tax (VED) & DBS Check',
+      subtitle: 'Enhanced DBS Update Service Linked',
+      daysRemaining: 185,
+      status: 'verified',
+    },
+  ];
 }
 
 export const DEFAULT_ACCOUNTS: DriverAccount[] = [
@@ -34,6 +74,9 @@ export const DEFAULT_ACCOUNTS: DriverAccount[] = [
     lastFaceVerifiedAt: null,
     drivingMinutesUsedToday: 118,
     batteryPct: 86,
+    isEV: false,
+    complianceDocs: buildDefaultComplianceDocs('TfL-PHV-88412'),
+    restLockedUntil: null,
   },
   {
     id: 'acct-sarah',
@@ -53,6 +96,9 @@ export const DEFAULT_ACCOUNTS: DriverAccount[] = [
     lastFaceVerifiedAt: null,
     drivingMinutesUsedToday: 64,
     batteryPct: 78,
+    isEV: true,
+    complianceDocs: buildDefaultComplianceDocs('MCC-PHV-30219'),
+    restLockedUntil: null,
   },
 ];
 
@@ -66,6 +112,16 @@ export function loadAccounts(): DriverAccount[] {
           return parsed.map((acct) => ({
             ...acct,
             batteryPct: typeof acct.batteryPct === 'number' ? acct.batteryPct : 84,
+            isEV:
+              typeof acct.isEV === 'boolean'
+                ? acct.isEV
+                : String(acct.vehicle || '').toLowerCase().includes('ev') ||
+                  String(acct.vehicle || '').toLowerCase().includes('tesla'),
+            complianceDocs:
+              Array.isArray(acct.complianceDocs) && acct.complianceDocs.length > 0
+                ? acct.complianceDocs
+                : buildDefaultComplianceDocs(acct.phvBadge || 'TfL-PHV-88412'),
+            restLockedUntil: typeof acct.restLockedUntil === 'number' ? acct.restLockedUntil : null,
           }));
         }
       }

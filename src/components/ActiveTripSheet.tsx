@@ -1,26 +1,34 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
+  Camera,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
+  CloudRain,
   ExternalLink,
   KeyRound,
   List,
   MessageSquare,
   Navigation,
+  Package,
   Phone,
   PhoneCall,
   PhoneOff,
+  Plane,
   Route,
   Send,
+  ShieldCheck,
   SlidersHorizontal,
   Star,
   User,
   UserX,
   X,
 } from 'lucide-react';
-import { NavProvider, RouteStep, TripOffer, TripStage } from '../types/driver';
+import { NavProvider, RouteStep, TripOffer, TripStage, UKWeatherCondition } from '../types/driver';
 import { mapToLatLng } from '../utils/ukGeo';
+import { getAirportTerminalBay, getUKWeatherInfo } from '../utils/ukRealism';
 import { SwipeButton } from './SwipeButton';
 
 interface ActiveTripSheetProps {
@@ -34,6 +42,29 @@ interface ActiveTripSheetProps {
   stopVisited?: boolean;
   queuedOffer?: TripOffer | null;
   navProvider?: NavProvider;
+  licensePlate?: string;
+  weatherCondition?: UKWeatherCondition;
+  trafficAlert?: { delayMin: number; routeSavedMin: number } | null;
+  riderChangeOffer?: {
+    kind: 'dropoff' | 'stop';
+    title: string;
+    subtitle: string;
+    extraFare: number;
+    extraMiles: number;
+    extraMin: number;
+  } | null;
+  stackedEatsOffer?: {
+    restaurantName: string;
+    orderCode: string;
+    extraFare: number;
+    extraMiles: number;
+    extraMin: number;
+  } | null;
+  onTakeFasterRoute?: () => void;
+  onAcceptRiderChange?: () => void;
+  onDeclineRiderChange?: () => void;
+  onAcceptStackedEats?: () => void;
+  onDeclineStackedEats?: () => void;
   onArrivePickup: () => void;
   onStartTrip: (waitFeeAccrued?: number) => void;
   onArriveStop?: () => void;
@@ -61,6 +92,16 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
   stopVisited = false,
   queuedOffer = null,
   navProvider = 'uber',
+  licensePlate = 'LB24 UBR',
+  weatherCondition = 'Clear',
+  trafficAlert = null,
+  riderChangeOffer = null,
+  stackedEatsOffer = null,
+  onTakeFasterRoute,
+  onAcceptRiderChange,
+  onDeclineRiderChange,
+  onAcceptStackedEats,
+  onDeclineStackedEats,
   onArrivePickup,
   onStartTrip,
   onArriveStop,
@@ -82,6 +123,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
   const [showTripDetails, setShowTripDetails] = useState(false);
   const [showPinGate, setShowPinGate] = useState(false);
   const [showStartConfirm, setShowStartConfirm] = useState(false);
+  const [eatsDeliveryProof, setEatsDeliveryProof] = useState<'none' | 'photo_taken' | 'handed'>('none');
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [selectedRating, setSelectedRating] = useState(5);
@@ -97,6 +139,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
     },
   ]);
   const [chatInput, setChatInput] = useState('');
+  const [unreadChatCount, setUnreadChatCount] = useState(1);
 
   useEffect(() => {
     setChatLog([
@@ -112,7 +155,15 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
     setSelectedTags([]);
     setSelectedRating(5);
     setMaskedCallActive(false);
+    setEatsDeliveryProof('none');
+    setUnreadChatCount(trip.riderNote || trip.pinCode ? 1 : 0);
   }, [trip.id, trip.pickupAddress, trip.pinCode, trip.riderNote]);
+
+  useEffect(() => {
+    if (showRiderContact) {
+      setUnreadChatCount(0);
+    }
+  }, [showRiderContact]);
 
   useEffect(() => {
     if (stage !== 'waiting') {
@@ -150,15 +201,23 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
     setChatLog((prev) => [...prev, { from: 'driver', text: trimmed }]);
     setChatInput('');
     setTimeout(() => {
-      const replies = [
-        'Got it, walking out right now!',
-        'Thanks — I see your car on the map.',
-        'Just 30 seconds, heading to the kerb!',
-      ];
-      setChatLog((prev) => [
-        ...prev,
-        { from: 'rider', text: replies[Math.floor(Math.random() * replies.length)] },
-      ]);
+      const lower = trimmed.toLowerCase();
+      let reply = 'Got it, walking out right now!';
+      if (lower.includes('hazard') || lower.includes('outside')) {
+        reply = 'See your hazards flashing — coming down now!';
+      } else if (lower.includes('traffic') || lower.includes('2 min')) {
+        reply = 'No worries at all, take your time!';
+      } else if (lower.includes('counter') || lower.includes('order')) {
+        reply = 'Thanks for updating me — buzz gate 4 on arrival.';
+      } else if (lower.includes('pin')) {
+        reply = trip.pinCode
+          ? `Cheers! Just a reminder my PIN is ${trip.pinCode}.`
+          : 'Great, standing right by the kerb with my phone.';
+      }
+      setChatLog((prev) => [...prev, { from: 'rider', text: reply }]);
+      if (!showRiderContact) {
+        setUnreadChatCount((c) => c + 1);
+      }
     }, 900);
   };
 
@@ -209,6 +268,14 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
       ? `https://maps.apple.com/?daddr=${targetLatLng.lat},${targetLatLng.lng}&dirflg=d`
       : `https://www.google.com/maps/dir/?api=1&destination=${targetLatLng.lat},${targetLatLng.lng}&travelmode=driving`;
 
+  const airportBayInfo = getAirportTerminalBay(
+    `${trip.pickupAddress} ${trip.pickupArea}`,
+    trip.surchargeLabel,
+    licensePlate,
+    trip.id
+  );
+  const weatherInfo = getUKWeatherInfo(weatherCondition);
+
   // Stage: Completed -> UK Fare Breakdown + Rider Tags + Rate Rider
   if (stage === 'completed') {
     const surcharge = trip.surchargeAmount ?? 0;
@@ -239,6 +306,18 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
             <span>Gross fare {trip.surchargeLabel ? `(incl. ${trip.surchargeLabel})` : ''}</span>
             <span className="font-semibold text-black dark:text-white">£{trip.fare.toFixed(2)}</span>
           </div>
+          {trip.boostBonus && trip.boostBonus > 0 && (
+            <div className="flex justify-between text-[#276EF1]">
+              <span>Boost+ zone bonus included</span>
+              <span className="font-semibold">+£{trip.boostBonus.toFixed(2)}</span>
+            </div>
+          )}
+          {trip.surgeBonus && trip.surgeBonus > 0 && (
+            <div className="flex justify-between text-[#7A1C79] dark:text-[#E879F9]">
+              <span>{trip.surgeLockedBonus ? 'Locked Sticky Surge' : 'Surge bonus'} included</span>
+              <span className="font-semibold">+£{trip.surgeBonus.toFixed(2)}</span>
+            </div>
+          )}
           {waitFeeAccrued > 0 && (
             <div className="flex justify-between text-[#05944F]">
               <span>Wait-time fee</span>
@@ -317,6 +396,119 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
 
   return (
     <div className="space-y-2">
+      {/* Live UK Weather Wet-Road / Rain Surge Advisory */}
+      {weatherCondition !== 'Clear' && (stage === 'pickup' || stage === 'enroute') && (
+        <div className="bg-[#0F172A] text-white rounded-2xl px-3.5 py-2.5 shadow-lg border border-sky-400/30 flex items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <CloudRain className="w-4 h-4 text-sky-400 shrink-0" />
+            <p className="text-[12px] font-semibold truncate">{weatherInfo.advisory}</p>
+          </div>
+          <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10.5px] font-bold shrink-0 tabular-nums">
+            +{weatherInfo.surgeAdd.toFixed(2)}x
+          </span>
+        </div>
+      )}
+
+      {/* Dynamic Traffic Delay & Reroute Banner */}
+      {trafficAlert && (stage === 'pickup' || stage === 'enroute') && (
+        <div className="bg-[#FFFBEB] dark:bg-amber-950/95 text-black dark:text-amber-100 rounded-2xl p-3.5 shadow-xl border border-[#F59E0B]/40 flex items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-[#F59E0B] text-black flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[13px] font-extrabold leading-tight">
+                +{trafficAlert.delayMin} min traffic delay ahead
+              </p>
+              <p className="text-[11.5px] opacity-80 truncate">
+                Faster alternative route available
+              </p>
+            </div>
+          </div>
+          {onTakeFasterRoute && (
+            <button
+              type="button"
+              onClick={onTakeFasterRoute}
+              className="px-3 h-9 rounded-xl bg-black dark:bg-[#F59E0B] text-white dark:text-black text-[12px] font-bold whitespace-nowrap shrink-0"
+            >
+              Reroute (−{trafficAlert.routeSavedMin}m)
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Stacked / Double Uber Eats Batch Order Offer */}
+      {stackedEatsOffer && (stage === 'pickup' || stage === 'waiting') && (
+        <div className="bg-[#062E1F] text-white rounded-2xl p-3.5 shadow-2xl border border-[#05944F]/60 space-y-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <span className="px-2 py-0.5 rounded bg-[#05944F] text-[10.5px] font-extrabold uppercase">
+                Double Uber Eats Stack
+              </span>
+              <p className="text-[14.5px] font-extrabold mt-1">
+                + Add {stackedEatsOffer.restaurantName} ({stackedEatsOffer.orderCode})
+              </p>
+              <p className="text-[12px] text-white/80">
+                Along your route · +{stackedEatsOffer.extraMiles} mi · +{stackedEatsOffer.extraMin} min
+              </p>
+            </div>
+            <span className="text-[16px] font-extrabold text-[#4ADE80] tabular-nums shrink-0">
+              +£{stackedEatsOffer.extraFare.toFixed(2)}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onDeclineStackedEats}
+              className="h-9 rounded-xl bg-white/10 hover:bg-white/20 text-[12.5px] font-bold"
+            >
+              No Thanks
+            </button>
+            <button
+              type="button"
+              onClick={onAcceptStackedEats}
+              className="h-9 rounded-xl bg-[#05944F] hover:bg-[#047A40] text-[12.5px] font-bold"
+            >
+              Accept Stack
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mid-Trip Rider Destination / Stop Change Offer */}
+      {riderChangeOffer && stage === 'enroute' && (
+        <div className="bg-[#111827] text-white rounded-2xl p-3.5 shadow-2xl border border-[#276EF1]/50 space-y-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <span className="px-2 py-0.5 rounded bg-[#276EF1] text-[10.5px] font-bold uppercase">
+                Rider Trip Update
+              </span>
+              <p className="text-[14.5px] font-extrabold mt-1">{riderChangeOffer.title}</p>
+              <p className="text-[12px] text-white/75">{riderChangeOffer.subtitle}</p>
+            </div>
+            <span className="text-[16px] font-extrabold text-[#4ADE80] tabular-nums shrink-0">
+              +£{riderChangeOffer.extraFare.toFixed(2)}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onDeclineRiderChange}
+              className="h-9 rounded-xl bg-white/10 hover:bg-white/20 text-[12.5px] font-bold"
+            >
+              Keep Original
+            </button>
+            <button
+              type="button"
+              onClick={onAcceptRiderChange}
+              className="h-9 rounded-xl bg-[#276EF1] hover:bg-[#1E5CD4] text-[12.5px] font-bold"
+            >
+              Accept (+{riderChangeOffer.extraMiles} mi)
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Back-to-Back Queued Next Trip Offer */}
       {queuedOffer && stage === 'enroute' && (
         <div className="bg-[#111111] text-white rounded-2xl p-3.5 shadow-2xl border border-white/15 flex items-center justify-between gap-3">
@@ -430,18 +622,21 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
               ))}
             </div>
             <div className="flex gap-1.5 overflow-x-auto pb-2 mb-2">
-              {["I've arrived", 'On double yellows, 1 min', 'Waiting at pickup pin'].map(
-                (preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => sendMessage(preset)}
-                    className="px-3 py-1.5 rounded-full bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[12px] font-semibold text-black dark:text-white whitespace-nowrap hover:bg-[#F3F3F3] dark:hover:bg-white/15"
-                  >
-                    {preset}
-                  </button>
-                )
-              )}
+              {[
+                'Outside with hazard lights on',
+                'Stuck at traffic lights, 2 mins',
+                'Waiting at pickup pin',
+                ...(trip.serviceName === 'Uber Eats' ? ['Collecting order at counter'] : ["I've arrived"]),
+              ].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => sendMessage(preset)}
+                  className="px-3 py-1.5 rounded-full bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[12px] font-semibold text-black dark:text-white whitespace-nowrap hover:bg-[#F3F3F3] dark:hover:bg-white/15"
+                >
+                  {preset}
+                </button>
+              ))}
             </div>
             <div className="flex gap-2">
               <input
@@ -596,7 +791,9 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
                   <span>{liveDistanceLabel ?? `${trip.pickupMiles} mi`}</span>
                 </div>
                 <p className="text-[14px] text-[#545454] dark:text-neutral-400 font-medium">
-                  Picking up {trip.riderName}
+                  {trip.serviceName === 'Uber Eats'
+                    ? `Collect ${trip.eatsOrderCode || 'Uber Eats'} · ${trip.riderName}`
+                    : `Picking up ${trip.riderName}`}
                   {trip.isIntercity ? ' · Intercity' : ''}
                 </p>
               </div>
@@ -611,14 +808,40 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
               </button>
             </div>
 
+            {airportBayInfo && (
+              <div className="mt-3 p-3 rounded-xl bg-[#E8F0FE] dark:bg-[#192338] border border-[#276EF1]/30 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold text-[#276EF1] uppercase tracking-wide">
+                    <Plane className="w-3.5 h-3.5" />
+                    {airportBayInfo.airportCode} Terminal Pickup Bay
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#05944F] text-white text-[10px] font-extrabold tabular-nums">
+                    <ShieldCheck className="w-3 h-3" />
+                    {airportBayInfo.anprCode}
+                  </span>
+                </div>
+                <p className="text-[12.5px] font-bold text-black dark:text-white leading-snug">
+                  {airportBayInfo.bayLocation}
+                </p>
+                <p className="text-[11px] font-semibold text-[#545454] dark:text-neutral-300 tabular-nums">
+                  Plate {airportBayInfo.plate} · {airportBayInfo.passWindow}
+                </p>
+              </div>
+            )}
+
             <div className="mt-3 pt-3 border-t border-[#EEEEEE] dark:border-white/10 flex items-center justify-between gap-2">
               <button
                 type="button"
                 onClick={() => setShowRiderContact((v) => !v)}
-                className="flex-1 h-10 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E8E8E8] dark:hover:bg-white/15 text-[13px] font-semibold text-black dark:text-white flex items-center justify-center gap-1.5 transition-colors"
+                className="relative flex-1 h-10 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E8E8E8] dark:hover:bg-white/15 text-[13px] font-semibold text-black dark:text-white flex items-center justify-center gap-1.5 transition-colors"
               >
                 <Phone className="w-4 h-4" />
                 Contact {trip.riderName}
+                {unreadChatCount > 0 && !showRiderContact && (
+                  <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#276EF1] text-white text-[10.5px] font-bold flex items-center justify-center tabular-nums">
+                    {unreadChatCount}
+                  </span>
+                )}
               </button>
               {navProvider !== 'uber' && (
                 <a
@@ -782,7 +1005,11 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
 
                   <div className="text-center">
                     <p className="text-[16px] font-bold text-black dark:text-white">
-                      {waitSecondsLeft > 0
+                      {trip.serviceName === 'Uber Eats'
+                        ? waitSecondsLeft > 0
+                          ? `Collecting ${trip.eatsOrderCode || 'Uber Eats Order'}`
+                          : 'Restaurant prep delay (+£0.20/min)'
+                        : waitSecondsLeft > 0
                         ? 'Waiting for rider'
                         : 'Charging wait time (£0.20/min)'}
                     </p>
@@ -844,10 +1071,15 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowRiderContact((v) => !v)}
-                    className="w-12 h-12 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center transition-colors"
+                    className="relative w-12 h-12 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center transition-colors"
                     aria-label="Call or message rider"
                   >
                     <Phone className="w-5 h-5 text-black dark:text-white" />
+                    {unreadChatCount > 0 && !showRiderContact && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#276EF1] text-white text-[10.5px] font-bold flex items-center justify-center tabular-nums">
+                        {unreadChatCount}
+                      </span>
+                    )}
                   </button>
 
                   <div className="text-center">
@@ -870,6 +1102,22 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
                     <User className="w-5 h-5 text-black dark:text-white" />
                   </button>
                 </div>
+
+                {airportBayInfo && (
+                  <div className="mb-2.5 px-3 py-2 rounded-xl bg-[#E8F0FE] dark:bg-[#192338] border border-[#276EF1]/30 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[11.5px] font-bold text-[#276EF1] truncate">
+                        {airportBayInfo.bayLocation}
+                      </p>
+                      <p className="text-[10.5px] font-semibold text-[#545454] dark:text-neutral-300 tabular-nums">
+                        {airportBayInfo.plate} · {airportBayInfo.passWindow}
+                      </p>
+                    </div>
+                    <span className="px-2 py-0.5 rounded bg-[#05944F] text-white text-[10px] font-extrabold tabular-nums shrink-0">
+                      {airportBayInfo.anprCode}
+                    </span>
+                  </div>
+                )}
 
                 <div className="mt-2">
                   <SwipeButton
@@ -1000,7 +1248,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
               </button>
 
               <p className="text-[17px] font-bold text-black dark:text-white">
-                Arrived at dropoff
+                {trip.serviceName === 'Uber Eats' ? 'Arrived at Delivery Address' : 'Arrived at dropoff'}
               </p>
 
               <button
@@ -1013,19 +1261,32 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
               </button>
             </div>
 
-            <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center justify-between px-4 py-2.5">
               <button
                 type="button"
                 onClick={() => setShowRiderContact((v) => !v)}
-                className="w-12 h-12 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center transition-colors"
+                className="relative w-12 h-12 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center transition-colors"
                 aria-label="Contact rider"
               >
                 <Phone className="w-5 h-5 text-black dark:text-white" />
+                {unreadChatCount > 0 && !showRiderContact && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#276EF1] text-white text-[10.5px] font-bold flex items-center justify-center tabular-nums">
+                    {unreadChatCount}
+                  </span>
+                )}
               </button>
 
-              <span className="text-[24px] font-extrabold tracking-tight text-black dark:text-white">
-                {trip.riderName}
-              </span>
+              <div className="text-center">
+                <span className="text-[22px] font-extrabold tracking-tight text-black dark:text-white block">
+                  {trip.riderName}
+                </span>
+                {trip.eatsOrderCode && (
+                  <span className="inline-flex items-center gap-1 text-[11.5px] font-bold text-[#05944F]">
+                    <Package className="w-3.5 h-3.5" />
+                    Order {trip.eatsOrderCode}
+                  </span>
+                )}
+              </div>
 
               <button
                 type="button"
@@ -1037,9 +1298,54 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
               </button>
             </div>
 
-            <div className="mt-2">
-              <SwipeButton label={`Complete ${trip.serviceName}`} onComplete={onCompleteTrip} />
-            </div>
+            {trip.serviceName === 'Uber Eats' && eatsDeliveryProof === 'none' ? (
+              <div className="mt-2 p-3 rounded-2xl bg-[#F6F6F6] dark:bg-white/5 border border-black/10 dark:border-white/10 space-y-2.5">
+                <p className="text-[12.5px] font-bold text-black dark:text-white text-center">
+                  Confirm delivery proof for {trip.eatsOrderCode || 'Uber Eats'}
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEatsDeliveryProof('photo_taken')}
+                    className="h-11 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[12.5px] font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>Photo at Door</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEatsDeliveryProof('handed')}
+                    className="h-11 rounded-xl bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-black dark:text-white text-[12.5px] font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Check className="w-4 h-4 text-[#05944F]" />
+                    <span>Handed Over</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {trip.serviceName === 'Uber Eats' && eatsDeliveryProof !== 'none' && (
+                  <div className="mb-2.5 px-3 py-2 rounded-xl bg-[#E6F4EA] dark:bg-emerald-950/50 text-[#05944F] text-[12px] font-bold flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4" />
+                      {eatsDeliveryProof === 'photo_taken'
+                        ? 'Leave-at-door photo captured'
+                        : 'Handed directly to customer'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEatsDeliveryProof('none')}
+                      className="underline text-[11px]"
+                    >
+                      Retake
+                    </button>
+                  </div>
+                )}
+                <div className="mt-2">
+                  <SwipeButton label={`Complete ${trip.serviceName}`} onComplete={onCompleteTrip} />
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

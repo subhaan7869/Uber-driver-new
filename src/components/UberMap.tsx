@@ -14,6 +14,7 @@ import {
   SurgeZone,
   TripOffer,
   TripStage,
+  UKWeatherCondition,
 } from '../types/driver';
 import {
   mapToLatLng,
@@ -46,6 +47,7 @@ interface UberMapProps {
   showUKZones?: boolean;
   showSpeedCameras?: boolean;
   showBusySoonZones?: boolean;
+  weatherCondition?: UKWeatherCondition;
   compact?: boolean;
   onSelectSurgeZone?: (zone: SurgeZone) => void;
   onSelectBusySoonZone?: (zone: BusySoonZone) => void;
@@ -437,6 +439,7 @@ export const UberMap: React.FC<UberMapProps> = ({
   showUKZones = true,
   showSpeedCameras = true,
   showBusySoonZones = true,
+  weatherCondition = 'Clear',
   compact = false,
   onSelectSurgeZone,
   onSelectBusySoonZone,
@@ -1447,6 +1450,20 @@ export const UberMap: React.FC<UberMapProps> = ({
     >
       {/* Keyless MapLibre GL + OpenFreeMap Carto-Style Global Vector Map */}
       <div ref={containerRef} className="w-full h-full z-0 isolate" />
+
+      {/* UK Weather Atmospheric Overlay */}
+      {!compact && weatherCondition !== 'Clear' && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-0 z-10 transition-opacity duration-500 ${
+            weatherCondition === 'Heavy Rain'
+              ? 'weather-rain-overlay bg-slate-900/15 opacity-90'
+              : weatherCondition === 'Light Drizzle'
+              ? 'weather-rain-overlay opacity-45'
+              : 'bg-slate-200/25 dark:bg-slate-800/25 backdrop-blur-[1px]'
+          }`}
+        />
+      )}
 
       {/* Zoom In / Zoom Out + 3D Camera + Map Layers Controls */}
       {!compact && (

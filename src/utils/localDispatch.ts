@@ -13,6 +13,7 @@ import {
   UK_AIRPORT_MAP_PINS,
   UK_CITIES,
 } from './ukGeo';
+import { detectUKZoneSurcharge } from './ukRealism';
 
 export type ServicePrefsInput = Pick<
   DriverPreferences,
@@ -290,6 +291,12 @@ interface LocalOfferOptions {
   forceIntercity?: boolean;
   includeIntercity?: boolean;
   servicePrefs?: ServicePrefsInput;
+  surgeLockedBonus?: number;
+  boostBonus?: number;
+  ccAlreadyPaidToday?: boolean;
+  airportQueueCode?: string;
+  areaPreference?: DriverPreferences['areaPreference'];
+  isEV?: boolean;
 }
 
 export function generateLocalTripOffer({
@@ -300,6 +307,12 @@ export function generateLocalTripOffer({
   forceIntercity = false,
   includeIntercity = true,
   servicePrefs,
+  surgeLockedBonus = 0,
+  boostBonus = 0,
+  ccAlreadyPaidToday = false,
+  airportQueueCode,
+  areaPreference = 'all',
+  isEV = false,
 }: LocalOfferOptions): TripOffer {
   const baseLatLng = realLatLng ?? mapToLatLng(anchorCoords);
   const currentLat = baseLatLng.lat;
@@ -338,7 +351,7 @@ export function generateLocalTripOffer({
     : 'UberX';
   const isDelivery = serviceName === 'Uber Eats';
 
-  // 1. Pick local PICKUP within 0.35 - 1.35 miles of driver's current position
+  // 1. Pick local PICKUP within 0.35 - 1.35 miles (or Airport Terminal if dispatched from Airport FIFO Queue)
   const pickupBearing = ((seedIndex * 73 + 25) % 360);
   const fallbackPickupDist = 0.45 + ((seedIndex % 5) * 0.18);
   const pickupFallbackLL = offsetLatLng(currentLat, currentLng, fallbackPickupDist, pickupBearing);
@@ -349,8 +362,17 @@ export function generateLocalTripOffer({
     FALLBACK_LOCAL_STREETS[seedIndex % FALLBACK_LOCAL_STREETS.length]
   }`;
   let pickupArea = `${localTown} Centre`;
+  const airportPin = airportQueueCode
+    ? UK_AIRPORT_MAP_PINS.find((ap) => ap.code === airportQueueCode)
+    : undefined;
 
-  if (hasFreshCache && geoCache && geoCache.streets.length > 0) {
+  if (airportPin && !isDelivery) {
+    const apLL = mapToLatLng(airportPin.coords);
+    pickupLat = apLL.lat;
+    pickupLng = apLL.lng;
+    pickupAddress = `${airportPin.name} Airport (${airportPin.code}) Authorised Pickup`;
+    pickupArea = `${airportPin.name} Airport`;
+  } else if (hasFreshCache && geoCache && geoCache.streets.length > 0) {
     const picked = geoCache.streets[seedIndex % geoCache.streets.length];
     pickupLat = picked.lat;
     pickupLng = picked.lng;
@@ -400,6 +422,47 @@ export function generateLocalTripOffer({
       dropoffArea = `${localTown} Outskirts · Out of City`;
       intercityCorridor = `${localTown} Regional Express`;
     }
+  } else if (areaPreference && areaPreference !== 'all') {
+    const areaBias: Record<
+      Exclude<NonNullable<DriverPreferences['areaPreference']>, 'all'>,
+      { lat: number; lng: number; address: string; area: string }
+    > = {
+      central: {
+        lat: 51.5105 + ((seedIndex % 3) - 1) * 0.008,
+        lng: -0.132 + ((seedIndex % 4) - 1.5) * 0.01,
+        address: ['Soho Square W1D', 'Covent Garden Piazza', 'King’s Cross Concourse', 'Trafalgar Square'][
+          seedIndex % 4
+        ],
+        area: 'Central London · Area Filter',
+      },
+      east: {
+        lat: 51.5055 + ((seedIndex % 3) - 1) * 0.009,
+        lng: -0.022 + ((seedIndex % 4) - 1.5) * 0.015,
+        address: ['Canary Wharf Jubilee Plaza', 'Stratford International', 'Greenwich Pier Cutty Sark', 'ExCeL London East'][
+          seedIndex % 4
+        ],
+        area: 'East & Canary Wharf · Area Filter',
+      },
+      west: {
+        lat: 51.488 + ((seedIndex % 3) - 1) * 0.01,
+        lng: -0.285 + ((seedIndex % 4) - 1.5) * 0.02,
+        address: ['Heathrow Terminal 5 Forecourt', 'Hammersmith Broadway', 'Ealing Broadway Station', 'Paddington Basin'][
+          seedIndex % 4
+        ],
+        area: 'West & Heathrow · Area Filter',
+      },
+      local: {
+        ...offsetLatLng(pickupLat, pickupLng, 1.4 + (seedIndex % 3) * 0.65, (pickupBearing + 120) % 360),
+        address: FALLBACK_LOCAL_DESTINATIONS[(seedIndex + 1) % FALLBACK_LOCAL_DESTINATIONS.length],
+        area: `${localTown} ≤3.5 mi · Local Only`,
+      },
+    };
+    const isGreaterLondon = haversineMiles(currentLat, currentLng, 51.5074, -0.1278) <= 28;
+    const chosenBias = areaPreference === 'local' || isGreaterLondon ? areaBias[areaPreference] : areaBias.local;
+    dropoffLat = chosenBias.lat;
+    dropoffLng = chosenBias.lng;
+    dropoffAddress = chosenBias.address;
+    dropoffArea = chosenBias.area;
   } else if (hasFreshCache && geoCache && geoCache.destinations.length > 0) {
     const destPool = geoCache.destinations.filter(
       (d) => haversineMiles(pickupLat, pickupLng, d.lat, d.lng) >= 1.3
@@ -459,6 +522,13 @@ export function generateLocalTripOffer({
     ? `${FALLBACK_LOCAL_STREETS[(seedIndex + 4) % FALLBACK_LOCAL_STREETS.length]} (Quick 2m stop)`
     : undefined;
 
+  const pickupCoordsProjected = clampMapCoords(projectLatLngToMap(pickupLat, pickupLng));
+  const dropoffCoordsProjected = clampMapCoords(projectLatLngToMap(dropoffLat, dropoffLng));
+
+  const zoneInfo = !isDelivery
+    ? detectUKZoneSurcharge(pickupCoordsProjected, dropoffCoordsProjected, ccAlreadyPaidToday, isEV)
+    : { appliedLondonCC: false, isAirportZone: false };
+
   // Realistic UK fare math per service tier
   const perMileRate =
     serviceName === 'UberXL'
@@ -472,17 +542,36 @@ export function generateLocalTripOffer({
       : serviceName === 'Intercity'
       ? 1.65
       : 1.5;
-  const surchargeLabel =
-    serviceName === 'Uber Pet' ? 'Pet Fee' : isDelivery ? 'Hot Bag Bonus' : undefined;
-  const surchargeAmount =
-    serviceName === 'Uber Pet' ? 3.5 : isDelivery && seedIndex % 2 === 0 ? 1.2 : undefined;
-  const surgeBonus = seedIndex % 3 === 0 ? Number((1.75 + (seedIndex % 4) * 0.75).toFixed(2)) : undefined;
+
+  const baseSurchargeLabel =
+    serviceName === 'Uber Pet'
+      ? 'Pet Fee'
+      : isDelivery
+      ? 'Hot Bag Bonus'
+      : zoneInfo.surchargeLabel;
+  const baseSurchargeAmount =
+    serviceName === 'Uber Pet'
+      ? 3.5
+      : isDelivery && seedIndex % 2 === 0
+      ? 1.2
+      : zoneInfo.surchargeAmount;
+
+  const surchargeLabel = baseSurchargeLabel;
+  const surchargeAmount = baseSurchargeAmount;
+
+  const generatedSurge =
+    seedIndex % 3 === 0 ? Number((1.75 + (seedIndex % 4) * 0.75).toFixed(2)) : 0;
+  const effectiveSurge = Math.max(generatedSurge, surgeLockedBonus);
+  const surgeBonus = effectiveSurge > 0 ? Number(effectiveSurge.toFixed(2)) : undefined;
+  const effectiveBoost = boostBonus > 0 ? Number(boostBonus.toFixed(2)) : undefined;
+
   const baseFare =
     (isDelivery ? 2.85 : 3.2) +
     tripMiles * perMileRate +
     tripMinutes * (isDelivery ? 0.14 : 0.18) +
     (surchargeAmount ?? 0) +
-    (surgeBonus ?? 0);
+    (surgeBonus ?? 0) +
+    (effectiveBoost ?? 0);
   const minFare =
     serviceName === 'UberXL'
       ? 9.5
@@ -501,9 +590,13 @@ export function generateLocalTripOffer({
     ? String(1000 + ((seedIndex * 1373 + 4829) % 8999))
     : undefined;
 
+  const eatsOrderCode = isDelivery
+    ? `#UE-${(4100 + ((seedIndex * 79) % 5800)).toString(16).toUpperCase()}`
+    : undefined;
+
   const riderNote = isDelivery
-    ? `Order #UE-${4100 + ((seedIndex * 79) % 5800)} · ${
-        seedIndex % 2 === 0 ? '2x Hot Bags · Leave at front door' : 'Grocery order · Ring doorbell on arrival'
+    ? `Order ${eatsOrderCode} · ${
+        seedIndex % 2 === 0 ? '2x Hot Bags · Leave at front door (photo required)' : 'Ring doorbell · Hand order directly'
       }`
     : serviceName === 'Uber Pet'
     ? PET_NOTES[seedIndex % PET_NOTES.length]
@@ -511,6 +604,8 @@ export function generateLocalTripOffer({
     ? `Group of ${4 + (seedIndex % 3)} passengers with luggage — outside ${pickupAddress}.`
     : serviceName === 'Comfort'
     ? `Comfort preference: Quiet ride & cool cabin · ${pickupAddress}.`
+    : airportPin
+    ? `Flight arrival matched via ${airportPin.name} FIFO Queue · Waiting at pickup bay.`
     : `Waiting outside ${pickupAddress} in ${localTown}.`;
 
   return {
@@ -529,9 +624,14 @@ export function generateLocalTripOffer({
     tripMiles,
     dropoffAddress,
     dropoffArea,
-    pickupCoords: clampMapCoords(projectLatLngToMap(pickupLat, pickupLng)),
-    dropoffCoords: clampMapCoords(projectLatLngToMap(dropoffLat, dropoffLng)),
+    pickupCoords: pickupCoordsProjected,
+    dropoffCoords: dropoffCoordsProjected,
     surgeBonus,
+    surgeLockedBonus: surgeLockedBonus > 0 ? surgeLockedBonus : undefined,
+    boostBonus: effectiveBoost,
+    eatsOrderCode,
+    isAirportPickup: Boolean(airportPin || zoneInfo.isAirportZone),
+    inLondonCC: zoneInfo.appliedLondonCC,
     pinCode,
     surchargeLabel,
     surchargeAmount,
@@ -549,7 +649,9 @@ export function buildLocalOfferPool(
   realLatLng: { lat: number; lng: number } | null | undefined,
   includeIntercity: boolean,
   startSeed = 0,
-  servicePrefs?: ServicePrefsInput
+  servicePrefs?: ServicePrefsInput,
+  areaPreference?: DriverPreferences['areaPreference'],
+  isEV = false
 ): TripOffer[] {
   const offers: TripOffer[] = [];
   for (let i = 0; i < 6; i++) {
@@ -560,6 +662,8 @@ export function buildLocalOfferPool(
         seedIndex: startSeed + i,
         includeIntercity,
         servicePrefs,
+        areaPreference,
+        isEV,
       })
     );
   }

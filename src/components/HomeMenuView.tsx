@@ -7,8 +7,11 @@ import {
   Car,
   ChevronLeft,
   Clock,
+  CloudRain,
   Eye,
   EyeOff,
+  Flame,
+  Fuel,
   Menu as MenuIcon,
   Moon,
   Plane,
@@ -23,7 +26,14 @@ import {
   User,
 } from 'lucide-react';
 import { BUSY_SOON_ZONES, UK_AIRPORT_QUEUES } from '../data/mockDriverData';
-import { DriverAccount, DriverOnlineStatus, DriverPreferences, TripStats } from '../types/driver';
+import {
+  DriverAccount,
+  DriverOnlineStatus,
+  DriverPreferences,
+  TripStats,
+  UKWeatherCondition,
+} from '../types/driver';
+import { getUKWeatherInfo, UKDemandContext } from '../utils/ukRealism';
 import { formatOnlineTimer } from '../utils/timeFormat';
 
 interface HomeMenuViewProps {
@@ -39,6 +49,13 @@ interface HomeMenuViewProps {
   radarRefreshSecLeft: number;
   radarCount: number;
   permissionsReadyCount: number;
+  demandContext?: UKDemandContext;
+  airportQueue?: { name: string; code: string; position: number } | null;
+  lockedSurgeAmount?: number;
+  isOnBreak?: boolean;
+  breakSecondsLeft?: number;
+  onToggleBreak?: () => void;
+  onResetRestLock?: () => void;
   onBackToMap: () => void;
   onToggleOnline: () => void;
   onTogglePrivacy: () => void;
@@ -55,6 +72,10 @@ interface HomeMenuViewProps {
   onOpenPermissions: () => void;
   onDispatchIntercity: () => void;
   onRechargeVehicle: () => void;
+  onOpenChargers?: () => void;
+  weatherCondition?: UKWeatherCondition;
+  onCycleWeather?: () => void;
+  streakCount?: number;
 }
 
 export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
@@ -70,6 +91,13 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
   radarRefreshSecLeft,
   radarCount,
   permissionsReadyCount,
+  demandContext,
+  airportQueue = null,
+  lockedSurgeAmount = 0,
+  isOnBreak = false,
+  breakSecondsLeft = 0,
+  onToggleBreak,
+  onResetRestLock,
   onBackToMap,
   onToggleOnline,
   onTogglePrivacy,
@@ -86,6 +114,10 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
   onOpenPermissions,
   onDispatchIntercity,
   onRechargeVehicle,
+  onOpenChargers,
+  weatherCondition = 'Clear',
+  onCycleWeather,
+  streakCount = 0,
 }) => {
   const formatMmSs = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -194,6 +226,48 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
           </button>
         </div>
 
+        {/* Live UK Demand Pacing, Uber Pro Tier, Sticky Surge & Airport FIFO Queue Strip */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="px-3 py-1 rounded-full bg-black dark:bg-[#276EF1] text-white text-[11.5px] font-bold">
+            Uber Pro {account.tier}
+          </span>
+          {demandContext && (
+            <span
+              className={`px-3 py-1 rounded-full text-[11.5px] font-bold ${
+                demandContext.demandLevel === 'Peak Rush' || demandContext.demandLevel === 'Night Surge'
+                  ? 'bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300'
+                  : 'bg-[#F3F3F3] dark:bg-white/10 text-[#545454] dark:text-neutral-300'
+              }`}
+            >
+              {demandContext.demandLevel} · {demandContext.periodLabel}
+            </span>
+          )}
+          {lockedSurgeAmount > 0 && (
+            <span className="px-3 py-1 rounded-full bg-[#7A1C79] text-white text-[11.5px] font-bold tabular-nums">
+              +£{lockedSurgeAmount.toFixed(2)} Surge Locked
+            </span>
+          )}
+          {airportQueue && (
+            <span className="px-3 py-1 rounded-full bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] text-[11.5px] font-bold tabular-nums">
+              {airportQueue.code} FIFO Queue #{airportQueue.position}
+            </span>
+          )}
+          {onlineStatus === 'online' && isOnBreak && (
+            <span className="px-3 py-1 rounded-full bg-[#FEF3C7] dark:bg-amber-950/70 text-[#B45309] dark:text-amber-300 text-[11.5px] font-bold tabular-nums">
+              Coffee Break · {formatMmSs(breakSecondsLeft)}
+            </span>
+          )}
+          <span
+            className={`px-3 py-1 rounded-full text-[11.5px] font-bold tabular-nums ${
+              streakCount > 0
+                ? 'bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300'
+                : 'bg-[#F3F3F3] dark:bg-white/10 text-[#545454] dark:text-neutral-300'
+            }`}
+          >
+            Streak {streakCount}/3 (+£12)
+          </span>
+        </div>
+
         {/* Face Verification Status Card */}
         <button
           type="button"
@@ -265,33 +339,119 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={onOpenTripRadar}
-              className="w-full h-11 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[13.5px] font-bold hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] transition-colors flex items-center justify-between px-4 tabular-nums"
-            >
-              <span>Open Trip Radar ({radarCount})</span>
-              <span className="text-[11.5px] text-white/75">
-                Refreshes in {radarRefreshSecLeft}s
-              </span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onOpenTripRadar}
+                className="flex-1 h-11 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[13.5px] font-bold hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] transition-colors flex items-center justify-between px-4 tabular-nums"
+              >
+                <span>Open Trip Radar ({radarCount})</span>
+                <span className="text-[11.5px] text-white/75">
+                  Refreshes in {radarRefreshSecLeft}s
+                </span>
+              </button>
+              {onToggleBreak && (
+                <button
+                  type="button"
+                  onClick={onToggleBreak}
+                  className={`px-3.5 h-11 rounded-xl text-[12.5px] font-bold whitespace-nowrap transition-colors ${
+                    isOnBreak
+                      ? 'bg-[#05944F] text-white'
+                      : 'bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300'
+                  }`}
+                >
+                  {isOnBreak ? 'Resume' : 'Break'}
+                </button>
+              )}
+            </div>
           </div>
         )}
 
+        {/* Consecutive Trip Series Streak & Live UK Weather Surge Controls */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div className="p-3.5 rounded-2xl border border-[#F59E0B]/30 bg-[#FFFBEB] dark:bg-amber-950/25 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12.5px] font-extrabold text-[#B45309] dark:text-amber-300 flex items-center gap-1.5">
+                <Flame className="w-4 h-4" />
+                Consecutive Trip Streak
+              </span>
+              <span className="text-[12px] font-extrabold text-black dark:text-white tabular-nums">
+                {streakCount}/3 · +£12.00
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[1, 2, 3].map((step) => (
+                <div
+                  key={step}
+                  className={`h-2 rounded-full transition-colors ${
+                    streakCount >= step ? 'bg-[#F59E0B]' : 'bg-black/10 dark:bg-white/10'
+                  }`}
+                />
+              ))}
+            </div>
+            <p className="text-[11px] text-[#545454] dark:text-neutral-400">
+              Accept & finish 3 trips without declining Exclusive offers
+            </p>
+          </div>
+
+          {(() => {
+            const wInfo = getUKWeatherInfo(weatherCondition);
+            return (
+              <div className="p-3.5 rounded-2xl border border-[#276EF1]/25 bg-[#F4F8FF] dark:bg-[#161F33] flex items-center justify-between gap-2.5">
+                <div className="min-w-0">
+                  <p className="text-[12.5px] font-extrabold text-black dark:text-white flex items-center gap-1.5">
+                    <CloudRain className="w-4 h-4 text-[#276EF1] shrink-0" />
+                    <span className="truncate">Weather: {weatherCondition}</span>
+                  </p>
+                  <p className="text-[11px] text-[#545454] dark:text-neutral-400 tabular-nums mt-0.5">
+                    {wInfo.surgeAdd > 0
+                      ? `+${wInfo.surgeAdd.toFixed(2)}x surge · −${wInfo.dispatchBoostSec}s wait`
+                      : 'Dry road standard demand'}
+                  </p>
+                </div>
+                {onCycleWeather && (
+                  <button
+                    type="button"
+                    onClick={onCycleWeather}
+                    className="px-2.5 h-8 rounded-lg bg-black dark:bg-[#276EF1] text-white text-[11px] font-bold whitespace-nowrap shrink-0"
+                  >
+                    Cycle
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+
         {/* UK 12-Hour Driving Time Limit Tracker */}
         <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] space-y-2">
-          <div className="flex items-center justify-between text-[13px]">
+          <div className="flex items-center justify-between text-[13px] gap-2">
             <span className="font-bold text-black dark:text-white flex items-center gap-1.5">
-              <Clock className="w-4 h-4 text-[#276EF1]" />
+              <Clock className={`w-4 h-4 ${remainingMin <= 0 ? 'text-[#E11900]' : 'text-[#276EF1]'}`} />
               UK Driving Time Remaining
             </span>
-            <span className="font-extrabold text-black dark:text-white tabular-nums">
-              {remHours}h {remMins}m left
-            </span>
+            <div className="flex items-center gap-2">
+              <span
+                className={`font-extrabold tabular-nums ${
+                  remainingMin <= 0 ? 'text-[#E11900]' : 'text-black dark:text-white'
+                }`}
+              >
+                {remHours}h {remMins}m left
+              </span>
+              {onResetRestLock && account.drivingMinutesUsedToday > 0 && (
+                <button
+                  type="button"
+                  onClick={onResetRestLock}
+                  className="px-2 py-0.5 rounded-md bg-[#276EF1] text-white text-[11px] font-bold"
+                >
+                  6h Rest
+                </button>
+              )}
+            </div>
           </div>
           <div className="w-full h-1.5 rounded-full bg-[#E6E6E6] dark:bg-white/10 overflow-hidden">
             <div
-              className="h-full bg-[#05944F] transition-all"
+              className={`h-full transition-all ${remainingMin <= 0 ? 'bg-[#E11900]' : 'bg-[#05944F]'}`}
               style={{ width: `${Math.max(4, 100 - drivingPct)}%` }}
             />
           </div>
@@ -324,17 +484,26 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
         {/* EV Battery / Fuel Range Tracker */}
         {(() => {
           const batteryPct = account.batteryPct ?? 84;
-          const rangeMiles = Math.round((batteryPct / 100) * 250);
+          const isEV = Boolean(account.isEV);
+          const rangeMiles = Math.round((batteryPct / 100) * (isEV ? 250 : 420));
           return (
             <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] space-y-2.5">
               <div className="flex items-center justify-between gap-2 text-[13px]">
                 <span className="font-bold text-black dark:text-white flex items-center gap-1.5">
-                  <BatteryCharging
-                    className={`w-4 h-4 ${
-                      batteryPct <= 25 ? 'text-[#E11900]' : 'text-[#05944F]'
-                    }`}
-                  />
-                  EV Battery / Fuel Range
+                  {isEV ? (
+                    <BatteryCharging
+                      className={`w-4 h-4 ${
+                        batteryPct <= 25 ? 'text-[#E11900]' : 'text-[#05944F]'
+                      }`}
+                    />
+                  ) : (
+                    <Fuel
+                      className={`w-4 h-4 ${
+                        batteryPct <= 25 ? 'text-[#E11900]' : 'text-[#05944F]'
+                      }`}
+                    />
+                  )}
+                  {isEV ? 'EV Battery Range' : 'Petrol / Hybrid Fuel Range'}
                 </span>
                 <span className="font-extrabold text-black dark:text-white tabular-nums">
                   {batteryPct}% · ~{rangeMiles} mi
@@ -348,21 +517,34 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
                   style={{ width: `${batteryPct}%` }}
                 />
               </div>
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate flex-1">
                   {batteryPct <= 25
-                    ? 'Low range — rapid charge recommended before Intercity'
+                    ? isEV
+                      ? 'Low battery — rapid charge recommended before Intercity'
+                      : 'Low fuel — UK forecourt refuel recommended'
                     : 'Ready for local & Intercity motorway runs'}
                 </p>
-                {batteryPct < 98 && (
-                  <button
-                    type="button"
-                    onClick={onRechargeVehicle}
-                    className="px-2.5 py-1 rounded-full bg-[#05944F] text-white text-[11px] font-bold whitespace-nowrap shrink-0 hover:bg-[#047A40]"
-                  >
-                    Rapid Charge (100%)
-                  </button>
-                )}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {onOpenChargers && (
+                    <button
+                      type="button"
+                      onClick={onOpenChargers}
+                      className="px-2.5 py-1 rounded-full bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] text-[11px] font-bold whitespace-nowrap hover:bg-[#D9E7FD]"
+                    >
+                      {isEV ? 'Find Charger' : 'Find Fuel'}
+                    </button>
+                  )}
+                  {batteryPct < 98 && (
+                    <button
+                      type="button"
+                      onClick={onRechargeVehicle}
+                      className="px-2.5 py-1 rounded-full bg-[#05944F] text-white text-[11px] font-bold whitespace-nowrap hover:bg-[#047A40]"
+                    >
+                      {isEV ? 'Charge 100%' : 'Refuel 100%'}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           );

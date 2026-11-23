@@ -87,7 +87,7 @@ define(['./workbox-39895644'], (function (workbox) { 'use strict';
     "revision": "c85b2b293ce601aa0a4d5866400a4099"
   }, {
     "url": "index.html",
-    "revision": "959bcd995f85903dd2eb522318c46d1e"
+    "revision": "76cfa55ee617d405e436f8780cbe5ff9"
   }, {
     "url": "icon.svg",
     "revision": "17a6631622048236903fa36b25201f3d"
@@ -116,10 +116,10 @@ define(['./workbox-39895644'], (function (workbox) { 'use strict';
     "url": "assets/maplibre-gl-worker-BZdkatZW.mjs",
     "revision": null
   }, {
-    "url": "assets/index-o3PU1eaw.js",
+    "url": "assets/index-Bj9tW8Tq.css",
     "revision": null
   }, {
-    "url": "assets/index-DlapN8se.css",
+    "url": "assets/index-BTYX7qm9.js",
     "revision": null
   }, {
     "url": "apple-touch-icon.png",

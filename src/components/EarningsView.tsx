@@ -1,20 +1,25 @@
 import React, { useMemo, useState } from 'react';
 import {
   ArrowRight,
+  BatteryCharging,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
+  Download,
   Eye,
   EyeOff,
   MoreHorizontal,
   ReceiptText,
   Route,
+  ShieldCheck,
+  Sparkles,
   Target,
+  TrendingUp,
   Trophy,
   X,
 } from 'lucide-react';
-import { CompletedTrip } from '../types/driver';
+import { CompletedTrip, ExpenseEntry } from '../types/driver';
 import {
   formatWeekRangeLabel,
   getAllTimeTotalFromLedger,
@@ -31,6 +36,7 @@ interface EarningsViewProps {
   walletBalance: number;
   dailyTotals: Record<string, number>;
   completedTrips: CompletedTrip[];
+  expenses?: ExpenseEntry[];
   questCompletedCount: number;
   dailyGoalGbp?: number;
   weeklyGoalGbp?: number;
@@ -40,6 +46,14 @@ interface EarningsViewProps {
   onBack: () => void;
   onCashOut: (amount: number, method: 'instant' | 'bank') => void;
   onOpenOpportunities: () => void;
+  onOpenChargers?: () => void;
+  onExportTaxCsv?: () => void;
+  onFileTripClaim?: (tripId: string, kind: 'valeting' | 'fare_review') => void;
+  holidayPayAccrued?: number;
+  holidayPayClaimedTotal?: number;
+  engagedMinutesTotal?: number;
+  onlineMinutesTotal?: number;
+  onClaimHolidayPay?: () => void;
 }
 
 function formatDynamicTripTime(
@@ -74,6 +88,7 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
   walletBalance,
   dailyTotals,
   completedTrips,
+  expenses = [],
   questCompletedCount,
   dailyGoalGbp = 180,
   weeklyGoalGbp = 950,
@@ -83,6 +98,14 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
   onBack,
   onCashOut,
   onOpenOpportunities,
+  onOpenChargers,
+  onExportTaxCsv,
+  onFileTripClaim,
+  holidayPayAccrued = 0,
+  holidayPayClaimedTotal = 0,
+  engagedMinutesTotal = 42,
+  onlineMinutesTotal = 60,
+  onClaimHolidayPay,
 }) => {
   const [showCashOutModal, setShowCashOutModal] = useState(false);
   const [cashOutMethod, setCashOutMethod] = useState<'instant' | 'bank'>('instant');
@@ -178,6 +201,44 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
       totalTaxRelief: Number((totalMiles * 0.45).toFixed(2)),
     };
   }, [completedTrips, todayKey]);
+
+  const efficiencyStats = useMemo(() => {
+    const tripDurationSum = completedTrips.reduce((s, t) => s + t.durationMin, 0);
+    const engagedMin = Math.max(engagedMinutesTotal, tripDurationSum, 15);
+    const onlineMin = Math.max(onlineMinutesTotal, engagedMin);
+    const engagedHours = engagedMin / 60;
+    const onlineHours = onlineMin / 60;
+    const tripsEarnings =
+      completedTrips.length > 0
+        ? completedTrips.reduce(
+            (s, t) => s + (t.netPayout ?? t.fare + t.tip + (t.waitFee ?? 0)),
+            0
+          )
+        : todayEarnings;
+    const totalMiles = completedTrips.reduce((s, t) => s + t.distanceMiles, 0);
+    const perEngagedHr = Number((tripsEarnings / engagedHours).toFixed(2));
+    const perOnlineHr = Number((tripsEarnings / onlineHours).toFixed(2));
+    const perMile = totalMiles > 0 ? Number((tripsEarnings / totalMiles).toFixed(2)) : 0;
+    const peakNet = completedTrips
+      .filter((t) => t.peakPeriod)
+      .reduce((s, t) => s + (t.netPayout ?? t.fare + t.tip + (t.waitFee ?? 0)), 0);
+    const offPeakNet = Math.max(0, tripsEarnings - peakNet);
+    const peakSharePct =
+      tripsEarnings > 0 ? Math.min(100, Math.round((peakNet / tripsEarnings) * 100)) : 50;
+    const nlwRate = 12.21;
+    const nlwSurplusPct = Math.round(((perEngagedHr - nlwRate) / nlwRate) * 100);
+    return {
+      perEngagedHr,
+      perOnlineHr,
+      perMile,
+      peakNet: Number(peakNet.toFixed(2)),
+      offPeakNet: Number(offPeakNet.toFixed(2)),
+      peakSharePct,
+      nlwRate,
+      nlwSurplusPct,
+      engagedMin,
+    };
+  }, [completedTrips, engagedMinutesTotal, onlineMinutesTotal, todayEarnings]);
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto bg-white dark:bg-[#0D0E12] pb-6">
@@ -573,6 +634,206 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
               </p>
             </div>
           </div>
+          {onExportTaxCsv && (
+            <button
+              type="button"
+              onClick={onExportTaxCsv}
+              className="w-full h-10 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[12.5px] font-bold flex items-center justify-center gap-1.5 hover:opacity-90 transition-opacity"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download HMRC Self-Assessment CSV</span>
+            </button>
+          )}
+        </div>
+
+        {/* Vehicle Charging / Fuel Expenses & Net Take-Home */}
+        {(() => {
+          const totalExpenses = Number(
+            expenses.reduce((s, e) => s + e.amount, 0).toFixed(2)
+          );
+          const todayExpenses = Number(
+            expenses
+              .filter((e) => e.dateKey === todayKey)
+              .reduce((s, e) => s + e.amount, 0)
+              .toFixed(2)
+          );
+          const netAfterExpenses = Number(
+            (allSavedEarnings - totalExpenses).toFixed(2)
+          );
+          return (
+            <div className="rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181E] p-4 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-[#FFF3D6] dark:bg-amber-950/60 text-[#D97706] flex items-center justify-center shrink-0">
+                    <BatteryCharging className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-bold text-black dark:text-white">
+                      Charging, Fuel & Net Profit
+                    </p>
+                    <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 tabular-nums">
+                      Today costs: {mask(`£${todayExpenses.toFixed(2)}`)} · Total: {mask(`£${totalExpenses.toFixed(2)}`)}
+                    </p>
+                  </div>
+                </div>
+                {onOpenChargers && (
+                  <button
+                    type="button"
+                    onClick={onOpenChargers}
+                    className="px-3 py-1 rounded-full bg-black dark:bg-[#276EF1] text-white text-[11.5px] font-bold shrink-0"
+                  >
+                    Log Charge
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-black/5 dark:border-white/10 text-[12px] tabular-nums">
+                <div className="rounded-xl bg-white dark:bg-white/5 px-3 py-2 border border-black/5 dark:border-white/5">
+                  <p className="text-[#545454] dark:text-neutral-400">Net After Costs</p>
+                  <p className="font-extrabold text-[#05944F]">
+                    {mask(`£${netAfterExpenses.toFixed(2)}`)}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-white dark:bg-white/5 px-3 py-2 border border-black/5 dark:border-white/5">
+                  <p className="text-[#545454] dark:text-neutral-400">Logged Receipts</p>
+                  <p className="font-bold text-black dark:text-white">
+                    {expenses.length} {expenses.length === 1 ? 'expense' : 'expenses'}
+                  </p>
+                </div>
+              </div>
+
+              {expenses.length > 0 && !privacyHidden && (
+                <div className="space-y-1 pt-1">
+                  {expenses.slice(0, 3).map((ex) => (
+                    <div
+                      key={ex.id}
+                      className="flex items-center justify-between text-[11.5px] text-[#545454] dark:text-neutral-400 tabular-nums"
+                    >
+                      <span className="truncate">{ex.label} ({ex.timestamp})</span>
+                      <span className="font-bold text-[#E11900] shrink-0">
+                        −£{ex.amount.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* UK Worker Rights: 12.07% Holiday Pay & National Living Wage Comparison */}
+        <div className="rounded-2xl border border-[#05944F]/25 bg-[#F2FBF6] dark:bg-emerald-950/25 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-[#05944F] text-white flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[14px] font-bold text-black dark:text-white truncate">
+                  UK Worker Rights · 12.07% Holiday Pay
+                </p>
+                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate tabular-nums">
+                  NLW Guarantee £{efficiencyStats.nlwRate.toFixed(2)}/hr · Accrued weekly pot
+                </p>
+              </div>
+            </div>
+            <span className="text-[18px] font-extrabold text-[#05944F] tabular-nums shrink-0">
+              {mask(`£${holidayPayAccrued.toFixed(2)}`)}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-[12px] tabular-nums">
+            <div className="rounded-xl bg-white dark:bg-white/5 px-3 py-2 border border-black/5 dark:border-white/5">
+              <p className="text-[#545454] dark:text-neutral-400">Engaged vs UK NLW</p>
+              <p className="font-bold text-black dark:text-white">
+                {mask(`£${efficiencyStats.perEngagedHr.toFixed(2)}/hr`)}{' '}
+                <span className="text-[#05944F] text-[11px]">
+                  ({efficiencyStats.nlwSurplusPct >= 0 ? `+${efficiencyStats.nlwSurplusPct}%` : `${efficiencyStats.nlwSurplusPct}%`})
+                </span>
+              </p>
+            </div>
+            <div className="rounded-xl bg-white dark:bg-white/5 px-3 py-2 border border-black/5 dark:border-white/5">
+              <p className="text-[#545454] dark:text-neutral-400">Claimed to Wallet</p>
+              <p className="font-bold text-black dark:text-white">
+                {mask(`£${holidayPayClaimedTotal.toFixed(2)}`)}
+              </p>
+            </div>
+          </div>
+
+          {onClaimHolidayPay && (
+            <button
+              type="button"
+              disabled={holidayPayAccrued < 0.5}
+              onClick={() => {
+                uberSounds.play('cashOut');
+                onClaimHolidayPay();
+              }}
+              className="w-full h-10 rounded-xl bg-[#05944F] hover:bg-[#047A40] disabled:opacity-40 text-white text-[13px] font-bold transition-colors tabular-nums"
+            >
+              {holidayPayAccrued >= 0.5
+                ? `Claim ${mask(`£${holidayPayAccrued.toFixed(2)}`)} Holiday Pay to Wallet`
+                : 'Complete trips to accrue Holiday Pay (min £0.50)'}
+            </button>
+          )}
+        </div>
+
+        {/* Weekly Efficiency Breakdown (£/Engaged Hr, £/Online Hr, £/Mile, Peak Split) */}
+        <div className="rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181E] p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] flex items-center justify-center shrink-0">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-[14px] font-bold text-black dark:text-white">
+                  Weekly Efficiency Insights
+                </p>
+                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 tabular-nums">
+                  {efficiencyStats.engagedMin} engaged min logged across UK sessions
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center tabular-nums">
+            <div className="rounded-xl bg-white dark:bg-white/5 p-2.5 border border-black/5 dark:border-white/5">
+              <p className="text-[15px] font-extrabold text-black dark:text-white">
+                {mask(`£${efficiencyStats.perEngagedHr.toFixed(2)}`)}
+              </p>
+              <p className="text-[10.5px] font-semibold text-[#545454] dark:text-neutral-400">
+                / Engaged hr
+              </p>
+            </div>
+            <div className="rounded-xl bg-white dark:bg-white/5 p-2.5 border border-black/5 dark:border-white/5">
+              <p className="text-[15px] font-extrabold text-black dark:text-white">
+                {mask(`£${efficiencyStats.perOnlineHr.toFixed(2)}`)}
+              </p>
+              <p className="text-[10.5px] font-semibold text-[#545454] dark:text-neutral-400">
+                / Online hr
+              </p>
+            </div>
+            <div className="rounded-xl bg-white dark:bg-white/5 p-2.5 border border-black/5 dark:border-white/5">
+              <p className="text-[15px] font-extrabold text-[#276EF1]">
+                {mask(`£${efficiencyStats.perMile.toFixed(2)}`)}
+              </p>
+              <p className="text-[10.5px] font-semibold text-[#545454] dark:text-neutral-400">
+                / Trip mile
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5 pt-1">
+            <div className="flex items-center justify-between text-[11.5px] font-semibold text-[#545454] dark:text-neutral-400 tabular-nums">
+              <span>Peak Rush & Night: {mask(`£${efficiencyStats.peakNet.toFixed(2)}`)}</span>
+              <span>Off-Peak: {mask(`£${efficiencyStats.offPeakNet.toFixed(2)}`)}</span>
+            </div>
+            <div className="h-2 rounded-full bg-[#E6E6E6] dark:bg-white/10 overflow-hidden flex">
+              <div
+                className="h-full bg-[#276EF1] transition-all duration-500"
+                style={{ width: `${efficiencyStats.peakSharePct}%` }}
+              />
+            </div>
+          </div>
         </div>
 
         {/* Recent Trips & Saved Daily History */}
@@ -630,13 +891,20 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
             <div className="divide-y divide-[#EEEEEE] dark:divide-white/10 border border-[#E6E6E6] dark:border-white/10 rounded-2xl bg-white dark:bg-[#16181E] overflow-hidden">
               {visibleTrips.map((trip) => {
                 const isExpanded = expandedTripId === trip.id;
-                const total = trip.fare + trip.tip + (trip.waitFee ?? 0);
+                const total = trip.fare + trip.tip + (trip.waitFee ?? 0) + (trip.claimAmount ?? 0);
                 return (
-                  <button
+                  <div
                     key={trip.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setExpandedTripId(isExpanded ? null : trip.id)}
-                    className="w-full p-4 text-left hover:bg-[#FAFAFA] dark:hover:bg-white/5 transition-colors"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setExpandedTripId(isExpanded ? null : trip.id);
+                      }
+                    }}
+                    className="w-full p-4 text-left hover:bg-[#FAFAFA] dark:hover:bg-white/5 transition-colors cursor-pointer"
                   >
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
@@ -653,6 +921,12 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
                           {trip.isNoShowFee && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[10.5px] font-bold">
                               No-Show Fee
+                            </span>
+                          )}
+                          {trip.claimFiled && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F] text-[10.5px] font-bold">
+                              <Sparkles className="w-3 h-3" />
+                              {trip.claimFiled === 'valeting' ? 'Valeting Credited' : 'Fare Adjusted'}
                             </span>
                           )}
                         </div>
@@ -690,6 +964,14 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
                             <span>+£{trip.waitFee!.toFixed(2)}</span>
                           </div>
                         )}
+                        {(trip.claimAmount ?? 0) > 0 && (
+                          <div className="flex justify-between text-[#05944F] font-semibold">
+                            <span>
+                              {trip.claimFiled === 'valeting' ? 'UK Valeting / Cleaning Payout' : 'Fare Review Adjustment'}
+                            </span>
+                            <span>+£{trip.claimAmount!.toFixed(2)}</span>
+                          </div>
+                        )}
                         {(trip.surchargeAmount ?? 0) > 0 && (
                           <div className="flex justify-between">
                             <span>{trip.surchargeLabel || 'UK Zone / Airport Fee'}</span>
@@ -714,9 +996,30 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
                             ))}
                           </div>
                         )}
+                        {onFileTripClaim && !trip.claimFiled && !trip.isNoShowFee && !trip.cancellationFee && (
+                          <div
+                            className="grid grid-cols-2 gap-2 pt-2.5"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => onFileTripClaim(trip.id, 'valeting')}
+                              className="h-9 rounded-xl bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[11.5px] font-bold hover:opacity-90"
+                            >
+                              Claim Valeting (£40)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onFileTripClaim(trip.id, 'fare_review')}
+                              className="h-9 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] text-[11.5px] font-bold hover:opacity-90"
+                            >
+                              Fare Review (+£4.80)
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
-                  </button>
+                  </div>
                 );
               })}
             </div>

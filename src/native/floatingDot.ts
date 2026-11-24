@@ -6,6 +6,7 @@ export interface NativeBubblePermissions {
   overlayGranted: boolean;
   notificationsGranted: boolean;
   batteryIgnored: boolean;
+  androidAutoConnected?: boolean;
 }
 
 export type BubbleActionType =
@@ -13,7 +14,13 @@ export type BubbleActionType =
   | 'decline'
   | 'open'
   | 'toggle_online'
-  | 'open_earnings';
+  | 'open_earnings'
+  | 'trip_arrive_pickup'
+  | 'trip_start'
+  | 'trip_arrive_stop'
+  | 'trip_continue_stop'
+  | 'trip_arrive_dropoff'
+  | 'trip_complete';
 
 export interface BubbleTappedEvent {
   action?: BubbleActionType;
@@ -79,6 +86,7 @@ interface UberFloatingBubbleNativePlugin {
     questStreakText: string;
     demandText: string;
   }): Promise<void>;
+  updateCarAutoState(options: AndroidAutoStatePayload): Promise<void>;
   requestPinWidget(): Promise<{ supported: boolean }>;
   addListener(
     eventName: 'bubbleTapped',
@@ -223,6 +231,72 @@ export async function requestPinAndroidWidget(): Promise<boolean> {
     return Boolean(res?.supported);
   } catch {
     return false;
+  }
+}
+
+export interface AndroidAutoStatePayload {
+  online: boolean;
+  city: string;
+  driverName: string;
+  earningsText: string;
+  questStreakText: string;
+  demandText: string;
+  tripStage: string;
+  driverX: number;
+  driverY: number;
+  driverHeading: number;
+  hasOffer: boolean;
+  offerId?: string;
+  offerJson?: string;
+  offerType?: string;
+  offerServiceName?: string;
+  offerFareText?: string;
+  offerRatingText?: string;
+  offerPickupMin?: number;
+  offerPickupMiles?: number;
+  offerPickupAddress?: string;
+  offerTripMin?: number;
+  offerTripMiles?: number;
+  offerDropoffAddress?: string;
+  offerSurchargeLabel?: string;
+  offerExpiresAtMs?: number;
+  activeTripId?: string;
+  activeServiceName?: string;
+  activeRiderName?: string;
+  activeFareText?: string;
+  activePickupAddress?: string;
+  activeStopAddress?: string;
+  activeDropoffAddress?: string;
+  activeStopVisited?: boolean;
+  activePinCode?: string;
+  etaMinLabel?: string;
+  distanceRemaining?: string;
+  remainingSeconds?: number;
+  remainingMiles?: number;
+  milesToTurn?: number;
+  maneuverKind?: string;
+  maneuverTitle?: string;
+  maneuverSubtitle?: string;
+  speedLimitMph?: number;
+  routePoints?: Array<[number, number]>;
+  surgePoints?: Array<[number, number, string]>;
+  pickupX?: number;
+  pickupY?: number;
+  stopX?: number;
+  stopY?: number;
+  dropoffX?: number;
+  dropoffY?: number;
+  hasStopCoords?: boolean;
+}
+
+export async function syncAndroidAutoState(
+  payload: AndroidAutoStatePayload
+): Promise<void> {
+  if (!isNativeAndroidApk()) return;
+  try {
+    await UberFloatingBubble.updateCarAutoState(payload);
+  } catch {
+    // Ignore native error
   }
 }
 

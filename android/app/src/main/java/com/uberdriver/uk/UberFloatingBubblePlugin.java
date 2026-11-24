@@ -93,7 +93,12 @@ public class UberFloatingBubblePlugin extends Plugin {
         ret.put("overlayGranted", overlayGranted);
         ret.put("notificationsGranted", notificationsGranted);
         ret.put("batteryIgnored", batteryIgnored);
+        ret.put("androidAutoConnected", UberCarAutoBridge.isAutoConnected());
         return ret;
+    }
+
+    public static boolean isPluginAttached() {
+        return instanceRef.get() != null;
     }
 
     private void emitPermissionsSnapshot() {
@@ -250,6 +255,14 @@ public class UberFloatingBubblePlugin extends Plugin {
             questStreakText,
             demandText
         );
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void updateCarAutoState(PluginCall call) {
+        if (call.getData() != null) {
+            UberCarAutoBridge.updateFromJson(getContext(), call.getData());
+        }
         call.resolve();
     }
 

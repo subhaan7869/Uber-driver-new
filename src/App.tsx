@@ -151,6 +151,7 @@ import {
   setNativeImmersiveNavHidden,
   startNativeOnlineBubbleService,
   stopNativeOnlineBubbleService,
+  syncAndroidAutoState,
   syncAndroidWidgetState,
   syncNativeAppForeground,
 } from './native/floatingDot';
@@ -1195,6 +1196,15 @@ export default function App() {
     radarMatch: (offer: TripOffer) => void;
   } | null>(null);
 
+  const nativeTripHandlersRef = useRef<{
+    arrivePickup: () => void;
+    startTrip: () => void;
+    arriveStop: () => void;
+    continueFromStop: () => void;
+    arriveDropoff: () => void;
+    completeTrip: () => void;
+  } | null>(null);
+
   const toggleOnlineRef = useRef<() => void>(() => {});
 
   const handleNativeOverlayAction = useCallback((result: NativeBubbleActionResult | null) => {
@@ -1207,6 +1217,30 @@ export default function App() {
     }
     if (action === 'open_earnings') {
       setActiveTab('earnings');
+      return;
+    }
+    if (action === 'trip_arrive_pickup') {
+      nativeTripHandlersRef.current?.arrivePickup();
+      return;
+    }
+    if (action === 'trip_start') {
+      nativeTripHandlersRef.current?.startTrip();
+      return;
+    }
+    if (action === 'trip_arrive_stop') {
+      nativeTripHandlersRef.current?.arriveStop();
+      return;
+    }
+    if (action === 'trip_continue_stop') {
+      nativeTripHandlersRef.current?.continueFromStop();
+      return;
+    }
+    if (action === 'trip_arrive_dropoff') {
+      nativeTripHandlersRef.current?.arriveDropoff();
+      return;
+    }
+    if (action === 'trip_complete') {
+      nativeTripHandlersRef.current?.completeTrip();
       return;
     }
     if (action === 'decline') {
@@ -2119,6 +2153,9 @@ export default function App() {
       distanceToTurnLabel,
       etaClockTime,
       progressPct,
+      remainingSeconds,
+      remainingMiles,
+      milesToTurn,
       maneuverKind,
       maneuverTitle,
       maneuverSubtitle,
@@ -3102,6 +3139,125 @@ export default function App() {
     setStackedEatsOffer(null);
     setTripStage('completed');
   };
+
+  nativeTripHandlersRef.current = {
+    arrivePickup: handleArrivePickup,
+    startTrip: () => handleStartTrip(tripWaitFee),
+    arriveStop: handleArriveStop,
+    continueFromStop: handleContinueFromStop,
+    arriveDropoff: handleArriveDropoff,
+    completeTrip: handleCompleteTrip,
+  };
+
+  const offerExpiryRef = useRef<{ offerId: string; expiresAtMs: number }>({
+    offerId: '',
+    expiresAtMs: 0,
+  });
+
+  // Keep real Android Auto head unit screen & navigation map synced in real time
+  useEffect(() => {
+    if (!isNativeAndroidApk()) return;
+
+    if (pendingOffer) {
+      if (offerExpiryRef.current.offerId !== pendingOffer.id) {
+        offerExpiryRef.current = {
+          offerId: pendingOffer.id,
+          expiresAtMs: Date.now() + Math.max(5, pendingOffer.expiresInSec || 15) * 1000,
+        };
+      }
+    } else if (offerExpiryRef.current.offerId) {
+      offerExpiryRef.current = { offerId: '', expiresAtMs: 0 };
+    }
+
+    const cityLabel = getResolvedLocalCityName(driverPos) || activeAccount?.city || 'London';
+    const rawPoly = activeRoute?.polyline ?? [];
+    let routePoints: Array<[number, number]> = [];
+    if (rawPoly.length > 0) {
+      const stride = Math.max(1, Math.floor(rawPoly.length / 44));
+      routePoints = rawPoly
+        .filter((_, idx) => idx % stride === 0 || idx === rawPoly.length - 1)
+        .map((pt) => [Number(pt.x.toFixed(2)), Number(pt.y.toFixed(2))]);
+    }
+
+    const surgePoints: Array<[number, number, string]> = INITIAL_SURGE_ZONES.map((z) => [
+      Number(z.coords.x.toFixed(2)),
+      Number(z.coords.y.toFixed(2)),
+      z.label,
+    ]);
+
+    void syncAndroidAutoState({
+      online: onlineStatus === 'online',
+      city: cityLabel,
+      driverName: activeAccount?.name ?? 'Uber Driver UK',
+      earningsText: privacyHidden ? '£••••' : `£${todayEarnings.toFixed(2)}`,
+      questStreakText: `Quest ${Math.min(ledger.questCompletedCount, 20)}/20 · Streak ${streakCount}/3`,
+      demandText: `${demandContext.demandLevel} · ${weatherCondition}`,
+      tripStage,
+      driverX: driverPos.x,
+      driverY: driverPos.y,
+      driverHeading,
+      hasOffer: Boolean(pendingOffer && tripStage === 'idle'),
+      offerId: pendingOffer?.id ?? '',
+      offerJson: pendingOffer ? JSON.stringify(pendingOffer) : '',
+      offerType: pendingOffer?.type ?? 'exclusive',
+      offerServiceName: pendingOffer?.serviceName ?? 'UberX',
+      offerFareText: pendingOffer ? `£${pendingOffer.fare.toFixed(2)}` : '£0.00',
+      offerRatingText: pendingOffer ? pendingOffer.rating.toFixed(2) : '4.92',
+      offerPickupMin: pendingOffer?.pickupMinutes ?? 4,
+      offerPickupMiles: pendingOffer?.pickupMiles ?? 1.1,
+      offerPickupAddress: pendingOffer?.pickupAddress ?? '',
+      offerTripMin: pendingOffer?.tripMinutes ?? 15,
+      offerTripMiles: pendingOffer?.tripMiles ?? 4.2,
+      offerDropoffAddress: pendingOffer?.dropoffAddress ?? '',
+      offerSurchargeLabel: pendingOffer?.surchargeLabel ?? '',
+      offerExpiresAtMs: pendingOffer ? offerExpiryRef.current.expiresAtMs : 0,
+      activeTripId: activeTrip?.id ?? '',
+      activeServiceName: activeTrip?.serviceName ?? 'UberX',
+      activeRiderName: activeTrip?.riderName ?? 'Rider',
+      activeFareText: activeTrip ? `£${activeTrip.fare.toFixed(2)}` : '£0.00',
+      activePickupAddress: activeTrip?.pickupAddress ?? '',
+      activeStopAddress: activeTrip?.stopAddress ?? '',
+      activeDropoffAddress: activeTrip?.dropoffAddress ?? '',
+      activeStopVisited: stopVisited,
+      activePinCode: activeTrip?.pinCode ?? '',
+      etaMinLabel: liveNav?.etaMinLabel ?? '',
+      distanceRemaining: liveNav?.distanceRemaining ?? '',
+      remainingSeconds: liveNav?.remainingSeconds ?? 0,
+      remainingMiles: liveNav?.remainingMiles ?? 0,
+      milesToTurn: liveNav?.milesToTurn ?? 0,
+      maneuverKind: liveNav?.maneuverKind ?? 'straight',
+      maneuverTitle: liveNav?.maneuverTitle ?? '',
+      maneuverSubtitle: liveNav?.maneuverSubtitle ?? '',
+      speedLimitMph: liveNav?.speedLimitMph ?? 30,
+      routePoints,
+      surgePoints,
+      pickupX: activeTrip?.pickupCoords.x ?? 0,
+      pickupY: activeTrip?.pickupCoords.y ?? 0,
+      stopX: activeTrip?.stopCoords?.x ?? 0,
+      stopY: activeTrip?.stopCoords?.y ?? 0,
+      dropoffX: activeTrip?.dropoffCoords.x ?? 0,
+      dropoffY: activeTrip?.dropoffCoords.y ?? 0,
+      hasStopCoords: Boolean(activeTrip?.stopCoords),
+    });
+  }, [
+    onlineStatus,
+    driverPos,
+    driverHeading,
+    activeAccount?.city,
+    activeAccount?.name,
+    privacyHidden,
+    todayEarnings,
+    ledger.questCompletedCount,
+    streakCount,
+    demandContext.demandLevel,
+    weatherCondition,
+    tripStage,
+    pendingOffer,
+    activeTrip,
+    stopVisited,
+    liveNav,
+    activeRoute,
+  ]);
 
   const handleSubmitRating = (_stars: number, tags: string[] = []) => {
     if (tags.length > 0) {

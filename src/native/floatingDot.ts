@@ -8,7 +8,12 @@ export interface NativeBubblePermissions {
   batteryIgnored: boolean;
 }
 
-export type BubbleActionType = 'accept' | 'decline' | 'open';
+export type BubbleActionType =
+  | 'accept'
+  | 'decline'
+  | 'open'
+  | 'toggle_online'
+  | 'open_earnings';
 
 export interface BubbleTappedEvent {
   action?: BubbleActionType;
@@ -66,6 +71,15 @@ interface UberFloatingBubbleNativePlugin {
     offerId?: string;
     offerJson?: string;
   }>;
+  updateWidgetState(options: {
+    online: boolean;
+    earningsText: string;
+    city: string;
+    driverName: string;
+    questStreakText: string;
+    demandText: string;
+  }): Promise<void>;
+  requestPinWidget(): Promise<{ supported: boolean }>;
   addListener(
     eventName: 'bubbleTapped',
     listenerFunc: (event: BubbleTappedEvent) => void
@@ -179,6 +193,36 @@ export async function setNativeBubbleAlertMode(mode: 'dot' | 'card'): Promise<vo
     await UberFloatingBubble.setBubbleAlertMode({ mode });
   } catch {
     // Ignore native error
+  }
+}
+
+export interface AndroidWidgetStatePayload {
+  online: boolean;
+  earningsText: string;
+  city: string;
+  driverName: string;
+  questStreakText: string;
+  demandText: string;
+}
+
+export async function syncAndroidWidgetState(
+  payload: AndroidWidgetStatePayload
+): Promise<void> {
+  if (!isNativeAndroidApk()) return;
+  try {
+    await UberFloatingBubble.updateWidgetState(payload);
+  } catch {
+    // Ignore native error
+  }
+}
+
+export async function requestPinAndroidWidget(): Promise<boolean> {
+  if (!isNativeAndroidApk()) return false;
+  try {
+    const res = await UberFloatingBubble.requestPinWidget();
+    return Boolean(res?.supported);
+  } catch {
+    return false;
   }
 }
 

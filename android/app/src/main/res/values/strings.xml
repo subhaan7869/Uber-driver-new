@@ -4,4 +4,6 @@
     <string name="title_activity_main">Uber Driver</string>
     <string name="package_name">com.uberdriver.uk</string>
     <string name="custom_url_scheme">com.uberdriver.uk</string>
+    <string name="widget_name">Uber Driver Live Status</string>
+    <string name="widget_description">Shows live Online/Offline status, today’s UK earnings, demand, Quest &amp; streak progress with quick Go Online controls.</string>
 </resources>

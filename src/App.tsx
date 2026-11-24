@@ -145,11 +145,13 @@ import {
   requestAndroidBatteryOptimization,
   requestAndroidNotificationPermission,
   requestAndroidOverlayPermission,
+  requestPinAndroidWidget,
   scheduleNativeBackgroundOffer,
   setNativeBubbleAlertMode,
   setNativeImmersiveNavHidden,
   startNativeOnlineBubbleService,
   stopNativeOnlineBubbleService,
+  syncAndroidWidgetState,
   syncNativeAppForeground,
 } from './native/floatingDot';
 import { uberSounds } from './utils/uberSounds';
@@ -1193,9 +1195,20 @@ export default function App() {
     radarMatch: (offer: TripOffer) => void;
   } | null>(null);
 
+  const toggleOnlineRef = useRef<() => void>(() => {});
+
   const handleNativeOverlayAction = useCallback((result: NativeBubbleActionResult | null) => {
     if (!result) return;
     const { action, offer } = result;
+    if (action === 'toggle_online') {
+      setActiveTab('home');
+      toggleOnlineRef.current();
+      return;
+    }
+    if (action === 'open_earnings') {
+      setActiveTab('earnings');
+      return;
+    }
     if (action === 'decline') {
       if (offer) {
         nativeActionHandlersRef.current?.decline(offer);
@@ -1302,6 +1315,31 @@ export default function App() {
     offerIndex,
     handleNativeOverlayAction,
     getActiveGpsLatLng,
+  ]);
+
+  // Keep Android Home Screen Widget updated in real time
+  useEffect(() => {
+    if (!isNativeAndroidApk()) return;
+    const cityLabel = getResolvedLocalCityName(driverPos) || activeAccount?.city || 'London';
+    void syncAndroidWidgetState({
+      online: onlineStatus === 'online',
+      earningsText: privacyHidden ? '£••••' : `£${todayEarnings.toFixed(2)}`,
+      city: cityLabel,
+      driverName: activeAccount?.name ?? 'Uber Driver UK',
+      questStreakText: `Quest ${Math.min(ledger.questCompletedCount, 20)}/20 · Streak ${streakCount}/3`,
+      demandText: `${demandContext.demandLevel} · ${weatherCondition}`,
+    });
+  }, [
+    onlineStatus,
+    todayEarnings,
+    privacyHidden,
+    driverPos,
+    activeAccount?.city,
+    activeAccount?.name,
+    ledger.questCompletedCount,
+    streakCount,
+    demandContext.demandLevel,
+    weatherCondition,
   ]);
 
   // Trip Radar 60-second auto-refresh when online (localized to driver's position)
@@ -2271,6 +2309,8 @@ export default function App() {
       showToast(`You're offline · Online ${finalElapsedLabel}`);
     }
   };
+
+  toggleOnlineRef.current = handleToggleOnline;
 
   const handleToggleBreak = useCallback(() => {
     if (onlineStatus !== 'online') return;
@@ -5150,6 +5190,15 @@ export default function App() {
             setShowPermissionsModal(false);
             void previewNativeFloatingOfferCard(sample);
             showToast(`Overlay job card preview (${sample.pickupArea}) — tap Accept or Dot`);
+          }}
+          onPinAndroidWidget={() => {
+            void requestPinAndroidWidget().then((supported) => {
+              if (supported) {
+                showToast('Confirm on your home screen to pin the Uber Driver widget');
+              } else {
+                showToast('Long-press your Android home screen → Widgets → Uber Driver');
+              }
+            });
           }}
           onAcceptAll={handleAcceptAllPermissions}
           onClose={() => setShowPermissionsModal(false)}

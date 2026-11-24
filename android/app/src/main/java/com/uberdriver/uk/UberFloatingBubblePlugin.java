@@ -1,6 +1,8 @@
 package com.uberdriver.uk;
 
 import android.Manifest;
+import android.appwidget.AppWidgetManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -219,6 +221,7 @@ public class UberFloatingBubblePlugin extends Plugin {
         svc.putExtra(UberBubbleService.EXTRA_DRIVER_NAME, call.getString("driverName", "Driver"));
         svc.putExtra(UberBubbleService.EXTRA_AUTO_EXPAND_CARD, autoExpand);
         startServiceCompat(svc);
+        UberDriverWidgetProvider.setOnlineOnlyAndRefresh(getContext(), true, city);
         call.resolve();
     }
 
@@ -226,7 +229,44 @@ public class UberFloatingBubblePlugin extends Plugin {
     public void stopOnlineService(PluginCall call) {
         UberBubbleService.stopOnlineDirect();
         MainActivity.setOnlineImmersiveMode(false);
+        UberDriverWidgetProvider.setOnlineOnlyAndRefresh(getContext(), false, null);
         call.resolve();
+    }
+
+    @PluginMethod
+    public void updateWidgetState(PluginCall call) {
+        boolean online = Boolean.TRUE.equals(call.getBoolean("online", false));
+        String earningsText = call.getString("earningsText", "£0.00");
+        String city = call.getString("city", "London");
+        String driverName = call.getString("driverName", "Uber Driver UK");
+        String questStreakText = call.getString("questStreakText", "Quest 16/20 · Streak 0/3");
+        String demandText = call.getString("demandText", "Peak Rush · Clear");
+        UberDriverWidgetProvider.saveAndRefresh(
+            getContext(),
+            online,
+            earningsText,
+            city,
+            driverName,
+            questStreakText,
+            demandText
+        );
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void requestPinWidget(PluginCall call) {
+        boolean pinned = false;
+        Context ctx = getContext();
+        if (ctx != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            AppWidgetManager manager = AppWidgetManager.getInstance(ctx);
+            if (manager != null && manager.isRequestPinAppWidgetSupported()) {
+                ComponentName provider = new ComponentName(ctx, UberDriverWidgetProvider.class);
+                pinned = manager.requestPinAppWidget(provider, null, null);
+            }
+        }
+        JSObject ret = new JSObject();
+        ret.put("supported", pinned);
+        call.resolve(ret);
     }
 
     @PluginMethod

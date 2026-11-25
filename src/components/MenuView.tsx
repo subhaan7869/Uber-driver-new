@@ -24,12 +24,14 @@ import {
   Settings,
   Shield,
   ShieldCheck,
+  Smartphone,
   Star,
   User,
   Zap,
 } from 'lucide-react';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { ComplimentCounts, DriverAccount, DriverPreferences, TripStats } from '../types/driver';
+import { buildAppleShortcutItems } from '../utils/iosPwa';
 import { NotificationPermissionState } from '../utils/notifications';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -71,6 +73,9 @@ interface MenuViewProps {
   ) => void;
   onResetRestLock?: () => void;
   onExportTaxCsv?: () => void;
+  offlinePendingCount?: number;
+  isOfflineFlushing?: boolean;
+  onFlushOfflineQueue?: () => void;
 }
 
 type MenuSubView =
@@ -149,18 +154,25 @@ export const MenuView: React.FC<MenuViewProps> = ({
   onUpdateComplianceDoc,
   onResetRestLock,
   onExportTaxCsv,
+  offlinePendingCount = 0,
+  isOfflineFlushing = false,
+  onFlushOfflineQueue,
 }) => {
   const {
     user: googleUser,
     authLoading,
+    authError,
+    unauthorizedHostname,
     syncStatus,
     lastCloudSyncAt,
     signInWithGoogle,
     signOutGoogle,
+    clearAuthError,
   } = useFirebase();
   const [subView, setSubView] = useState<MenuSubView>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState('veh-1');
   const [openGuideId, setOpenGuideId] = useState<string | null>('res-1');
+  const [showShortcutsCard, setShowShortcutsCard] = useState(false);
   const [profileSection, setProfileSection] = useState<'metrics' | 'perks'>('metrics');
   const [waybillId, setWaybillId] = useState('UK-PHV-994120');
   const [walkaroundChecks, setWalkaroundChecks] = useState<Record<string, boolean>>({
@@ -632,7 +644,7 @@ export const MenuView: React.FC<MenuViewProps> = ({
                 className="w-full h-12 rounded-xl bg-[#F3F3F3] dark:bg-white/10 text-black dark:text-white text-[14px] font-bold hover:bg-[#E5E5E5] dark:hover:bg-white/15 flex items-center justify-center gap-2 transition-colors"
               >
                 <Download className="w-4 h-4" />
-                Download HMRC Tax CSV
+                Share / Download HMRC Tax CSV
               </button>
             </div>
           )}
@@ -818,45 +830,88 @@ export const MenuView: React.FC<MenuViewProps> = ({
           <ChevronRight className="w-5 h-5 text-[#6B6B6B] shrink-0" />
         </button>
 
-        {/* Cloud Firestore Sync Card */}
-        <div className="p-3.5 rounded-2xl border border-[#276EF1]/25 bg-[#F4F8FF] dark:bg-[#161F33] flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-[#276EF1] text-white flex items-center justify-center shrink-0">
-              {googleUser ? <Cloud className="w-4 h-4" /> : <CloudOff className="w-4 h-4" />}
+        {/* Cloud Firestore & Offline IndexedDB Sync Card */}
+        <div className="p-3.5 rounded-2xl border border-[#276EF1]/25 bg-[#F4F8FF] dark:bg-[#161F33] space-y-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-[#276EF1] text-white flex items-center justify-center shrink-0">
+                {googleUser ? <Cloud className="w-4 h-4" /> : <CloudOff className="w-4 h-4" />}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[13.5px] font-bold text-black dark:text-white truncate">
+                  {googleUser ? `Cloud Sync · ${googleUser.displayName || 'Connected'}` : 'Cloud Backup Offline'}
+                </p>
+                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate">
+                  {offlinePendingCount > 0
+                    ? `${offlinePendingCount} local ${offlinePendingCount === 1 ? 'change' : 'changes'} queued in IndexedDB`
+                    : googleUser
+                    ? syncStatus === 'syncing' || isOfflineFlushing
+                      ? 'Syncing ledger & trips to Firestore...'
+                      : lastCloudSyncAt
+                      ? `Synced ${new Date(lastCloudSyncAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${googleUser.email}`
+                      : googleUser.email
+                    : 'Connect Google to sync earnings, trips & reserves'}
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="text-[13.5px] font-bold text-black dark:text-white truncate">
-                {googleUser ? `Cloud Sync · ${googleUser.displayName || 'Connected'}` : 'Cloud Backup Offline'}
-              </p>
-              <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate">
-                {googleUser
-                  ? syncStatus === 'syncing'
-                    ? 'Syncing ledger & trips to Firestore...'
-                    : lastCloudSyncAt
-                    ? `Synced ${new Date(lastCloudSyncAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${googleUser.email}`
-                    : googleUser.email
-                  : 'Connect Google to sync earnings, trips & reserves'}
-              </p>
-            </div>
+            {googleUser ? (
+              <div className="flex items-center gap-1.5 shrink-0">
+                {offlinePendingCount > 0 && onFlushOfflineQueue && (
+                  <button
+                    type="button"
+                    disabled={isOfflineFlushing}
+                    onClick={onFlushOfflineQueue}
+                    className="px-2.5 h-8 rounded-lg bg-[#05944F] text-white text-[11.5px] font-bold"
+                  >
+                    {isOfflineFlushing ? '...' : `Sync (${offlinePendingCount})`}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={authLoading}
+                  onClick={() => void signOutGoogle()}
+                  className="px-2.5 h-8 rounded-lg bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[11.5px] font-bold text-[#E11900] dark:text-red-300"
+                >
+                  Sign Out
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={authLoading}
+                onClick={() => void signInWithGoogle()}
+                className="px-3 h-8 rounded-lg bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[12px] font-bold shrink-0"
+              >
+                {authLoading ? '...' : 'Google Sync'}
+              </button>
+            )}
           </div>
-          {googleUser ? (
-            <button
-              type="button"
-              disabled={authLoading}
-              onClick={() => void signOutGoogle()}
-              className="px-2.5 h-8 rounded-lg bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[11.5px] font-bold text-[#E11900] dark:text-red-300 shrink-0"
-            >
-              Sign Out
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={authLoading}
-              onClick={() => void signInWithGoogle()}
-              className="px-3 h-8 rounded-lg bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[12px] font-bold shrink-0"
-            >
-              {authLoading ? '...' : 'Google Sync'}
-            </button>
+          {authError && !googleUser && (
+            <div className="mt-2.5 p-2.5 rounded-xl bg-[#FEECEB] dark:bg-red-950/50 text-[#E11900] dark:text-red-300 text-[11.5px] font-semibold space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <p>{authError}</p>
+                <button
+                  type="button"
+                  onClick={clearAuthError}
+                  className="text-[11px] font-extrabold underline shrink-0"
+                >
+                  Dismiss
+                </button>
+              </div>
+              {unauthorizedHostname && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(unauthorizedHostname).catch(() => {});
+                    onNotifyToast(`Copied ${unauthorizedHostname}`);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-black/30 border border-[#E11900]/25 text-[11px] font-bold text-[#E11900] dark:text-red-200"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>Copy domain: {unauthorizedHostname}</span>
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -1065,6 +1120,68 @@ export const MenuView: React.FC<MenuViewProps> = ({
               Accept Permissions
             </button>
           </div>
+        </div>
+
+        {/* Apple Shortcuts & Hey Siri Deep Links */}
+        <div className="rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] p-3.5 space-y-2.5">
+          <button
+            type="button"
+            onClick={() => setShowShortcutsCard((v) => !v)}
+            className="w-full flex items-center justify-between gap-3 text-left"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-white dark:bg-white/10 border border-black/5 dark:border-white/10 flex items-center justify-center shrink-0">
+                <Smartphone className="w-4 h-4 text-black dark:text-white" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[14px] font-bold text-black dark:text-white">
+                  iPhone Shortcuts &amp; Hey Siri
+                </p>
+                <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 truncate">
+                  Voice &amp; Action Button URLs for Go Online, Radar, Earnings
+                </p>
+              </div>
+            </div>
+            <ChevronDown
+              className={`w-4 h-4 text-[#545454] dark:text-neutral-400 shrink-0 transition-transform ${
+                showShortcutsCard ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+
+          {showShortcutsCard && (
+            <div className="pt-2 border-t border-black/5 dark:border-white/10 space-y-2">
+              <p className="text-[11.5px] text-[#545454] dark:text-neutral-400 leading-snug">
+                In Apple <strong>Shortcuts</strong>, add <em>Open URLs</em> with any link below, then say the Siri phrase hands-free:
+              </p>
+              <div className="space-y-1.5">
+                {buildAppleShortcutItems().map((item) => (
+                  <div
+                    key={item.action}
+                    className="p-2.5 rounded-xl bg-white dark:bg-white/5 border border-black/5 dark:border-white/10 flex items-center justify-between gap-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[12.5px] font-bold text-black dark:text-white truncate">
+                        {item.label}
+                      </p>
+                      <p className="text-[11px] text-[#276EF1] truncate">{item.siriPhrase}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(item.url).catch(() => {});
+                        onNotifyToast(`Copied ${item.label} Shortcut URL`);
+                      }}
+                      className="px-2.5 h-7 rounded-lg bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-[11px] font-bold text-black dark:text-white flex items-center gap-1 shrink-0"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copy</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

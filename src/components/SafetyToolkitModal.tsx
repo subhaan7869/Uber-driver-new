@@ -5,12 +5,14 @@ import { DriverPreferences } from '../types/driver';
 interface SafetyToolkitModalProps {
   preferences: DriverPreferences;
   onTogglePreference: (key: keyof DriverPreferences) => void;
+  onShareLiveTripNow?: () => void;
   onClose: () => void;
 }
 
 export const SafetyToolkitModal: React.FC<SafetyToolkitModalProps> = ({
   preferences,
   onTogglePreference,
+  onShareLiveTripNow,
   onClose,
 }) => {
   const [emergencyConfirmed, setEmergencyConfirmed] = useState(false);
@@ -68,30 +70,42 @@ export const SafetyToolkitModal: React.FC<SafetyToolkitModalProps> = ({
           </div>
 
           {/* Share My Trip */}
-          <button
-            type="button"
-            onClick={() => onTogglePreference('shareTripStatus')}
-            className="w-full p-4 rounded-2xl bg-[#F6F6F6] dark:bg-[#1B1D22] hover:bg-[#EEEEEE] dark:hover:bg-white/10 flex items-center justify-between gap-3 text-left transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <Share2 className="w-5 h-5 text-[#276EF1] shrink-0" />
-              <div>
-                <p className="text-[15px] font-bold text-black dark:text-white">Share my trip</p>
-                <p className="text-[13px] text-[#545454] dark:text-neutral-400">
-                  Send live location link to trusted contacts
-                </p>
-              </div>
-            </div>
-            <span
-              className={`px-3 py-1 rounded-full text-[12px] font-bold ${
-                preferences.shareTripStatus
-                  ? 'bg-[#276EF1] text-white'
-                  : 'bg-white dark:bg-white/10 text-black dark:text-white border border-black/10 dark:border-white/10'
-              }`}
+          <div className="p-4 rounded-2xl bg-[#F6F6F6] dark:bg-[#1B1D22] space-y-2.5">
+            <button
+              type="button"
+              onClick={() => onTogglePreference('shareTripStatus')}
+              className="w-full flex items-center justify-between gap-3 text-left"
             >
-              {preferences.shareTripStatus ? 'On' : 'Off'}
-            </span>
-          </button>
+              <div className="flex items-center gap-3">
+                <Share2 className="w-5 h-5 text-[#276EF1] shrink-0" />
+                <div>
+                  <p className="text-[15px] font-bold text-black dark:text-white">Share my trip</p>
+                  <p className="text-[13px] text-[#545454] dark:text-neutral-400">
+                    Send live location link to trusted contacts
+                  </p>
+                </div>
+              </div>
+              <span
+                className={`px-3 py-1 rounded-full text-[12px] font-bold ${
+                  preferences.shareTripStatus
+                    ? 'bg-[#276EF1] text-white'
+                    : 'bg-white dark:bg-white/10 text-black dark:text-white border border-black/10 dark:border-white/10'
+                }`}
+              >
+                {preferences.shareTripStatus ? 'On' : 'Off'}
+              </span>
+            </button>
+            {onShareLiveTripNow && (
+              <button
+                type="button"
+                onClick={onShareLiveTripNow}
+                className="w-full h-9 rounded-xl bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[12.5px] font-bold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Send Live Location via Share Sheet</span>
+              </button>
+            )}
+          </div>
 
           {/* Record Audio */}
           <button

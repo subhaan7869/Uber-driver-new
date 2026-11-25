@@ -174,7 +174,6 @@ import {
 import {
   computeUberProTier,
   detectUKZoneSurcharge,
-  downloadHMRCTaxCsv,
   getNearbyAirportQueuePin,
   getStickySurgeAtCoords,
   getUKDemandContext,
@@ -184,6 +183,22 @@ import {
   fetchUKRoute,
   speakNavInstruction,
 } from './utils/ukRouting';
+import { carBluetoothMedia } from './utils/carBluetoothMedia';
+import {
+  clearLaunchShortcutParam,
+  parseLaunchShortcutAction,
+  shareCompletedTripReceipt,
+  shareLiveTripStatus,
+  shareOrDownloadHMRCTaxCsv,
+  ShortcutLaunchAction,
+  subscribeToWebPush,
+  updateAppIconBadge,
+} from './utils/iosPwa';
+import {
+  enqueueOfflineMutation,
+  OfflineMutationInput,
+  useOfflineQueue,
+} from './utils/offlineQueue';
 import { formatOnlineTimer } from './utils/timeFormat';
 
 function lerpAngle(fromDeg: number, toDeg: number, t: number): number {
@@ -464,6 +479,32 @@ export default function App() {
     [googleUser?.emailVerified, setSyncStatus, setLastCloudSyncAt]
   );
 
+  const {
+    pendingCount: offlinePendingCount,
+    isFlushing: isOfflineFlushing,
+    flushNow: flushOfflineQueueNow,
+  } = useOfflineQueue(googleUser?.uid, googleUser?.emailVerified);
+
+  const syncWithOfflineQueue = useCallback(
+    async (mutation: OfflineMutationInput, onlineTask: () => Promise<void>) => {
+      if (!googleUser?.emailVerified) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        await enqueueOfflineMutation(mutation);
+        return;
+      }
+      setSyncStatus('syncing');
+      try {
+        await onlineTask();
+        setSyncStatus('synced');
+        setLastCloudSyncAt(Date.now());
+      } catch {
+        await enqueueOfflineMutation(mutation);
+        setSyncStatus('error');
+      }
+    },
+    [googleUser?.emailVerified, setSyncStatus, setLastCloudSyncAt]
+  );
+
   // Realism features state (Enrolled Opportunities, Sticky Surge, Airport Queue, Traffic/Rider Changes, Chargers)
   const [enrolledOppIds, setEnrolledOppIds] = useState<string[]>(() => {
     try {
@@ -623,10 +664,18 @@ export default function App() {
         },
       }));
       if (googleUser?.emailVerified) {
-        void runCloudSync(() => syncTripActivity(googleUser.uid, entry));
+        void syncWithOfflineQueue(
+          {
+            kind: 'trip_activity',
+            dedupeKey: `act:${entry.id}`,
+            uid: googleUser.uid,
+            payload: entry,
+          },
+          () => syncTripActivity(googleUser.uid, entry)
+        );
       }
     },
-    [googleUser?.emailVerified, googleUser?.uid, runCloudSync]
+    [googleUser?.emailVerified, googleUser?.uid, syncWithOfflineQueue]
   );
 
   const todayEarnings = ledger.dailyTotals[todayDateKey] ?? 0;
@@ -917,22 +966,30 @@ export default function App() {
     };
   }, [authReady, googleUser, runCloudSync, setSyncStatus, setLastCloudSyncAt]);
 
-  // Debounced sync of ledger + metrics + preferences to Firestore
+  // Debounced sync of ledger + metrics + preferences to Firestore (with IndexedDB offline fallback)
   useEffect(() => {
     if (!googleUser?.emailVerified || cloudStateInitializedRef.current !== googleUser.uid) {
       return;
     }
     const timer = window.setTimeout(() => {
-      void runCloudSync(async () => {
-        await syncDriverLedgerState(googleUser.uid, ledger, preferences);
-        await syncDriverPreferencesState(googleUser.uid, preferences);
-        if (activeAccount) {
-          await syncUserProfileMetrics(googleUser.uid, activeAccount);
+      void syncWithOfflineQueue(
+        {
+          kind: 'ledger_state',
+          dedupeKey: `ledger_state:${googleUser.uid}`,
+          uid: googleUser.uid,
+          payload: { ledger, preferences },
+        },
+        async () => {
+          await syncDriverLedgerState(googleUser.uid, ledger, preferences);
+          await syncDriverPreferencesState(googleUser.uid, preferences);
+          if (activeAccount) {
+            await syncUserProfileMetrics(googleUser.uid, activeAccount);
+          }
         }
-      });
+      );
     }, 1500);
     return () => window.clearTimeout(timer);
-  }, [ledger, preferences, activeAccount, googleUser?.emailVerified, googleUser?.uid, runCloudSync]);
+  }, [ledger, preferences, activeAccount, googleUser?.emailVerified, googleUser?.uid, syncWithOfflineQueue]);
 
   const checkMidnightRollover = useCallback(() => {
     const currentKey = getLocalDateKey();
@@ -1046,6 +1103,14 @@ export default function App() {
     () => inboxThreads.filter((t) => t.unread).length,
     [inboxThreads]
   );
+
+  // Sync iOS 16.4+ / PWA Home Screen App Icon Badge count (unread inbox + scheduled reserves)
+  useEffect(() => {
+    const count = preferences.notificationsEnabled
+      ? unreadInboxCount + scheduledReserves.length
+      : 0;
+    void updateAppIconBadge(count);
+  }, [unreadInboxCount, scheduledReserves.length, preferences.notificationsEnabled]);
 
   const permissionsReadyCount = useMemo(() => {
     let count = 0;
@@ -1759,7 +1824,15 @@ export default function App() {
       }));
 
       if (googleUser?.emailVerified) {
-        void runCloudSync(() => syncCompletedTrip(googleUser.uid, cancelFeeRecord));
+        void syncWithOfflineQueue(
+          {
+            kind: 'completed_trip',
+            dedupeKey: `trip:${cancelFeeRecord.id}`,
+            uid: googleUser.uid,
+            payload: cancelFeeRecord,
+          },
+          () => syncCompletedTrip(googleUser.uid, cancelFeeRecord)
+        );
       }
 
       uberSounds.play('decline');
@@ -1781,7 +1854,7 @@ export default function App() {
     }, delayMs);
 
     return () => window.clearTimeout(timer);
-  }, [tripStage, activeTrip?.id, googleUser?.emailVerified, googleUser?.uid, pushDriverAlert, runCloudSync]);
+  }, [tripStage, activeTrip?.id, googleUser?.emailVerified, googleUser?.uid, pushDriverAlert, syncWithOfflineQueue]);
 
   // Compute road-snapped UK turn-by-turn route (OSRM with instant fallback)
   const driverPosRef = useRef<Coordinates>(driverPos);
@@ -2243,6 +2316,67 @@ export default function App() {
     return best;
   }, [activeTrip, tripStage, preferences.speedCameraWarnings, driverPos]);
 
+  // iPhone Lock Screen & Car Bluetooth MediaSession controls
+  useEffect(() => {
+    const cityLabel = getResolvedLocalCityName(driverPos) || activeAccount?.city || 'London';
+    carBluetoothMedia.sync(
+      {
+        enabled: Boolean(preferences.carBluetoothMedia),
+        onlineStatus,
+        tripStage,
+        activeTrip,
+        maneuverTitle: liveNav?.maneuverTitle,
+        maneuverSubtitle: liveNav?.maneuverSubtitle,
+        distanceToTurn: liveNav?.distanceToTurnLabel,
+        etaMinLabel: liveNav?.etaMinLabel,
+        distanceRemaining: liveNav?.distanceRemaining,
+        cityLabel,
+        voiceMuted: !preferences.voiceNavigation,
+      },
+      {
+        onSpeakTurn: () => {
+          const text = liveNav?.maneuverTitle
+            ? `${liveNav.distanceToTurnLabel || ''} ${liveNav.maneuverTitle}`.trim()
+            : onlineStatus === 'online'
+            ? `You are online in ${cityLabel}, finding UK trips.`
+            : 'Uber Driver is offline.';
+          speakNavInstruction(text, true);
+        },
+        onToggleVoiceMute: () => {
+          setPreferences((prev) => {
+            const nextVoice = !prev.voiceNavigation;
+            showToast(nextVoice ? 'Voice navigation unmuted' : 'Voice navigation muted');
+            return { ...prev, voiceNavigation: nextVoice };
+          });
+        },
+        onSpeakStatus: () => {
+          const summary =
+            activeTrip && liveNav
+              ? `${liveNav.etaMinLabel} remaining, ${liveNav.distanceRemaining}, ${activeTrip.serviceName} trip for ${activeTrip.riderName}.`
+              : onlineStatus === 'online'
+              ? `Online in ${cityLabel}. Today earnings ${todayEarnings.toFixed(2)} pounds.`
+              : `Offline in ${cityLabel}.`;
+          speakNavInstruction(summary, true);
+        },
+      }
+    );
+  }, [
+    preferences.carBluetoothMedia,
+    preferences.voiceNavigation,
+    onlineStatus,
+    tripStage,
+    activeTrip,
+    liveNav,
+    driverPos,
+    activeAccount?.city,
+    todayEarnings,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    return () => carBluetoothMedia.stop();
+  }, []);
+
   const totalBusinessMiles = useMemo(
     () =>
       Number(
@@ -2348,6 +2482,83 @@ export default function App() {
   };
 
   toggleOnlineRef.current = handleToggleOnline;
+
+  // Apple Shortcuts / Home Screen Quick Actions / Web Push notification deep links
+  const pendingLaunchActionRef = useRef<ShortcutLaunchAction | null>(
+    parseLaunchShortcutAction()
+  );
+
+  const runShortcutAction = useCallback(
+    (action: ShortcutLaunchAction) => {
+      if (action === 'online') {
+        setActiveTab('home');
+        if (onlineStatusRef.current === 'offline') {
+          toggleOnlineRef.current();
+        } else {
+          showToast("You're already online");
+        }
+        return;
+      }
+      if (action === 'offline') {
+        setActiveTab('home');
+        if (onlineStatusRef.current === 'online') {
+          toggleOnlineRef.current();
+        } else {
+          showToast("You're already offline");
+        }
+        return;
+      }
+      if (action === 'earnings') {
+        setActiveTab('earnings');
+        return;
+      }
+      if (action === 'reserve') {
+        setActiveTab('reserve');
+        return;
+      }
+      if (action === 'inbox') {
+        setActiveTab('inbox');
+        return;
+      }
+      if (action === 'radar') {
+        setActiveTab('home');
+        if (onlineStatusRef.current === 'offline') {
+          showToast('Go Online to view live Trip Radar requests');
+        } else {
+          setShowRadarList(true);
+        }
+      }
+    },
+    [showToast]
+  );
+
+  useEffect(() => {
+    if (showBootScreen || isSignedOut || !activeAccount) return;
+    const action = pendingLaunchActionRef.current;
+    if (!action) return;
+    pendingLaunchActionRef.current = null;
+    clearLaunchShortcutParam();
+    const t = window.setTimeout(() => runShortcutAction(action), 220);
+    return () => window.clearTimeout(t);
+  }, [showBootScreen, isSignedOut, activeAccount, runShortcutAction]);
+
+  useEffect(() => {
+    const onSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'UBER_PUSH_CLICK' && typeof event.data?.url === 'string') {
+        try {
+          const parsedUrl = new URL(event.data.url, window.location.origin);
+          const action = parseLaunchShortcutAction(parsedUrl.search);
+          if (action) {
+            runShortcutAction(action);
+          }
+        } catch {
+          // Ignore malformed notification URL
+        }
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', onSwMessage);
+    return () => navigator.serviceWorker?.removeEventListener('message', onSwMessage);
+  }, [runShortcutAction]);
 
   const handleToggleBreak = useCallback(() => {
     if (onlineStatus !== 'online') return;
@@ -2686,11 +2897,19 @@ export default function App() {
         );
       });
       if (googleUser?.emailVerified) {
-        void runCloudSync(() => syncReserveBooking(googleUser.uid, scheduledTrip));
+        void syncWithOfflineQueue(
+          {
+            kind: 'reserve_booking',
+            dedupeKey: `res:${scheduledTrip.id}:scheduled`,
+            uid: googleUser.uid,
+            payload: { reserve: scheduledTrip },
+          },
+          () => syncReserveBooking(googleUser.uid, scheduledTrip)
+        );
       }
       showToast(`Reserve confirmed · ${trip.dayLabel}, ${trip.timeLabel}`);
     },
-    [googleUser?.emailVerified, googleUser?.uid, runCloudSync, showToast]
+    [googleUser?.emailVerified, googleUser?.uid, syncWithOfflineQueue, showToast]
   );
 
   const handleCancelReserve = useCallback(
@@ -2699,11 +2918,19 @@ export default function App() {
       const target = scheduledReserves.find((r) => r.id === tripId);
       setScheduledReserves((prev) => prev.filter((r) => r.id !== tripId));
       if (target && googleUser?.emailVerified) {
-        void runCloudSync(() => syncReserveBooking(googleUser.uid, target, 'cancelled'));
+        void syncWithOfflineQueue(
+          {
+            kind: 'reserve_booking',
+            dedupeKey: `res:${target.id}:cancelled`,
+            uid: googleUser.uid,
+            payload: { reserve: target, statusOverride: 'cancelled' },
+          },
+          () => syncReserveBooking(googleUser.uid, target, 'cancelled')
+        );
       }
       showToast('Reserve trip cancelled');
     },
-    [scheduledReserves, googleUser?.emailVerified, googleUser?.uid, runCloudSync, showToast]
+    [scheduledReserves, googleUser?.emailVerified, googleUser?.uid, syncWithOfflineQueue, showToast]
   );
 
   const handleRefreshReserves = useCallback(() => {
@@ -2726,7 +2953,15 @@ export default function App() {
       }
       setScheduledReserves((prev) => prev.filter((r) => r.id !== trip.id));
       if (googleUser?.emailVerified) {
-        void runCloudSync(() => syncReserveBooking(googleUser.uid, trip, 'completed'));
+        void syncWithOfflineQueue(
+          {
+            kind: 'reserve_booking',
+            dedupeKey: `res:${trip.id}:completed`,
+            uid: googleUser.uid,
+            payload: { reserve: trip, statusOverride: 'completed' },
+          },
+          () => syncReserveBooking(googleUser.uid, trip, 'completed')
+        );
       }
       const convertedOffer: TripOffer = {
         id: `active-${trip.id}`,
@@ -2973,7 +3208,15 @@ export default function App() {
     });
 
     if (googleUser?.emailVerified) {
-      void runCloudSync(() => syncCompletedTrip(googleUser.uid, newRecord));
+      void syncWithOfflineQueue(
+        {
+          kind: 'completed_trip',
+          dedupeKey: `trip:${newRecord.id}`,
+          uid: googleUser.uid,
+          payload: newRecord,
+        },
+        () => syncCompletedTrip(googleUser.uid, newRecord)
+      );
     }
 
     if (questBonusAwarded > 0) {
@@ -3373,7 +3616,15 @@ export default function App() {
     }));
 
     if (googleUser?.emailVerified) {
-      void runCloudSync(() => syncCompletedTrip(googleUser.uid, noShowRecord));
+      void syncWithOfflineQueue(
+        {
+          kind: 'completed_trip',
+          dedupeKey: `trip:${noShowRecord.id}`,
+          uid: googleUser.uid,
+          payload: noShowRecord,
+        },
+        () => syncCompletedTrip(googleUser.uid, noShowRecord)
+      );
     }
 
     setActiveTrip(null);
@@ -3802,7 +4053,12 @@ export default function App() {
     const perm = await requestNotificationPermission();
     setNotificationPermission(perm);
     if (perm === 'granted') {
-      showToast('Push notifications accepted');
+      const pushRes = await subscribeToWebPush();
+      if (pushRes.reason === 'subscribed') {
+        showToast('Web Push notifications & App Icon Badges active');
+      } else {
+        showToast('Alerts & App Icon Badges accepted');
+      }
     } else if (perm === 'denied') {
       showToast('Browser notifications blocked — in-app alert banner enabled');
     } else {
@@ -4104,19 +4360,53 @@ export default function App() {
     showToast('6-hour mandatory UK rest completed · 12h allowance reset');
   }, [activeAccount?.id, showToast]);
 
-  const handleExportTaxCsv = useCallback(() => {
-    const res = downloadHMRCTaxCsv({
+  const handleExportTaxCsv = useCallback(async () => {
+    const res = await shareOrDownloadHMRCTaxCsv({
       driverName: activeAccount?.name ?? 'UK Partner Driver',
       totalBusinessMiles,
       completedTrips: ledger.completedTrips,
       expenses: ledger.expenses ?? [],
     });
-    if (res.ok) {
+    if (res.mode === 'shared') {
+      showToast(`Shared ${res.filename} (£${res.taxReliefGbp.toFixed(2)} HMRC relief)`);
+    } else if (res.mode === 'downloaded') {
       showToast(`Exported ${res.filename} (£${res.taxReliefGbp.toFixed(2)} HMRC relief)`);
-    } else {
+    } else if (res.mode === 'failed') {
       showToast(`HMRC Summary ready: £${res.taxReliefGbp.toFixed(2)} mileage relief`);
     }
   }, [activeAccount?.name, totalBusinessMiles, ledger.completedTrips, ledger.expenses, showToast]);
+
+  const handleShareLiveTrip = useCallback(async () => {
+    const coords = getActiveGpsLatLng() ?? mapToLatLng(driverPosRef.current);
+    const city = getResolvedLocalCityName(driverPosRef.current) || activeAccount?.city || 'London';
+    const result = await shareLiveTripStatus({
+      driverName: activeAccount?.name ?? 'UK Partner Driver',
+      vehicle: activeAccount?.vehicle ?? '2024 Toyota Camry Hybrid',
+      licensePlate: activeAccount?.licensePlate ?? 'LB24 UBR',
+      city,
+      lat: coords.lat,
+      lng: coords.lng,
+      activeTrip,
+      tripStage,
+    });
+    if (result === 'shared') {
+      showToast('Live UK trip & GPS shared');
+    } else if (result === 'copied') {
+      showToast('Live trip & GPS link copied to clipboard');
+    }
+  }, [activeAccount, activeTrip, tripStage, getActiveGpsLatLng, showToast]);
+
+  const handleShareTripReceipt = useCallback(
+    async (trip: CompletedTrip) => {
+      const result = await shareCompletedTripReceipt(trip);
+      if (result === 'shared') {
+        showToast('UK trip receipt shared');
+      } else if (result === 'copied') {
+        showToast('UK trip receipt copied to clipboard');
+      }
+    },
+    [showToast]
+  );
 
   const formatSecMmSs = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -4236,7 +4526,7 @@ export default function App() {
         onOpenPermissions={() => setShowPermissionsModal(true)}
         onEnableBlueGps={handleAcceptLocationPermission}
       />
-      <OfflineIndicator />
+      <OfflineIndicator pendingSyncCount={offlinePendingCount} isFlushing={isOfflineFlushing} />
 
       {/* Root-Level Toast Notification */}
       {toastMsg && (
@@ -4944,6 +5234,26 @@ export default function App() {
                 }}
                 onCancelTrip={handleCancelTrip}
                 onOpenPreferences={() => setShowPreferencesModal(true)}
+                onShareCompletedReceipt={() => {
+                  const surcharge = activeTrip.surchargeAmount ?? 0;
+                  const uberFee = Number((Math.max(0, activeTrip.fare - surcharge) * 0.25).toFixed(2));
+                  const netPayout = Number((activeTrip.fare + tripWaitFee - uberFee).toFixed(2));
+                  void handleShareTripReceipt({
+                    id: activeTrip.id,
+                    riderName: activeTrip.riderName,
+                    serviceName: activeTrip.serviceName,
+                    fare: activeTrip.fare,
+                    tip: 0,
+                    waitFee: tripWaitFee,
+                    uberFee,
+                    netPayout,
+                    distanceMiles: activeTrip.tripMiles,
+                    durationMin: activeTrip.tripMinutes,
+                    pickupArea: activeTrip.pickupArea.split(',')[0],
+                    dropoffArea: activeTrip.dropoffArea.split('·')[0].split(',')[0].trim(),
+                    completedAt: 'Just now',
+                  });
+                }}
               />
             </div>
           )}
@@ -5199,6 +5509,7 @@ export default function App() {
               onOpenOpportunities={() => setOpportunitiesModalMode('opportunities')}
               onOpenChargers={() => setShowChargersModal(true)}
               onExportTaxCsv={handleExportTaxCsv}
+              onShareTripReceipt={handleShareTripReceipt}
               onFileTripClaim={handleFileTripClaim}
               holidayPayAccrued={ledger.holidayPayAccrued ?? 0}
               holidayPayClaimedTotal={ledger.holidayPayClaimedTotal ?? 0}
@@ -5260,6 +5571,17 @@ export default function App() {
               onUpdateComplianceDoc={handleUpdateComplianceDoc}
               onResetRestLock={handleResetRestLock}
               onExportTaxCsv={handleExportTaxCsv}
+              offlinePendingCount={offlinePendingCount}
+              isOfflineFlushing={isOfflineFlushing}
+              onFlushOfflineQueue={() => {
+                void flushOfflineQueueNow().then((r) => {
+                  if (r.flushed > 0) {
+                    showToast(`Synced ${r.flushed} queued item(s) to Firestore`);
+                  } else if (r.remaining > 0) {
+                    showToast('Still offline or sign in with Google Sync to upload queue');
+                  }
+                });
+              }}
             />
           )}
         </div>
@@ -5389,6 +5711,7 @@ export default function App() {
         <SafetyToolkitModal
           preferences={preferences}
           onTogglePreference={handleTogglePreference}
+          onShareLiveTripNow={handleShareLiveTrip}
           onClose={() => setShowSafetyModal(false)}
         />
       )}

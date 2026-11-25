@@ -69,6 +69,7 @@ if (!self.define) {
 }
 define(['./workbox-39895644'], (function (workbox) { 'use strict';
 
+  importScripts("/sw-push.js");
   self.skipWaiting();
   workbox.clientsClaim();
   /**
@@ -77,6 +78,9 @@ define(['./workbox-39895644'], (function (workbox) { 'use strict';
    * See https://goo.gl/S9QRab
    */
   workbox.precacheAndRoute([{
+    "url": "sw-push.js",
+    "revision": "6549a431cedbca45967e79299236d751"
+  }, {
     "url": "pwa-maskable-512x512.png",
     "revision": "e53ddc74a48197388486849ff1e48697"
   }, {
@@ -87,7 +91,7 @@ define(['./workbox-39895644'], (function (workbox) { 'use strict';
     "revision": "c85b2b293ce601aa0a4d5866400a4099"
   }, {
     "url": "index.html",
-    "revision": "6ee15b17ed9ecbd163e437bf2a1f75c5"
+    "revision": "771137976d8968e676af723291f87562"
   }, {
     "url": "icon.svg",
     "revision": "17a6631622048236903fa36b25201f3d"
@@ -116,7 +120,7 @@ define(['./workbox-39895644'], (function (workbox) { 'use strict';
     "url": "assets/maplibre-gl-worker-BZdkatZW.mjs",
     "revision": null
   }, {
-    "url": "assets/index-M2rETEBh.js",
+    "url": "assets/index-C0qJMxjL.js",
     "revision": null
   }, {
     "url": "assets/index-Bj9tW8Tq.css",
@@ -137,8 +141,11 @@ define(['./workbox-39895644'], (function (workbox) { 'use strict';
     "url": "pwa-maskable-512x512.png",
     "revision": "e53ddc74a48197388486849ff1e48697"
   }, {
+    "url": "sw-push.js",
+    "revision": "6549a431cedbca45967e79299236d751"
+  }, {
     "url": "manifest.webmanifest",
-    "revision": "54ca19b9e730d01989361cb6ceb2c84b"
+    "revision": "c808ca8bffaacffd09f10f2f645d5fc2"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {

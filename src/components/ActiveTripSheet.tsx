@@ -19,6 +19,7 @@ import {
   Plane,
   Route,
   Send,
+  Share2,
   ShieldCheck,
   SlidersHorizontal,
   Star,
@@ -77,6 +78,7 @@ interface ActiveTripSheetProps {
   onDeclineQueued?: () => void;
   onCancelTrip: () => void;
   onOpenPreferences: () => void;
+  onShareCompletedReceipt?: () => void;
 }
 
 const RIDER_TAGS = ['Friendly', 'Ready at pickup', 'Great tipper', 'Late at curb', 'Left item'];
@@ -114,6 +116,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
   onDeclineQueued,
   onCancelTrip,
   onOpenPreferences,
+  onShareCompletedReceipt,
 }) => {
   const [waitSecondsLeft, setWaitSecondsLeft] = useState(120); // 2:00 UK free wait
   const [paidWaitSeconds, setPaidWaitSeconds] = useState(0);
@@ -383,13 +386,25 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => onSubmitRating(selectedRating, selectedTags)}
-          className="w-full h-12 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[15px] font-bold hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] active:scale-[0.99] transition-all"
-        >
-          Done · Find Next Trip
-        </button>
+        <div className="space-y-2">
+          {onShareCompletedReceipt && (
+            <button
+              type="button"
+              onClick={onShareCompletedReceipt}
+              className="w-full h-10 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/15 text-black dark:text-white text-[13.5px] font-bold flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <Share2 className="w-4 h-4 text-[#276EF1]" />
+              <span>Share UK Trip Receipt</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onSubmitRating(selectedRating, selectedTags)}
+            className="w-full h-12 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[15px] font-bold hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] active:scale-[0.99] transition-all"
+          >
+            Done · Find Next Trip
+          </button>
+        </div>
       </div>
     );
   }

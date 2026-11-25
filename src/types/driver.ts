@@ -319,4 +319,5 @@ export interface DriverPreferences {
   rushNav: boolean;
   floatingDotAlertMode: 'dot' | 'card';
   areaPreference?: 'all' | 'central' | 'east' | 'west' | 'local';
+  carBluetoothMedia?: boolean;
 }

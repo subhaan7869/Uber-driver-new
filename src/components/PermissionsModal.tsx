@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { NativeBubblePermissions } from '../native/floatingDot';
+import { isIosDevice, isStandalonePwa } from '../utils/iosPwa';
 import { NotificationPermissionState } from '../utils/notifications';
 
 interface PermissionsModalProps {
@@ -65,6 +66,8 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
   const locationGranted =
     hasRealCoords || gpsPermissionState === 'active' || gpsExplicitlyAccepted;
   const isAndroidApk = Boolean(nativeBubblePerms?.isNative);
+  const isIos = isIosDevice();
+  const isIosHomeScreen = isIos && isStandalonePwa();
 
   return (
     <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -135,12 +138,14 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
               </div>
               <div className="min-w-0">
                 <p className="text-[14.5px] font-bold text-black dark:text-white">
-                  Trip & Surge Notifications
+                  {isIos ? 'Lock Screen Alerts & App Icon Badge' : 'Trip & Surge Notifications'}
                 </p>
                 <p className="text-[12px] text-[#545454] dark:text-neutral-400 leading-snug mt-0.5">
-                  {notificationPermission === 'denied' || notificationPermission === 'unsupported'
+                  {isIos && !isIosHomeScreen
+                    ? 'Add to iPhone Home Screen first (Share → Add to Home Screen) to unlock badges & Web Push'
+                    : notificationPermission === 'denied' || notificationPermission === 'unsupported'
                     ? 'In-app alert banner enabled'
-                    : 'Receive instant Trip Radar, Exclusive & payout alerts'}
+                    : 'Syncs Home Screen icon badge count + Lock Screen Trip & Reserve alerts'}
                 </p>
               </div>
             </div>

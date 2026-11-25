@@ -11,6 +11,7 @@ import {
   Moon,
   Package,
   PawPrint,
+  Radio,
   Route,
   ShieldAlert,
   Sparkles,
@@ -19,6 +20,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { DriverPreferences, NavProvider } from '../types/driver';
+import { carBluetoothMedia } from '../utils/carBluetoothMedia';
 import { uberSounds } from '../utils/uberSounds';
 
 interface PreferencesSheetProps {
@@ -215,6 +217,42 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
               <div
                 className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
                   preferences.rushNav ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!preferences.carBluetoothMedia) {
+                void carBluetoothMedia.unlockAndStart();
+              } else {
+                carBluetoothMedia.stop();
+              }
+              onTogglePreference('carBluetoothMedia');
+            }}
+            className="w-full flex items-center justify-between py-1 text-left"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <Radio className="w-4 h-4 text-[#276EF1] shrink-0" />
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">
+                  Lock Screen &amp; Car Bluetooth Controls
+                </p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Show turn, ETA &amp; fare on iPhone Lock Screen / car dash (pauses music while on)
+                </p>
+              </div>
+            </div>
+            <div
+              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                preferences.carBluetoothMedia ? 'bg-[#276EF1]' : 'bg-[#DCDCDC] dark:bg-white/20'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.carBluetoothMedia ? 'translate-x-5' : 'translate-x-0'
                 }`}
               />
             </div>

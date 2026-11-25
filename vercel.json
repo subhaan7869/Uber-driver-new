@@ -1,7 +1,15 @@
 {
   "rewrites": [
     {
-      "source": "/((?!version\\.json|sw\\.js|workbox-.*\\.js|manifest\\.webmanifest|assets/).*)",
+      "source": "/__/auth/(.*)",
+      "destination": "https://gen-lang-client-0812701188.firebaseapp.com/__/auth/$1"
+    },
+    {
+      "source": "/__/firebase/(.*)",
+      "destination": "https://gen-lang-client-0812701188.firebaseapp.com/__/firebase/$1"
+    },
+    {
+      "source": "/((?!__/|version\\.json|sw\\.js|sw-push\\.js|workbox-.*\\.js|manifest\\.webmanifest|pwa-.*\\.png|apple-touch-icon\\.png|icon\\.svg|assets/).*)",
       "destination": "/index.html"
     }
   ],

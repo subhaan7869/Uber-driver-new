@@ -43,6 +43,7 @@ export default defineConfig(() => {
           'pwa-192x192.png',
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
+          'sw-push.js',
         ],
         manifest: {
           id: '/',
@@ -76,15 +77,42 @@ export default defineConfig(() => {
               purpose: 'maskable',
             },
           ],
+          shortcuts: [
+            {
+              name: 'Go Online',
+              short_name: 'Go Online',
+              url: '/?action=online',
+              icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+            {
+              name: "Today's Earnings",
+              short_name: 'Earnings',
+              url: '/?action=earnings',
+              icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+            {
+              name: 'Trip Radar',
+              short_name: 'Radar',
+              url: '/?action=radar',
+              icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+            {
+              name: 'Uber Reserve',
+              short_name: 'Reserve',
+              url: '/?action=reserve',
+              icons: [{ src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' }],
+            },
+          ],
         },
         workbox: {
+          importScripts: ['/sw-push.js'],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           skipWaiting: true,
           globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff,woff2,mp3}'],
           globIgnores: ['**/assets/aistudio/**', 'version.json'],
-          navigateFallbackDenylist: [/^\/version\.json/],
+          navigateFallbackDenylist: [/^\/version\.json/, /^\/__\//, /^\/sw-push\.js/],
           runtimeCaching: [
             {
               urlPattern: /\/version\.json(\?.*)?$/i,

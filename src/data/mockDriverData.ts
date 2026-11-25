@@ -548,6 +548,7 @@ export const INITIAL_PREFERENCES: DriverPreferences = {
   rushNav: false,
   floatingDotAlertMode: 'dot',
   areaPreference: 'all',
+  carBluetoothMedia: false,
 };
 
 export const BUSY_SOON_ZONES: BusySoonZone[] = [

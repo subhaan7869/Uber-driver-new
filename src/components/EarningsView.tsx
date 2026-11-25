@@ -12,6 +12,7 @@ import {
   MoreHorizontal,
   ReceiptText,
   Route,
+  Share2,
   ShieldCheck,
   Sparkles,
   Target,
@@ -48,6 +49,7 @@ interface EarningsViewProps {
   onOpenOpportunities: () => void;
   onOpenChargers?: () => void;
   onExportTaxCsv?: () => void;
+  onShareTripReceipt?: (trip: CompletedTrip) => void;
   onFileTripClaim?: (tripId: string, kind: 'valeting' | 'fare_review') => void;
   holidayPayAccrued?: number;
   holidayPayClaimedTotal?: number;
@@ -100,6 +102,7 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
   onOpenOpportunities,
   onOpenChargers,
   onExportTaxCsv,
+  onShareTripReceipt,
   onFileTripClaim,
   holidayPayAccrued = 0,
   holidayPayClaimedTotal = 0,
@@ -641,7 +644,7 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
               className="w-full h-10 rounded-xl bg-black dark:bg-[#276EF1] text-white text-[12.5px] font-bold flex items-center justify-center gap-1.5 hover:opacity-90 transition-opacity"
             >
               <Download className="w-4 h-4" />
-              <span>Download HMRC Self-Assessment CSV</span>
+              <span>Share / Download HMRC Self-Assessment CSV</span>
             </button>
           )}
         </div>
@@ -1014,6 +1017,18 @@ export const EarningsView: React.FC<EarningsViewProps> = ({
                               className="h-9 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] text-[11.5px] font-bold hover:opacity-90"
                             >
                               Fare Review (+£4.80)
+                            </button>
+                          </div>
+                        )}
+                        {onShareTripReceipt && (
+                          <div className="pt-2" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => onShareTripReceipt(trip)}
+                              className="w-full h-9 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E8E8E8] dark:hover:bg-white/15 text-black dark:text-white text-[12px] font-bold flex items-center justify-center gap-1.5 transition-colors"
+                            >
+                              <Share2 className="w-3.5 h-3.5 text-[#276EF1]" />
+                              <span>Share UK Receipt (Share Sheet)</span>
                             </button>
                           </div>
                         )}

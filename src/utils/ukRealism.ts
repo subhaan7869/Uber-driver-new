@@ -427,12 +427,12 @@ function csvEscape(val: string | number | undefined): string {
   return s;
 }
 
-export function downloadHMRCTaxCsv(params: {
+export function buildHMRCTaxCsvFile(params: {
   driverName: string;
   totalBusinessMiles: number;
   completedTrips: CompletedTrip[];
   expenses: ExpenseEntry[];
-}): { ok: boolean; filename: string; taxReliefGbp: number; netProfitGbp: number } {
+}): { file: File; filename: string; csvContent: string; taxReliefGbp: number; netProfitGbp: number } {
   const { driverName, totalBusinessMiles, completedTrips, expenses } = params;
   const dateStr = new Date().toISOString().slice(0, 10);
   const filename = `HMRC-Uber-UK-Tax-Summary-${dateStr}.csv`;
@@ -499,9 +499,19 @@ export function downloadHMRCTaxCsv(params: {
   }
 
   const csvContent = lines.join('\n');
+  const file = new File([csvContent], filename, { type: 'text/csv;charset=utf-8' });
+  return { file, filename, csvContent, taxReliefGbp, netProfitGbp };
+}
+
+export function downloadHMRCTaxCsv(params: {
+  driverName: string;
+  totalBusinessMiles: number;
+  completedTrips: CompletedTrip[];
+  expenses: ExpenseEntry[];
+}): { ok: boolean; filename: string; taxReliefGbp: number; netProfitGbp: number } {
+  const { file, filename, taxReliefGbp, netProfitGbp } = buildHMRCTaxCsvFile(params);
   try {
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(file);
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;

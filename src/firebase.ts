@@ -3,11 +3,54 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-export const app = initializeApp(firebaseConfig);
+const customAuthDomain =
+  typeof import.meta !== 'undefined' &&
+  typeof import.meta.env?.VITE_FIREBASE_AUTH_DOMAIN === 'string' &&
+  import.meta.env.VITE_FIREBASE_AUTH_DOMAIN.trim().length > 0
+    ? import.meta.env.VITE_FIREBASE_AUTH_DOMAIN.trim()
+    : firebaseConfig.authDomain;
+
+export const effectiveFirebaseConfig = {
+  ...firebaseConfig,
+  authDomain: customAuthDomain,
+};
+
+export const app = initializeApp(effectiveFirebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+export function isHostnameAuthorized(hostname: string, authorizedDomains: string[]): boolean {
+  const cleanHost = hostname.trim().toLowerCase();
+  if (!cleanHost) return false;
+  return authorizedDomains.some((domain) => {
+    const cleanDomain = domain.trim().toLowerCase();
+    if (!cleanDomain) return false;
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(cleanDomain)) {
+      return cleanHost === cleanDomain;
+    }
+    return cleanHost === cleanDomain || cleanHost.endsWith(`.${cleanDomain}`);
+  });
+}
+
+export async function fetchAuthorizedDomains(): Promise<string[] | null> {
+  if (!firebaseConfig.apiKey) return null;
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+      { method: 'GET', cache: 'no-store' }
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { authorizedDomains?: unknown };
+    if (Array.isArray(data?.authorizedDomains)) {
+      return data.authorizedDomains.filter((d): d is string => typeof d === 'string');
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export enum OperationType {
   CREATE = 'create',

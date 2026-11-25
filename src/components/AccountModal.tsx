@@ -63,11 +63,13 @@ export const AccountModal: React.FC<AccountModalProps> = ({
     user: googleUser,
     authLoading,
     authError,
+    unauthorizedHostname,
     syncStatus,
     signInWithGoogle,
     signOutGoogle,
     clearAuthError,
   } = useFirebase();
+  const [hostCopied, setHostCopied] = useState(false);
   const [mode, setMode] = useState<'list' | 'signin' | 'register'>(
     isSignedOutGate ? 'signin' : 'list'
   );
@@ -268,6 +270,27 @@ export const AccountModal: React.FC<AccountModalProps> = ({
               </span>
               <span>{authLoading ? 'Connecting Google...' : 'Continue with Google (Cloud Sync)'}</span>
             </button>
+            {authError && (
+              <div className="p-2.5 rounded-xl bg-[#FEECEB] dark:bg-red-950/50 text-[#E11900] dark:text-red-300 text-[12px] font-semibold space-y-2">
+                <p>{authError}</p>
+                {unauthorizedHostname && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(unauthorizedHostname).catch(() => {});
+                      setHostCopied(true);
+                      setTimeout(() => setHostCopied(false), 2000);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-black/30 border border-[#E11900]/25 text-[11px] font-bold text-[#E11900] dark:text-red-200"
+                  >
+                    {hostCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    <span>
+                      {hostCopied ? 'Copied!' : `Copy domain: ${unauthorizedHostname}`}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -318,9 +341,9 @@ export const AccountModal: React.FC<AccountModalProps> = ({
         </button>
       </div>
 
-      {(errorMsg || authError) && (
+      {errorMsg && (
         <div className="mb-3 p-3 rounded-xl bg-[#FEECEB] dark:bg-red-950/50 text-[#E11900] dark:text-red-300 text-[12.5px] font-semibold">
-          {errorMsg || authError}
+          {errorMsg}
         </div>
       )}
 

@@ -1,4 +1,4 @@
-import { ComplianceDoc, DriverAccount } from '../types/driver';
+import { ComplianceDoc, DriverAccount, InsurancePolicyInfo } from '../types/driver';
 
 const ACCOUNTS_KEY = 'uber_driver_accounts_v1';
 const ACCOUNTS_BACKUP_KEY = 'uber_driver_accounts_backup_v1';
@@ -15,6 +15,25 @@ export interface RememberedLogin {
   lastSignedInAt: number;
 }
 
+export function buildDefaultInsurancePolicy(
+  seedKey = 'acct-alex',
+  city = 'London',
+  isEV = false
+): InsurancePolicyInfo {
+  const isSarah = seedKey === 'acct-sarah' || city === 'Manchester';
+  return {
+    insurer: isSarah ? 'Admiral PHV & EV Fleet' : 'Zego Sense Hire & Reward UK',
+    policyNumber: isSarah ? 'ADM-PHV-774190-UK' : 'ZEGO-HR-904821-LDN',
+    coverType: 'Hire & Reward Comprehensive',
+    weeklyPremiumGbp: isEV ? 52 : 58,
+    excessGbp: 500,
+    validUntil: '19 Apr 2027',
+    daysRemaining: 142,
+    includesPublicLiability5M: true,
+    status: 'active',
+  };
+}
+
 export function buildDefaultComplianceDocs(phvBadge: string): ComplianceDoc[] {
   return [
     {
@@ -27,8 +46,15 @@ export function buildDefaultComplianceDocs(phvBadge: string): ComplianceDoc[] {
     {
       id: 'doc-insurance',
       title: 'PHV Hire & Reward Insurance',
-      subtitle: 'Zego / Admiral Comprehensive Fleet',
+      subtitle: 'Zego / Admiral Comprehensive Fleet · Class 3 Business',
       daysRemaining: 142,
+      status: 'verified',
+    },
+    {
+      id: 'doc-liability',
+      title: 'Public Liability Insurance (£5M)',
+      subtitle: 'Passenger & Curbside Indemnity Cover Active',
+      daysRemaining: 215,
       status: 'verified',
     },
     {
@@ -41,13 +67,13 @@ export function buildDefaultComplianceDocs(phvBadge: string): ComplianceDoc[] {
     {
       id: 'doc-phv',
       title: `PHV Driver & Vehicle Licence (${phvBadge})`,
-      subtitle: 'TfL / Local Authority Badge Active',
+      subtitle: 'TfL / Local Authority Badge & Windscreen Disc Active',
       daysRemaining: 310,
       status: 'verified',
     },
     {
       id: 'doc-ved',
-      title: 'UK Road Tax (VED) & DBS Check',
+      title: 'UK Road Tax (VED) & Enhanced DBS',
       subtitle: 'Enhanced DBS Update Service Linked',
       daysRemaining: 185,
       status: 'verified',
@@ -76,6 +102,7 @@ export const DEFAULT_ACCOUNTS: DriverAccount[] = [
     batteryPct: 86,
     isEV: false,
     complianceDocs: buildDefaultComplianceDocs('TfL-PHV-88412'),
+    insurancePolicy: buildDefaultInsurancePolicy('acct-alex', 'London', false),
     restLockedUntil: null,
   },
   {
@@ -98,6 +125,7 @@ export const DEFAULT_ACCOUNTS: DriverAccount[] = [
     batteryPct: 78,
     isEV: true,
     complianceDocs: buildDefaultComplianceDocs('MCC-PHV-30219'),
+    insurancePolicy: buildDefaultInsurancePolicy('acct-sarah', 'Manchester', true),
     restLockedUntil: null,
   },
 ];
@@ -109,20 +137,27 @@ export function loadAccounts(): DriverAccount[] {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((acct) => ({
-            ...acct,
-            batteryPct: typeof acct.batteryPct === 'number' ? acct.batteryPct : 84,
-            isEV:
+          return parsed.map((acct) => {
+            const isEV =
               typeof acct.isEV === 'boolean'
                 ? acct.isEV
                 : String(acct.vehicle || '').toLowerCase().includes('ev') ||
-                  String(acct.vehicle || '').toLowerCase().includes('tesla'),
-            complianceDocs:
-              Array.isArray(acct.complianceDocs) && acct.complianceDocs.length > 0
-                ? acct.complianceDocs
-                : buildDefaultComplianceDocs(acct.phvBadge || 'TfL-PHV-88412'),
-            restLockedUntil: typeof acct.restLockedUntil === 'number' ? acct.restLockedUntil : null,
-          }));
+                  String(acct.vehicle || '').toLowerCase().includes('tesla');
+            return {
+              ...acct,
+              batteryPct: typeof acct.batteryPct === 'number' ? acct.batteryPct : 84,
+              isEV,
+              complianceDocs:
+                Array.isArray(acct.complianceDocs) && acct.complianceDocs.length > 0
+                  ? acct.complianceDocs
+                  : buildDefaultComplianceDocs(acct.phvBadge || 'TfL-PHV-88412'),
+              insurancePolicy:
+                acct.insurancePolicy && typeof acct.insurancePolicy.insurer === 'string'
+                  ? acct.insurancePolicy
+                  : buildDefaultInsurancePolicy(acct.id, acct.city, isEV),
+              restLockedUntil: typeof acct.restLockedUntil === 'number' ? acct.restLockedUntil : null,
+            };
+          });
         }
       }
     } catch {

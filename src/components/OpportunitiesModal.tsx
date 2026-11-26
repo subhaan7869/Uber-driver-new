@@ -21,6 +21,8 @@ interface OpportunitiesModalProps {
   initialSection?: 'opportunities' | 'trends' | 'airports';
   questCompletedCount: number;
   enrolledIds?: string[];
+  activeAirportQueueCode?: string | null;
+  onJoinAirportQueue?: (code: string, airportName: string) => void;
   onToggleEnroll?: (id: string) => void;
   onClose: () => void;
 }
@@ -29,11 +31,14 @@ export const OpportunitiesModal: React.FC<OpportunitiesModalProps> = ({
   initialSection = 'opportunities',
   questCompletedCount,
   enrolledIds: controlledEnrolledIds,
+  activeAirportQueueCode = null,
+  onJoinAirportQueue,
   onToggleEnroll,
   onClose,
 }) => {
   const [section, setSection] = useState<'opportunities' | 'trends' | 'airports'>(initialSection);
   const [localEnrolledIds, setLocalEnrolledIds] = useState<string[]>(['opp-1', 'opp-2']);
+  const [expandedAirportId, setExpandedAirportId] = useState<string | null>('lhr');
   const enrolledIds = controlledEnrolledIds ?? localEnrolledIds;
 
   const toggleEnroll = (id: string) => {
@@ -246,52 +251,111 @@ export const OpportunitiesModal: React.FC<OpportunitiesModalProps> = ({
         ) : (
           <div className="space-y-3">
             <p className="text-[12.5px] text-[#545454] dark:text-neutral-400">
-              Live FIFO waiting bays & incoming UK flight arrival waves. Diamond drivers receive priority airport rematch.
+              Live FIFO holding bays, flight arrivals feed &amp; UK Short-Trip Queue Bump Protection (keep your priority spot after short drop-offs under 3 mi).
             </p>
-            {UK_AIRPORT_QUEUES.map((aq) => (
-              <div
-                key={aq.id}
-                className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#1B1D22] space-y-2.5"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-black dark:bg-white/10 text-white flex items-center justify-center shrink-0">
-                      <Plane className="w-5 h-5" />
+            {UK_AIRPORT_QUEUES.map((aq) => {
+              const isQueuedHere = activeAirportQueueCode === aq.code;
+              const isFlightsOpen = expandedAirportId === aq.id;
+              return (
+                <div
+                  key={aq.id}
+                  className={`p-4 rounded-2xl border space-y-2.5 transition-colors ${
+                    isQueuedHere
+                      ? 'border-[#276EF1] bg-[#E8F0FE]/60 dark:bg-[#192338]'
+                      : 'border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#1B1D22]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                          isQueuedHere
+                            ? 'bg-[#276EF1] text-white'
+                            : 'bg-black dark:bg-white/10 text-white'
+                        }`}
+                      >
+                        <Plane className="w-5 h-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[14.5px] font-bold text-black dark:text-white truncate">
+                          {aq.airport}
+                        </p>
+                        <p className="text-[12px] text-[#545454] dark:text-neutral-400 truncate">
+                          {aq.zone}
+                        </p>
+                        <p className="text-[12px] font-semibold text-[#276EF1] mt-1 tabular-nums">
+                          {aq.carsAhead} cars ahead · ~{aq.estWait} wait
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-[14.5px] font-bold text-black dark:text-white truncate">
-                        {aq.airport}
-                      </p>
-                      <p className="text-[12px] text-[#545454] dark:text-neutral-400 truncate">
-                        {aq.zone}
-                      </p>
-                      <p className="text-[12px] font-semibold text-[#276EF1] mt-1 tabular-nums">
-                        {aq.carsAhead} cars ahead · ~{aq.estWait} wait
-                      </p>
-                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-[11.5px] font-bold shrink-0 ${
+                        aq.demand === 'High'
+                          ? 'bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F]'
+                          : 'bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300'
+                      }`}
+                    >
+                      {aq.demand}
+                    </span>
                   </div>
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-[11.5px] font-bold shrink-0 ${
-                      aq.demand === 'High'
-                        ? 'bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F]'
-                        : 'bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300'
-                    }`}
-                  >
-                    {aq.demand}
-                  </span>
+
+                  {aq.flightWave && (
+                    <div className="pt-2 border-t border-black/5 dark:border-white/10 flex items-center justify-between gap-2 text-[11.5px]">
+                      <span className="font-semibold text-black dark:text-neutral-200 truncate">
+                        {aq.flightWave}
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-[#276EF1]/15 text-[#276EF1] dark:text-[#7AB0FF] font-bold whitespace-nowrap shrink-0 tabular-nums">
+                        {aq.peakWindow}
+                      </span>
+                    </div>
+                  )}
+
+                  {Array.isArray(aq.incomingFlights) && aq.incomingFlights.length > 0 && (
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedAirportId(isFlightsOpen ? null : aq.id)}
+                        className="text-[11.5px] font-bold text-[#276EF1] hover:underline"
+                      >
+                        {isFlightsOpen ? 'Hide live flight arrivals' : `View ${aq.incomingFlights.length} live arrivals`}
+                      </button>
+                      {isFlightsOpen && (
+                        <div className="mt-2 rounded-xl bg-white dark:bg-black/30 border border-black/5 dark:border-white/10 divide-y divide-black/5 dark:divide-white/10 text-[11.5px] tabular-nums">
+                          {aq.incomingFlights.map((fl) => (
+                            <div key={fl.flight} className="px-3 py-2 flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <span className="font-extrabold text-black dark:text-white">{fl.flight}</span>{' '}
+                                <span className="text-[#545454] dark:text-neutral-400">from {fl.origin} ({fl.terminal})</span>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <span className="font-bold text-[#05944F]">{fl.eta}</span>
+                                <span className="text-[10.5px] text-[#545454] dark:text-neutral-400 ml-1.5">· {fl.status}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {onJoinAirportQueue && (
+                    <button
+                      type="button"
+                      onClick={() => onJoinAirportQueue(aq.code, aq.airport)}
+                      className={`w-full h-10 rounded-xl text-[12.5px] font-bold transition-colors ${
+                        isQueuedHere
+                          ? 'bg-[#05944F] text-white'
+                          : 'bg-black dark:bg-[#276EF1] text-white hover:opacity-90'
+                      }`}
+                    >
+                      {isQueuedHere
+                        ? `In Virtual Queue (${aq.code}) · Bump Protection Active`
+                        : `Join ${aq.code} Virtual Queue & Navigate`}
+                    </button>
+                  )}
                 </div>
-                {aq.flightWave && (
-                  <div className="pt-2 border-t border-black/5 dark:border-white/10 flex items-center justify-between gap-2 text-[11.5px]">
-                    <span className="font-semibold text-black dark:text-neutral-200 truncate">
-                      {aq.flightWave}
-                    </span>
-                    <span className="px-2 py-0.5 rounded bg-[#276EF1]/15 text-[#276EF1] dark:text-[#7AB0FF] font-bold whitespace-nowrap shrink-0 tabular-nums">
-                      {aq.peakWindow}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

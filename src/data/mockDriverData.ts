@@ -549,6 +549,22 @@ export const INITIAL_PREFERENCES: DriverPreferences = {
   floatingDotAlertMode: 'dot',
   areaPreference: 'all',
   carBluetoothMedia: false,
+  acceptCashJobs: true,
+  voiceCommandsEnabled: false,
+  nightShieldEnabled: false,
+  tripFilter: {
+    enabled: false,
+    minFareGbp: 7.5,
+    minPerMileGbp: 1.5,
+    maxPickupMiles: 2.5,
+    minRiderRating: 4.75,
+    autoDeclineBelowTarget: false,
+  },
+  costSettings: {
+    fuelOrKwhPerMileGbp: 0.16,
+    weeklyInsuranceGbp: 58,
+    weeklyVehicleCostGbp: 145,
+  },
 };
 
 export const BUSY_SOON_ZONES: BusySoonZone[] = [
@@ -655,6 +671,12 @@ export const UK_AIRPORT_QUEUES = [
     flightWave: '14 BA / Virgin Atlantic arrivals in next 30m',
     terminals: 'T5 & T3 Long-Haul Peak',
     peakWindow: 'Next wave 15m',
+    bumpEligible: true,
+    incomingFlights: [
+      { flight: 'BA 178', origin: 'New York JFK', terminal: 'T5', eta: '6 min', status: 'Landed' },
+      { flight: 'VS 004', origin: 'Atlanta', terminal: 'T3', eta: '14 min', status: 'Final App.' },
+      { flight: 'EK 001', origin: 'Dubai DXB', terminal: 'T3', eta: '22 min', status: 'On Time' },
+    ],
   },
   {
     id: 'lgw',
@@ -667,6 +689,45 @@ export const UK_AIRPORT_QUEUES = [
     flightWave: '9 easyJet / BA flights landing in 35m',
     terminals: 'North Terminal',
     peakWindow: 'Next wave 25m',
+    bumpEligible: true,
+    incomingFlights: [
+      { flight: 'EZY 8042', origin: 'Malaga AGP', terminal: 'North', eta: '9 min', status: 'Landed' },
+      { flight: 'BA 2753', origin: 'Naples NAP', terminal: 'South', eta: '19 min', status: 'On Time' },
+    ],
+  },
+  {
+    id: 'stn',
+    code: 'STN',
+    airport: 'London Stansted (STN)',
+    zone: 'Mid-Stay PHV Waiting Zone · C',
+    carsAhead: '7–11',
+    estWait: '8 min',
+    demand: 'High',
+    flightWave: '10 Ryanair / Jet2 European arrivals',
+    terminals: 'Main Terminal Forecourt',
+    peakWindow: 'Landing now',
+    bumpEligible: true,
+    incomingFlights: [
+      { flight: 'FR 114', origin: 'Dublin DUB', terminal: 'Main', eta: '4 min', status: 'Landed' },
+      { flight: 'LS 1528', origin: 'Tenerife TFS', terminal: 'Main', eta: '16 min', status: 'On Time' },
+    ],
+  },
+  {
+    id: 'ltn',
+    code: 'LTN',
+    airport: 'London Luton (LTN)',
+    zone: 'Long Stay Taxi Feeder · Bay 6',
+    carsAhead: '5–9',
+    estWait: '6 min',
+    demand: 'Moderate',
+    flightWave: '7 Wizz Air / easyJet arrivals in 25m',
+    terminals: 'Central Arrivals Plaza',
+    peakWindow: 'Next wave 14m',
+    bumpEligible: true,
+    incomingFlights: [
+      { flight: 'W9 4401', origin: 'Bucharest OTP', terminal: 'Bay 6', eta: '11 min', status: 'Final App.' },
+      { flight: 'EZY 2108', origin: 'Geneva GVA', terminal: 'Bay 6', eta: '24 min', status: 'On Time' },
+    ],
   },
   {
     id: 'man',
@@ -679,6 +740,11 @@ export const UK_AIRPORT_QUEUES = [
     flightWave: '11 Jet2 / Ryanair / Emirates arrivals',
     terminals: 'Terminal 2 Arrivals',
     peakWindow: 'Landing now',
+    bumpEligible: true,
+    incomingFlights: [
+      { flight: 'EK 017', origin: 'Dubai DXB', terminal: 'T1', eta: '7 min', status: 'Landed' },
+      { flight: 'LS 896', origin: 'Alicante ALC', terminal: 'T2', eta: '15 min', status: 'On Time' },
+    ],
   },
   {
     id: 'bhx',
@@ -691,6 +757,11 @@ export const UK_AIRPORT_QUEUES = [
     flightWave: '6 Lufthansa / TUI / Aer Lingus flights',
     terminals: 'Main Concourse',
     peakWindow: 'Next wave 20m',
+    bumpEligible: true,
+    incomingFlights: [
+      { flight: 'LH 954', origin: 'Frankfurt FRA', terminal: 'Lane 3', eta: '12 min', status: 'On Time' },
+      { flight: 'TOM 721', origin: 'Palma PMI', terminal: 'Lane 3', eta: '21 min', status: 'On Time' },
+    ],
   },
   {
     id: 'edi',
@@ -703,5 +774,10 @@ export const UK_AIRPORT_QUEUES = [
     flightWave: '8 KLM / British Airways arrivals',
     terminals: 'International Arrivals',
     peakWindow: 'Next wave 18m',
+    bumpEligible: true,
+    incomingFlights: [
+      { flight: 'KL 1279', origin: 'Amsterdam AMS', terminal: 'Row C', eta: '8 min', status: 'Landed' },
+      { flight: 'BA 1442', origin: 'London LHR', terminal: 'Row C', eta: '17 min', status: 'On Time' },
+    ],
   },
 ];

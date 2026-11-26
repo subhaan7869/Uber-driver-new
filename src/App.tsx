@@ -19,6 +19,7 @@ import {
   List,
   MapPin,
   MessageSquarePlus,
+  Mic,
   Moon,
   Plane,
   Radar,
@@ -28,6 +29,7 @@ import {
   Shield,
   SlidersHorizontal,
   Sun,
+  Timer,
   User,
   Volume2,
   VolumeX,
@@ -82,25 +84,30 @@ import {
   Coordinates,
   DestinationConfig,
   DriverAccount,
+  DriverCostSettings,
   DriverOnlineStatus,
   DriverPreferences,
   ExpenseEntry,
   InboxThread,
+  InsurancePolicyInfo,
   MainTab,
   MapReportCategory,
   MapReportPin,
   NavManeuverKind,
   NavProvider,
+  PayoutRecord,
   ReserveTrip,
   SurgeZone,
   TripActivityEntry,
   TripActivityStatus,
+  TripFilterRules,
   TripOffer,
   TripStage,
   UKWeatherCondition,
 } from './types/driver';
 import {
   buildDefaultComplianceDocs,
+  buildDefaultInsurancePolicy,
   exportAccountBackupCode,
   getActiveAccountId,
   importAccountBackupCode,
@@ -155,7 +162,12 @@ import {
   syncAndroidWidgetState,
   syncNativeAppForeground,
 } from './native/floatingDot';
-import { uberSounds } from './utils/uberSounds';
+import { triggerHaptic, uberSounds } from './utils/uberSounds';
+import {
+  driverVoiceController,
+  isSpeechRecognitionSupported,
+  VoiceDriverCommand,
+} from './utils/voiceCommands';
 import {
   clampMapCoords,
   isWithinUKBounds,
@@ -200,6 +212,17 @@ import {
   useOfflineQueue,
 } from './utils/offlineQueue';
 import { formatOnlineTimer } from './utils/timeFormat';
+
+function matchesTripFilter(offer: TripOffer, rules?: TripFilterRules): boolean {
+  if (!rules || !rules.enabled) return true;
+  const totalMiles = Math.max(0.5, offer.pickupMiles + offer.tripMiles);
+  const perMile = offer.fare / totalMiles;
+  if (offer.fare < rules.minFareGbp) return false;
+  if (perMile < rules.minPerMileGbp) return false;
+  if (offer.pickupMiles > rules.maxPickupMiles) return false;
+  if (offer.rating < rules.minRiderRating) return false;
+  return true;
+}
 
 function lerpAngle(fromDeg: number, toDeg: number, t: number): number {
   const diff = ((((toDeg - fromDeg) % 360) + 540) % 360) - 180;
@@ -1234,9 +1257,18 @@ export default function App() {
     };
   }, [onlineStatus, tripStage, gpsExplicitlyAccepted]);
 
-  // Play looping Uber Driver dispatch ping & sync Android floating dot on offer change
+  // Play looping Uber Driver dispatch ping + unique surge/cash chimes + haptics
   useEffect(() => {
     if (pendingOffer && tripStage === 'idle') {
+      if (pendingOffer.paymentMethod === 'cash') {
+        uberSounds.play('cashDispatch');
+        triggerHaptic('cash');
+      } else if ((pendingOffer.surgeBonus ?? 0) >= 4) {
+        uberSounds.play('highSurgeDispatch');
+        triggerHaptic('dispatch');
+      } else {
+        triggerHaptic('dispatch');
+      }
       uberSounds.startDispatchLoop(pendingOffer.type === 'radar' ? 'radar' : 'exclusive');
       void pushOfferToNativeBubble(pendingOffer);
     } else {
@@ -1374,7 +1406,8 @@ export default function App() {
           offerIndex,
           servicePrefs,
           preferences.areaPreference,
-          Boolean(activeAccount?.isEV)
+          Boolean(activeAccount?.isEV),
+          preferences.acceptCashJobs ?? true
         );
         const upcoming = activePool[0];
         if (upcoming) {
@@ -1457,6 +1490,7 @@ export default function App() {
         ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
         areaPreference: preferences.areaPreference,
         isEV: Boolean(activeAccount?.isEV),
+        acceptCashJobs: preferences.acceptCashJobs ?? true,
       });
       const second = generateLocalTripOffer({
         anchorCoords: driverPosRef.current,
@@ -1470,6 +1504,7 @@ export default function App() {
         ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
         areaPreference: preferences.areaPreference,
         isEV: Boolean(activeAccount?.isEV),
+        acceptCashJobs: preferences.acceptCashJobs ?? true,
       });
       setRadarOffers([first, second]);
     },
@@ -1477,6 +1512,7 @@ export default function App() {
       getActiveGpsLatLng,
       preferences.intercity,
       preferences.areaPreference,
+      preferences.acceptCashJobs,
       activeAccount?.isEV,
       servicePrefs,
       lockedSurgeBonus,
@@ -1543,11 +1579,21 @@ export default function App() {
             airportQueueCode: airportQueue?.position === 1 ? airportQueue.code : undefined,
             areaPreference: preferences.areaPreference,
             isEV: Boolean(activeAccount?.isEV),
+            acceptCashJobs: preferences.acceptCashJobs ?? true,
           });
           setOfferIndex((i) => i + 1);
-          if (preferences.autoAccept && next.type === 'exclusive') {
+          const passesFilter = matchesTripFilter(next, preferences.tripFilter);
+
+          if (!passesFilter && preferences.tripFilter?.enabled && preferences.tripFilter?.autoDeclineBelowTarget) {
+            recordOfferDecision(next, 'declined');
+            showToast(`Filtered out: ${next.serviceName} £${next.fare.toFixed(2)} (below target)`);
+            return null;
+          }
+
+          if (preferences.autoAccept && next.type === 'exclusive' && passesFilter) {
             recordOfferDecision(next, 'accepted');
             uberSounds.play('accept');
+            triggerHaptic('accept');
             setLockedSurgeBonus(0);
             setLockedSurgeLabel(null);
             setPendingOffer(null);
@@ -1571,9 +1617,15 @@ export default function App() {
             setPendingOffer(next);
             pushDriverAlert(
               `${
-                next.isIntercity ? 'Intercity' : next.type === 'radar' ? 'Trip Radar' : 'Exclusive'
+                next.paymentMethod === 'cash'
+                  ? 'Cash · Metered'
+                  : next.isIntercity
+                  ? 'Intercity'
+                  : next.type === 'radar'
+                  ? 'Trip Radar'
+                  : 'Exclusive'
               } · £${next.fare.toFixed(2)}`,
-              `${next.serviceName} · ${next.pickupArea} → ${next.dropoffArea} (${next.pickupMinutes} min away)`,
+              `${next.serviceName}${next.merchantName ? ` (${next.merchantName})` : ''} · ${next.pickupArea} → ${next.dropoffArea} (${next.pickupMinutes} min away)`,
               `offer-${next.id}`,
               () => setActiveTab('home')
             );
@@ -1595,6 +1647,8 @@ export default function App() {
     preferences.intercity,
     preferences.autoAccept,
     preferences.areaPreference,
+    preferences.acceptCashJobs,
+    preferences.tripFilter,
     activeAccount?.isEV,
     servicePrefs,
     demandContext.dispatchMinSec,
@@ -2295,7 +2349,7 @@ export default function App() {
     todayDateKey,
   ]);
 
-  // Speed & Bus-Lane Camera proximity warning during active UK navigation
+  // Speed & Bus-Lane Camera proximity warning + audio chime & haptic during active UK navigation
   const nearbySpeedCamera = useMemo(() => {
     if (
       !activeTrip ||
@@ -2315,6 +2369,19 @@ export default function App() {
     }
     return best;
   }, [activeTrip, tripStage, preferences.speedCameraWarnings, driverPos]);
+
+  const warnedCameraIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (nearbySpeedCamera) {
+      if (warnedCameraIdRef.current !== nearbySpeedCamera.id) {
+        warnedCameraIdRef.current = nearbySpeedCamera.id;
+        uberSounds.play('cameraAlert');
+        triggerHaptic('alert');
+      }
+    } else {
+      warnedCameraIdRef.current = null;
+    }
+  }, [nearbySpeedCamera]);
 
   // iPhone Lock Screen & Car Bluetooth MediaSession controls
   useEffect(() => {
@@ -2427,6 +2494,12 @@ export default function App() {
   const handleToggleOnline = () => {
     uberSounds.unlock();
     if (onlineStatus === 'offline') {
+      if (activeAccount?.insurancePolicy?.status === 'lapsed') {
+        uberSounds.play('decline');
+        showToast('Hire & Reward Insurance lapsed — renew in Menu → Vehicles & Documents');
+        setActiveTab('menu');
+        return;
+      }
       const expiredDoc = activeAccount?.complianceDocs?.find((d) => d.status === 'expired');
       if (expiredDoc) {
         uberSounds.play('decline');
@@ -2634,6 +2707,7 @@ export default function App() {
       boostBonus: activeBoostBonus,
       ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
       isEV: Boolean(activeAccount?.isEV),
+      acceptCashJobs: preferences.acceptCashJobs ?? true,
     });
     setIntercityIdx((i) => i + 1);
     if (onlineStatus === 'offline') {
@@ -3088,21 +3162,27 @@ export default function App() {
     setTripStage('dropoff_arrived');
   };
 
-  const handleCompleteTrip = () => {
+  const handleCompleteTrip = (meteredFinalFare?: number) => {
     if (!activeTrip) return;
     uberSounds.unlock();
     uberSounds.play('completeTrip');
+    triggerHaptic('accept');
     const currentKey = getLocalDateKey();
     setTodayDateKey(currentKey);
     setTrafficAlert(null);
     setRiderChangeOffer(null);
 
+    const effectiveFare =
+      activeTrip.isMeteredFare && typeof meteredFinalFare === 'number' && meteredFinalFare > 0
+        ? Number(meteredFinalFare.toFixed(2))
+        : activeTrip.fare;
+
     const tipAmt = activeTrip.riderName === 'Joséfina' ? 2.5 : activeTrip.isIntercity ? 5.0 : 0;
     const surcharge = activeTrip.surchargeAmount ?? 0;
     const boostBonus = activeTrip.boostBonus ?? 0;
     const waitFee = tripWaitFee;
-    const uberFee = Number((Math.max(0, activeTrip.fare - surcharge) * 0.25).toFixed(2));
-    const totalGross = Number((activeTrip.fare + waitFee + tipAmt).toFixed(2));
+    const uberFee = Number((Math.max(0, effectiveFare - surcharge) * 0.25).toFixed(2));
+    const totalGross = Number((effectiveFare + waitFee + tipAmt).toFixed(2));
     const netPayout = Number((totalGross - uberFee).toFixed(2));
 
     const timeLabel = new Date().toLocaleTimeString('en-GB', {
@@ -3114,7 +3194,7 @@ export default function App() {
       id: `trip-${Date.now()}`,
       riderName: activeTrip.riderName,
       serviceName: activeTrip.serviceName,
-      fare: activeTrip.fare,
+      fare: effectiveFare,
       tip: tipAmt,
       waitFee,
       surchargeAmount: surcharge,
@@ -3130,6 +3210,11 @@ export default function App() {
       completedAt: `Today, ${timeLabel}`,
       dateKey: currentKey,
       isIntercity: activeTrip.isIntercity,
+      paymentMethod: activeTrip.paymentMethod ?? 'card',
+      isMeteredFare: activeTrip.isMeteredFare,
+      meteredFare: activeTrip.isMeteredFare ? effectiveFare : undefined,
+      merchantName: activeTrip.merchantName,
+      merchantCategory: activeTrip.merchantCategory,
       peakPeriod: demandContext.isPeakBoostHours || demandContext.demandLevel === 'Night Surge',
     };
 
@@ -3389,7 +3474,7 @@ export default function App() {
     arriveStop: handleArriveStop,
     continueFromStop: handleContinueFromStop,
     arriveDropoff: handleArriveDropoff,
-    completeTrip: handleCompleteTrip,
+    completeTrip: () => handleCompleteTrip(),
   };
 
   const offerExpiryRef = useRef<{ offerId: string; expiresAtMs: number }>({
@@ -3834,6 +3919,12 @@ export default function App() {
         payload.vehicle.toLowerCase().includes('ev') ||
         payload.vehicle.toLowerCase().includes('tesla'),
       complianceDocs: buildDefaultComplianceDocs(payload.phvBadge),
+      insurancePolicy: buildDefaultInsurancePolicy(
+        `acct-${Date.now()}`,
+        payload.city,
+        payload.vehicle.toLowerCase().includes('ev') ||
+          payload.vehicle.toLowerCase().includes('tesla')
+      ),
       restLockedUntil: null,
     };
     const nextList = [newAcct, ...accounts];
@@ -4133,10 +4224,26 @@ export default function App() {
     showToast('Trip Radar, surge zones & ledger synced');
   };
 
-  const handleCashOut = (amount: number, _method: 'instant' | 'bank') => {
+  const handleCashOut = (amount: number, method: 'instant' | 'bank') => {
+    const fee = method === 'instant' ? 1.25 : 0;
+    const netAmount = Math.max(0, Number((amount - fee).toFixed(2)));
+    const now = new Date();
+    const payoutRec: PayoutRecord = {
+      id: `pay-${now.getTime()}`,
+      amount: Number(amount.toFixed(2)),
+      fee,
+      netAmount,
+      method,
+      destinationLabel:
+        method === 'instant' ? 'UK Visa Debit •• 4821' : 'Faster Payments UK •• 9014',
+      reference: `UBR-${now.getTime().toString().slice(-6)}`,
+      timestamp: now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+      dateKey: getLocalDateKey(now),
+    };
     setLedger((prev) => ({
       ...prev,
       walletBalance: Math.max(0, Number((prev.walletBalance - amount).toFixed(2))),
+      payouts: [payoutRec, ...(prev.payouts ?? [])].slice(0, 40),
     }));
   };
 
@@ -4190,10 +4297,17 @@ export default function App() {
   };
 
   const handleFileTripClaim = useCallback(
-    (tripId: string, kind: 'valeting' | 'fare_review') => {
+    (
+      tripId: string,
+      kind: 'valeting' | 'fare_review',
+      details?: { amount: number; incidentLabel: string; photoName?: string; notes?: string }
+    ) => {
       const trip = ledger.completedTrips.find((t) => t.id === tripId);
       if (!trip || trip.claimFiled) return;
-      const amount = kind === 'valeting' ? 40.0 : 4.8;
+      const amount = details?.amount ?? (kind === 'valeting' ? 40.0 : 4.8);
+      const incidentLabel =
+        details?.incidentLabel ??
+        (kind === 'valeting' ? 'UK Valeting / Cleaning Payout' : 'Fare Review Adjustment');
       const targetKey = trip.dateKey || todayDateKey;
 
       setLedger((prev) => ({
@@ -4209,6 +4323,9 @@ export default function App() {
                 ...item,
                 claimFiled: kind,
                 claimAmount: amount,
+                claimIncidentLabel: incidentLabel,
+                claimPhotoName: details?.photoName,
+                claimNotes: details?.notes,
                 netPayout: Number(((item.netPayout ?? item.fare) + amount).toFixed(2)),
               }
             : item
@@ -4218,10 +4335,7 @@ export default function App() {
       const claimThread: InboxThread = {
         id: `thread-claim-${Date.now()}`,
         tab: 'support',
-        title:
-          kind === 'valeting'
-            ? `Valeting Fee Approved (+£${amount.toFixed(2)})`
-            : `Fare Review Credit (+£${amount.toFixed(2)})`,
+        title: `${incidentLabel} Approved (+£${amount.toFixed(2)})`,
         preview: `${trip.pickupArea} → ${trip.dropoffArea} · Credited to wallet`,
         timeAgo: 'Just now',
         statusText: 'Approved & Paid',
@@ -4231,21 +4345,18 @@ export default function App() {
           {
             id: `msg-claim-${Date.now()}`,
             sender: 'agent',
-            text:
-              kind === 'valeting'
-                ? `Your UK PHV valeting/soiling claim for ${trip.serviceName} (${trip.riderName}) has been approved for £40.00 and credited to your wallet.`
-                : `We reviewed your route & UK wait time telemetry for ${trip.pickupArea} → ${trip.dropoffArea} and credited an extra £4.80 adjustment.`,
+            text: `Your UK PHV claim (${incidentLabel}${
+              details?.photoName ? ` · photo: ${details.photoName}` : ''
+            }) for ${trip.serviceName} (${trip.riderName}) has been approved for £${amount.toFixed(
+              2
+            )} and credited to your wallet.${details?.notes ? ` Note: ${details.notes}` : ''}`,
             timestamp: 'Just now',
           },
         ],
       };
       setInboxThreads((prev) => [claimThread, ...prev]);
       uberSounds.play('completeTrip');
-      showToast(
-        kind === 'valeting'
-          ? `Valeting claim approved · +£${amount.toFixed(2)} credited`
-          : `Fare review approved · +£${amount.toFixed(2)} credited`
-      );
+      showToast(`${incidentLabel} approved · +£${amount.toFixed(2)} credited`);
     },
     [ledger.completedTrips, todayDateKey, showToast]
   );
@@ -4348,6 +4459,147 @@ export default function App() {
     [activeAccount?.id, showToast]
   );
 
+  const handleUpdateInsurancePolicy = useCallback(
+    (policy: InsurancePolicyInfo) => {
+      if (!activeAccount?.id) return;
+      const mappedDocStatus: 'verified' | 'expiring_soon' | 'expired' =
+        policy.status === 'lapsed'
+          ? 'expired'
+          : policy.status === 'expiring_soon'
+          ? 'expiring_soon'
+          : 'verified';
+
+      setAccounts((prev) =>
+        prev.map((acct) => {
+          if (acct.id !== activeAccount.id) return acct;
+          const updatedDocs = (acct.complianceDocs ?? buildDefaultComplianceDocs(acct.phvBadge)).map(
+            (docItem) =>
+              docItem.id === 'doc-insurance'
+                ? {
+                    ...docItem,
+                    subtitle: `${policy.insurer} · ${policy.coverType}`,
+                    daysRemaining: policy.daysRemaining,
+                    status: mappedDocStatus,
+                  }
+                : docItem
+          );
+          return { ...acct, insurancePolicy: policy, complianceDocs: updatedDocs };
+        })
+      );
+      setPreferences((prev) => ({
+        ...prev,
+        costSettings: {
+          fuelOrKwhPerMileGbp: prev.costSettings?.fuelOrKwhPerMileGbp ?? 0.16,
+          weeklyInsuranceGbp: policy.weeklyPremiumGbp,
+          weeklyVehicleCostGbp: prev.costSettings?.weeklyVehicleCostGbp ?? 145,
+        },
+      }));
+      showToast(
+        policy.status === 'lapsed'
+          ? 'PHV Insurance marked lapsed — driving gated until renewed'
+          : `Insurance certificate active (${policy.insurer})`
+      );
+    },
+    [activeAccount?.id, showToast]
+  );
+
+  // Hands-free Driver Voice Command controller & quick handler
+  const [voiceStatus, setVoiceStatus] = useState<{ listening: boolean; lastHeard?: string }>({
+    listening: false,
+  });
+
+  const handleVoiceDriverCommand = useCallback(
+    (cmd: VoiceDriverCommand) => {
+      if (cmd === 'accept') {
+        if (pendingOfferRef.current && tripStageRef.current === 'idle') {
+          handleAcceptOffer(pendingOfferRef.current);
+        } else if (queuedOffer) {
+          recordOfferDecision(queuedOffer, 'accepted', 'queued');
+          uberSounds.play('accept');
+          setAcceptedNextOffer(queuedOffer);
+          setQueuedOffer(null);
+          showToast(`Voice accepted queued ${queuedOffer.serviceName}`);
+        } else {
+          showToast('Voice: no incoming job offer to accept');
+        }
+        return;
+      }
+      if (cmd === 'decline') {
+        if (pendingOfferRef.current && tripStageRef.current === 'idle') {
+          handleDeclineOffer(pendingOfferRef.current);
+        } else {
+          showToast('Voice: no incoming offer to decline');
+        }
+        return;
+      }
+      if (cmd === 'go_online') {
+        if (onlineStatusRef.current === 'offline') {
+          toggleOnlineRef.current();
+        } else {
+          showToast('Voice: already online');
+        }
+        return;
+      }
+      if (cmd === 'go_offline') {
+        if (onlineStatusRef.current === 'online' && tripStageRef.current === 'idle') {
+          toggleOnlineRef.current();
+        } else {
+          showToast('Voice: finish active trip before going offline');
+        }
+        return;
+      }
+      if (cmd === 'navigate') {
+        setRecenterSignal((s) => s + 1);
+        const navText = liveNav?.maneuverTitle
+          ? `${liveNav.distanceToTurnLabel || ''} ${liveNav.maneuverTitle}`.trim()
+          : 'Map recentered on your UK position.';
+        speakNavInstruction(navText, true);
+        showToast('Voice: Navigation instruction read');
+        return;
+      }
+      if (cmd === 'read_message') {
+        const noteText =
+          activeTrip?.riderNote ||
+          inboxThreads.find((t) => t.unread)?.preview ||
+          'No unread rider notes or support messages.';
+        speakNavInstruction(noteText, true);
+        showToast('Voice: Reading latest rider note');
+      }
+    },
+    [
+      handleAcceptOffer,
+      handleDeclineOffer,
+      queuedOffer,
+      recordOfferDecision,
+      liveNav?.maneuverTitle,
+      liveNav?.distanceToTurnLabel,
+      activeTrip?.riderNote,
+      inboxThreads,
+      showToast,
+    ]
+  );
+
+  const voiceHandlerRef = useRef(handleVoiceDriverCommand);
+  voiceHandlerRef.current = handleVoiceDriverCommand;
+
+  useEffect(() => {
+    if (!preferences.voiceCommandsEnabled || onlineStatus !== 'online') {
+      driverVoiceController.stop();
+      setVoiceStatus({ listening: false });
+      return;
+    }
+    driverVoiceController.start(
+      (cmd, transcript) => {
+        setVoiceStatus({ listening: true, lastHeard: transcript });
+        voiceHandlerRef.current(cmd);
+      },
+      (listening, lastHeard) => {
+        setVoiceStatus((prev) => ({ listening, lastHeard: lastHeard ?? prev.lastHeard }));
+      }
+    );
+    return () => driverVoiceController.stop();
+  }, [preferences.voiceCommandsEnabled, onlineStatus]);
+
   const handleResetRestLock = useCallback(() => {
     if (!activeAccount?.id) return;
     setAccounts((prev) =>
@@ -4431,6 +4683,7 @@ export default function App() {
         ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
         areaPreference: preferences.areaPreference,
         isEV: Boolean(activeAccount?.isEV),
+        acceptCashJobs: preferences.acceptCashJobs ?? true,
       }),
     [
       driverPos,
@@ -4439,6 +4692,7 @@ export default function App() {
       offerIndex,
       preferences.intercity,
       preferences.areaPreference,
+      preferences.acceptCashJobs,
       activeAccount?.isEV,
       servicePrefs,
       localGeoVersion,
@@ -4500,6 +4754,12 @@ export default function App() {
 
   return (
     <div className="h-[100dvh] w-full flex flex-col bg-[#F6F6F6] dark:bg-[#0E0F12] overflow-hidden">
+      {preferences.nightShieldEnabled && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-0 z-[45] bg-[#0B0802]/35"
+        />
+      )}
       {showBootScreen && (
         <BootScreen
           driverName={activeAccount?.name}
@@ -4905,14 +5165,38 @@ export default function App() {
 
               <div className="pointer-events-auto flex items-center gap-2 flex-wrap justify-center">
                 {onlineStatus === 'online' && !pendingOffer && !showRadarList && (
-                  <button
-                    type="button"
-                    onClick={() => setOpportunitiesModalMode('trends')}
-                    className="h-9 px-3 rounded-full bg-white/95 dark:bg-[#18191D]/95 backdrop-blur-md text-black dark:text-white text-[11.5px] font-bold shadow-md border border-black/10 dark:border-white/10 flex items-center gap-1.5 whitespace-nowrap"
-                  >
-                    <Flame className="w-3.5 h-3.5 text-[#D97706]" />
-                    <span>{demandContext.demandLevel}</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setOpportunitiesModalMode('trends')}
+                      className="h-9 px-3 rounded-full bg-white/95 dark:bg-[#18191D]/95 backdrop-blur-md text-black dark:text-white text-[11.5px] font-bold shadow-md border border-black/10 dark:border-white/10 flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                      <Flame className="w-3.5 h-3.5 text-[#D97706]" />
+                      <span>{demandContext.demandLevel}</span>
+                    </button>
+                    {(() => {
+                      const shiftMin = Math.max(0, activeAccount.drivingMinutesUsedToday ?? 0);
+                      const shiftHrs = Math.floor(shiftMin / 60);
+                      const shiftRemMin = shiftMin % 60;
+                      const estHourly = Math.round(
+                        todayEarnings / Math.max(0.5, shiftMin / 60)
+                      );
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('hub')}
+                          className="h-9 px-3 rounded-full bg-black/90 dark:bg-[#18191D]/95 text-white text-[11.5px] font-bold shadow-md border border-white/15 flex items-center gap-1.5 whitespace-nowrap tabular-nums"
+                          title="UK 12h PHV shift driving allowance"
+                        >
+                          <Timer className="w-3.5 h-3.5 text-[#05944F]" />
+                          <span>
+                            Shift {shiftHrs}h {shiftRemMin}m/12h
+                            {!privacyHidden ? ` · £${estHourly}/hr` : ''}
+                          </span>
+                        </button>
+                      );
+                    })()}
+                  </>
                 )}
                 {onlineStatus === 'online' && streakCount > 0 && !pendingOffer && !showRadarList && (
                   <button
@@ -5162,11 +5446,85 @@ export default function App() {
             </div>
           )}
 
+          {/* VOICE COMMANDS QUICK STRIP (iOS Safari fallback tap chips + Web Speech indicator) */}
+          {preferences.voiceCommandsEnabled && onlineStatus === 'online' && !showRadarList && (
+            <div
+              className={`absolute inset-x-4 z-30 flex justify-center pointer-events-none ${
+                pendingOffer || tripStage !== 'idle' ? 'top-[104px]' : 'bottom-[136px]'
+              }`}
+            >
+              <div className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/90 dark:bg-[#18191D]/95 text-white border border-white/15 shadow-xl text-[11px] font-bold">
+                <span className="inline-flex items-center gap-1 pr-1.5 border-r border-white/15">
+                  <Mic
+                    className={`w-3.5 h-3.5 ${
+                      voiceStatus.listening ? 'text-[#05944F] animate-pulse' : 'text-[#5B9BF8]'
+                    }`}
+                  />
+                  <span>
+                    {voiceStatus.listening
+                      ? voiceStatus.lastHeard
+                        ? `"${voiceStatus.lastHeard.slice(0, 14)}"`
+                        : 'Listening'
+                      : isSpeechRecognitionSupported()
+                      ? 'Voice'
+                      : 'Voice Chips'}
+                  </span>
+                </span>
+                {pendingOffer && tripStage === 'idle' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleVoiceDriverCommand('accept')}
+                      className="px-2 py-0.5 rounded-full bg-[#05944F] text-white"
+                    >
+                      Accept
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleVoiceDriverCommand('decline')}
+                      className="px-2 py-0.5 rounded-full bg-[#E11900] text-white"
+                    >
+                      Decline
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleVoiceDriverCommand('read_message')}
+                      className="px-2 py-0.5 rounded-full bg-white/15 hover:bg-white/25"
+                    >
+                      Read Note
+                    </button>
+                    {tripStage === 'idle' ? (
+                      <button
+                        type="button"
+                        onClick={() => handleVoiceDriverCommand('go_offline')}
+                        className="px-2 py-0.5 rounded-full bg-[#E11900]/80 hover:bg-[#E11900]"
+                      >
+                        Go Offline
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleVoiceDriverCommand('navigate')}
+                        className="px-2 py-0.5 rounded-full bg-[#276EF1] hover:bg-[#1E5CD4]"
+                      >
+                        Speak Turn
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* TRIP OFFER / TRIP RADAR OVERLAY */}
           {(pendingOffer || showRadarList) && tripStage === 'idle' && (
             <div className="absolute inset-x-3 bottom-4 z-40 max-w-[440px] mx-auto">
               <TripOfferModal
                 offer={pendingOffer || radarOffers[0] || fallbackLocalOffer}
+                tripFilter={preferences.tripFilter}
                 onAccept={handleAcceptOffer}
                 onDecline={handleDeclineOffer}
                 onMoveToRadarMatch={handleMoveToRadarMatch}
@@ -5192,6 +5550,7 @@ export default function App() {
                 stage={tripStage}
                 liveEtaLabel={liveNav?.etaMinLabel}
                 liveDistanceLabel={liveNav?.distanceRemaining}
+                navProgress={navProgress}
                 routeSteps={activeRoute?.steps}
                 currentStepIdx={currentStepIdx}
                 waitFeeAccrued={tripWaitFee}
@@ -5491,6 +5850,13 @@ export default function App() {
               dailyTotals={ledger.dailyTotals}
               completedTrips={ledger.completedTrips}
               expenses={ledger.expenses}
+              payouts={ledger.payouts}
+              costSettings={preferences.costSettings}
+              weeklyInsuranceGbp={activeAccount.insurancePolicy?.weeklyPremiumGbp}
+              onUpdateCostSettings={(nextCost: DriverCostSettings) => {
+                setPreferences((prev) => ({ ...prev, costSettings: nextCost }));
+                showToast('Vehicle & fuel cost assumptions updated');
+              }}
               questCompletedCount={ledger.questCompletedCount}
               dailyGoalGbp={preferences.dailyGoalGbp}
               weeklyGoalGbp={preferences.weeklyGoalGbp}
@@ -5507,6 +5873,7 @@ export default function App() {
               onBack={() => setActiveTab('home')}
               onCashOut={handleCashOut}
               onOpenOpportunities={() => setOpportunitiesModalMode('opportunities')}
+              onOpenTrends={() => setOpportunitiesModalMode('trends')}
               onOpenChargers={() => setShowChargersModal(true)}
               onExportTaxCsv={handleExportTaxCsv}
               onShareTripReceipt={handleShareTripReceipt}
@@ -5569,6 +5936,7 @@ export default function App() {
               onOpenPermissions={() => setShowPermissionsModal(true)}
               onNotifyToast={showToast}
               onUpdateComplianceDoc={handleUpdateComplianceDoc}
+              onUpdateInsurancePolicy={handleUpdateInsurancePolicy}
               onResetRestLock={handleResetRestLock}
               onExportTaxCsv={handleExportTaxCsv}
               offlinePendingCount={offlinePendingCount}
@@ -5721,6 +6089,14 @@ export default function App() {
           preferences={preferences}
           accountTier={activeAccount.tier}
           onTogglePreference={handleTogglePreference}
+          onUpdateTripFilter={(nextFilter: TripFilterRules) => {
+            setPreferences((prev) => ({ ...prev, tripFilter: nextFilter }));
+            showToast(
+              nextFilter.enabled
+                ? `Trip Filter active: min £${nextFilter.minFareGbp.toFixed(2)} · £${nextFilter.minPerMileGbp.toFixed(2)}/mi`
+                : 'Trip Filter rules paused'
+            );
+          }}
           onSetFloatingDotMode={(mode: 'dot' | 'card') => {
             setPreferences((prev) => ({ ...prev, floatingDotAlertMode: mode }));
             void setNativeBubbleAlertMode(mode);
@@ -5768,6 +6144,15 @@ export default function App() {
           initialSection={opportunitiesModalMode}
           questCompletedCount={ledger.questCompletedCount}
           enrolledIds={enrolledOppIds}
+          activeAirportQueueCode={airportQueue?.code ?? null}
+          onJoinAirportQueue={(code, airportName) => {
+            setAirportQueue({
+              code,
+              name: airportName,
+              position: Math.floor(Math.random() * 5) + 4,
+            });
+            showToast(`Checked in to ${code} Virtual Queue · Bump protection active`);
+          }}
           onToggleEnroll={(id) => {
             setEnrolledOppIds((prev) => {
               const removing = prev.includes(id);

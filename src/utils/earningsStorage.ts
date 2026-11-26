@@ -1,4 +1,4 @@
-import { ComplimentCounts, CompletedTrip, ExpenseEntry, TripStats } from '../types/driver';
+import { ComplimentCounts, CompletedTrip, ExpenseEntry, PayoutRecord, TripStats } from '../types/driver';
 
 const LEDGER_STORAGE_KEY = 'uber_driver_uk_ledger_v1';
 
@@ -32,6 +32,7 @@ export interface DriverLedger {
   engagedMinutesTotal?: number;
   onlineMinutesTotal?: number;
   compliments?: ComplimentCounts;
+  payouts?: PayoutRecord[];
 }
 
 export function getLocalDateKey(date: Date = new Date()): string {
@@ -184,6 +185,7 @@ export function loadDriverLedger(
                   : DEFAULT_COMPLIMENTS.aboveAndBeyond,
             }
           : { ...DEFAULT_COMPLIMENTS },
+        payouts: Array.isArray(parsed.payouts) ? parsed.payouts : [],
       };
     }
   } catch {
@@ -205,6 +207,7 @@ export function loadDriverLedger(
     engagedMinutesTotal: 42,
     onlineMinutesTotal: 60,
     compliments: { ...DEFAULT_COMPLIMENTS },
+    payouts: [],
   };
 }
 

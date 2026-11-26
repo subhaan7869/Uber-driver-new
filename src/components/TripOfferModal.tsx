@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Package, PawPrint, Route, Star, User, X } from 'lucide-react';
-import { TripOffer } from '../types/driver';
+import { Banknote, Package, PawPrint, Route, ShieldAlert, Star, Store, User, X } from 'lucide-react';
+import { TripFilterRules, TripOffer } from '../types/driver';
 
 function renderServiceIcon(item: TripOffer, sizeClass = 'w-3 h-3') {
   if (item.isIntercity) return <Route className={sizeClass} />;
@@ -11,6 +11,7 @@ function renderServiceIcon(item: TripOffer, sizeClass = 'w-3 h-3') {
 
 interface TripOfferModalProps {
   offer: TripOffer;
+  tripFilter?: TripFilterRules;
   onAccept: (offer: TripOffer) => void;
   onDecline: (offer: TripOffer) => void;
   onMoveToRadarMatch?: (offer: TripOffer) => void;
@@ -25,6 +26,7 @@ interface TripOfferModalProps {
 
 export const TripOfferModal: React.FC<TripOfferModalProps> = ({
   offer,
+  tripFilter,
   onAccept,
   onDecline,
   onMoveToRadarMatch,
@@ -177,6 +179,18 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                           {renderServiceIcon(item, 'w-3 h-3')}
                           <span>{item.serviceName}</span>
                         </span>
+                        {item.paymentMethod === 'cash' && (
+                          <span className="inline-flex items-center gap-1 bg-[#E6F4EA] dark:bg-emerald-950/70 text-[#05944F] text-[11px] font-extrabold px-2 py-0.5 rounded-[5px]">
+                            <Banknote className="w-3 h-3" />
+                            Cash · Meter
+                          </span>
+                        )}
+                        {item.merchantName && (
+                          <span className="inline-flex items-center gap-1 bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[11px] font-bold px-2 py-0.5 rounded-[5px]">
+                            <Store className="w-3 h-3" />
+                            {item.merchantName}
+                          </span>
+                        )}
                         {item.isIntercity && (
                           <span className="text-[11.5px] font-semibold text-[#7A1C79] dark:text-purple-300">
                             Out of City
@@ -185,9 +199,12 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                       </div>
 
                       {/* Large Bold Fare */}
-                      <div className="mt-1.5">
+                      <div className="mt-1.5 flex items-baseline gap-2 flex-wrap">
                         <span className="text-[38px] leading-none font-extrabold tracking-tight text-black dark:text-white tabular-nums">
                           £{item.fare.toFixed(2)}
+                        </span>
+                        <span className="text-[12px] font-bold text-[#05944F] tabular-nums">
+                          £{(item.fare / Math.max(0.5, item.tripMiles + item.pickupMiles)).toFixed(2)}/mi
                         </span>
                       </div>
 
@@ -296,6 +313,18 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                   {renderServiceIcon(offer, 'w-3 h-3')}
                   <span>{offer.serviceName}</span>
                 </span>
+                {offer.paymentMethod === 'cash' && (
+                  <span className="inline-flex items-center gap-1 bg-[#E6F4EA] dark:bg-emerald-950/70 text-[#05944F] text-[11px] font-extrabold px-2 py-0.5 rounded-[5px]">
+                    <Banknote className="w-3 h-3" />
+                    Cash · Meter
+                  </span>
+                )}
+                {offer.merchantName && (
+                  <span className="inline-flex items-center gap-1 bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[11px] font-bold px-2 py-0.5 rounded-[5px]">
+                    <Store className="w-3 h-3" />
+                    {offer.merchantName}
+                  </span>
+                )}
                 {offer.isIntercity && (
                   <span className="text-[11.5px] font-semibold text-[#7A1C79] dark:text-purple-300">
                     Out of City
@@ -304,9 +333,12 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
               </div>
 
               {/* Large Bold Fare */}
-              <div className="mt-1.5">
+              <div className="mt-1.5 flex items-baseline gap-2 flex-wrap">
                 <span className="text-[40px] leading-none font-extrabold tracking-tight text-black dark:text-white tabular-nums">
                   £{offer.fare.toFixed(2)}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F] text-[12px] font-bold tabular-nums">
+                  £{(offer.fare / Math.max(0.5, offer.tripMiles + offer.pickupMiles)).toFixed(2)}/mi
                 </span>
               </div>
 
@@ -327,6 +359,11 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                 {offer.eatsOrderCode && (
                   <span className="text-[12px] font-bold text-[#05944F]">
                     · {offer.eatsOrderCode}
+                  </span>
+                )}
+                {offer.ulezStatus && (
+                  <span className="text-[11.5px] font-semibold text-[#276EF1]">
+                    · {offer.ulezStatus.includes('Exempt') ? 'ULEZ Exempt' : 'ULEZ OK'}
                   </span>
                 )}
               </div>
@@ -422,6 +459,29 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
               {renderServiceIcon(offer, 'w-3.5 h-3.5')}
               {offer.serviceName}
             </span>
+            {offer.paymentMethod === 'cash' && (
+              <span className="inline-flex items-center gap-1 bg-[#E6F4EA] dark:bg-emerald-950/70 text-[#05944F] text-[12px] font-extrabold px-2.5 py-1 rounded-md">
+                <Banknote className="w-3.5 h-3.5" />
+                Cash · Metered
+              </span>
+            )}
+            {offer.merchantName && (
+              <span className="inline-flex items-center gap-1 bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[12px] font-bold px-2.5 py-1 rounded-md">
+                <Store className="w-3.5 h-3.5" />
+                {offer.merchantName}
+                {offer.merchantCategory === 'grocery'
+                  ? ' · Shop'
+                  : offer.merchantCategory === 'pharmacy'
+                  ? ' · Pharmacy'
+                  : ''}
+              </span>
+            )}
+            {offer.requiresAgeCheck && (
+              <span className="inline-flex items-center gap-1 bg-[#FEECEB] dark:bg-red-950/60 text-[#E11900] dark:text-red-300 text-[11.5px] font-bold px-2 py-1 rounded-md">
+                <ShieldAlert className="w-3.5 h-3.5" />
+                Challenge 25
+              </span>
+            )}
             {offer.isIntercity && (
               <span className="inline-flex items-center bg-[#F3E8FF] dark:bg-purple-950/60 text-[#7A1C79] dark:text-purple-300 text-[12px] font-bold px-2.5 py-1 rounded-md">
                 Out of City
@@ -452,25 +512,47 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
           </button>
         </div>
 
-        {/* Big Bold UK Fare + Upfront £/hr Rate */}
-        <div className="mt-1.5 flex items-baseline gap-2.5 flex-wrap">
-          <span className="text-[38px] leading-tight font-extrabold tracking-tight text-black dark:text-white tabular-nums">
-            £{offer.fare.toFixed(2)}
-          </span>
-          <span className="px-2 py-0.5 rounded-md bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F] text-[12px] font-bold tabular-nums">
-            £{((offer.fare / Math.max(1, offer.tripMinutes + offer.pickupMinutes)) * 60).toFixed(0)}/hr est.
-          </span>
-          {offer.surgeBonus && (
-            <span className="text-[13px] font-semibold text-[#7A1C79] dark:text-[#E879F9] tabular-nums">
-              Includes +£{offer.surgeBonus.toFixed(2)} {offer.surgeLockedBonus ? 'locked surge' : 'surge'}
-            </span>
-          )}
-          {offer.boostBonus && (
-            <span className="px-2 py-0.5 rounded-md bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] text-[12px] font-bold tabular-nums">
-              +£{offer.boostBonus.toFixed(2)} Boost+
-            </span>
-          )}
-        </div>
+        {/* Big Bold UK Fare + Upfront £/hr & £/mi Rate */}
+        {(() => {
+          const perMi = offer.fare / Math.max(0.5, offer.tripMiles + offer.pickupMiles);
+          const perHr = (offer.fare / Math.max(1, offer.tripMinutes + offer.pickupMinutes)) * 60;
+          const filterActive = Boolean(tripFilter?.enabled);
+          const meetsFilter =
+            !filterActive ||
+            (offer.fare >= (tripFilter?.minFareGbp ?? 0) &&
+              perMi >= (tripFilter?.minPerMileGbp ?? 0) &&
+              offer.pickupMiles <= (tripFilter?.maxPickupMiles ?? 99) &&
+              offer.rating >= (tripFilter?.minRiderRating ?? 0));
+          return (
+            <div className="mt-1.5 flex items-baseline gap-2 flex-wrap">
+              <span className="text-[38px] leading-tight font-extrabold tracking-tight text-black dark:text-white tabular-nums">
+                £{offer.fare.toFixed(2)}
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-[#E6F4EA] dark:bg-emerald-950/60 text-[#05944F] text-[12px] font-bold tabular-nums">
+                £{perHr.toFixed(0)}/hr est.
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded-md text-[12px] font-bold tabular-nums ${
+                  filterActive && !meetsFilter
+                    ? 'bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300'
+                    : 'bg-[#F3F3F3] dark:bg-white/10 text-black dark:text-white'
+                }`}
+              >
+                £{perMi.toFixed(2)}/mi{filterActive ? (meetsFilter ? ' · Matches Target' : ' · Below Target') : ''}
+              </span>
+              {offer.surgeBonus && (
+                <span className="text-[13px] font-semibold text-[#7A1C79] dark:text-[#E879F9] tabular-nums">
+                  Includes +£{offer.surgeBonus.toFixed(2)} {offer.surgeLockedBonus ? 'locked surge' : 'surge'}
+                </span>
+              )}
+              {offer.boostBonus && (
+                <span className="px-2 py-0.5 rounded-md bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] text-[12px] font-bold tabular-nums">
+                  +£{offer.boostBonus.toFixed(2)} Boost+
+                </span>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Rider Rating + UK Extras */}
         <div className="mt-1 mb-3 flex items-center gap-2.5 flex-wrap">
@@ -478,7 +560,7 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
             <Star className="w-3.5 h-3.5 fill-current" />
             {offer.rating.toFixed(2)}
           </span>
-          {(offer.pinCode || offer.surchargeLabel || offer.intercityCorridor || offer.eatsOrderCode) && (
+          {(offer.pinCode || offer.surchargeLabel || offer.intercityCorridor || offer.eatsOrderCode || offer.ulezStatus) && (
             <span className="text-[12px] font-medium text-[#545454] dark:text-neutral-400">
               {[
                 offer.eatsOrderCode ?? null,
@@ -486,6 +568,7 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
                 offer.surchargeLabel && offer.surchargeAmount
                   ? `${offer.surchargeLabel} £${offer.surchargeAmount.toFixed(2)}`
                   : null,
+                offer.ulezStatus ? (offer.ulezStatus.includes('Exempt') ? 'ULEZ Exempt' : 'ULEZ Zone') : null,
                 offer.pinCode ? 'PIN Verified' : null,
               ]
                 .filter(Boolean)

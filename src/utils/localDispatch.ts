@@ -1,6 +1,7 @@
 import {
   Coordinates,
   DriverPreferences,
+  EatsMerchantCategory,
   ReserveCategory,
   ReserveTrip,
   TripOffer,
@@ -13,7 +14,7 @@ import {
   UK_AIRPORT_MAP_PINS,
   UK_CITIES,
 } from './ukGeo';
-import { detectUKZoneSurcharge } from './ukRealism';
+import { detectUKZoneSurcharge, getUKTaxiMeterRates } from './ukRealism';
 
 export type ServicePrefsInput = Pick<
   DriverPreferences,
@@ -263,17 +264,36 @@ const RIDER_NAMES = [
   'Liam B.',
 ];
 
-const EATS_MERCHANTS = [
-  "Nando's",
-  'Pret A Manger',
-  'Wagamama',
-  'Five Guys',
-  'Greggs',
-  "McDonald's",
-  'Tesco Express',
-  'KFC',
-  'Co-op Food',
-  'PizzaExpress',
+interface EatsCatalogEntry {
+  name: string;
+  category: EatsMerchantCategory;
+  collectionHint: string;
+  requiresAgeCheck?: boolean;
+}
+
+const UK_EATS_CATALOG: EatsCatalogEntry[] = [
+  { name: "Nando's", category: 'restaurant', collectionHint: 'Collect from hot-shelf counter · Seal intact' },
+  { name: 'Tesco Express', category: 'grocery', collectionHint: '2x chilled grocery bags · Ask till #2', requiresAgeCheck: true },
+  { name: 'Wagamama', category: 'restaurant', collectionHint: 'Collect from Delivery Hatch · Keep upright' },
+  { name: "Sainsbury's Local", category: 'grocery', collectionHint: 'Rapid Grocery pickup shelf · Check receipt', requiresAgeCheck: true },
+  { name: 'Dishoom', category: 'restaurant', collectionHint: 'Collect from kitchen dispatch window' },
+  { name: 'Co-op Food', category: 'grocery', collectionHint: 'Basket waiting behind checkout · Bring thermal bag' },
+  { name: 'Five Guys', category: 'restaurant', collectionHint: 'Fries cooked fresh on driver arrival' },
+  { name: 'Boots Pharmacy', category: 'pharmacy', collectionHint: 'Ask healthcare counter for Uber Eats parcel', requiresAgeCheck: true },
+  { name: 'Franco Manca', category: 'restaurant', collectionHint: 'Keep sourdough pizza boxes flat' },
+  { name: 'Morrisons Daily', category: 'grocery', collectionHint: 'Pickup bay at store entrance' },
+  { name: 'Wingstop UK', category: 'restaurant', collectionHint: 'Show courier code at Wingstop counter' },
+  { name: 'M&S Simply Food', category: 'grocery', collectionHint: 'Chilled dine-in bags at Customer Desk' },
+  { name: 'Pret A Manger', category: 'restaurant', collectionHint: 'Coffee & bag waiting on Partner Shelf' },
+  { name: 'Greggs', category: 'restaurant', collectionHint: 'Hot bake bag sealed behind till' },
+  { name: 'Tortilla', category: 'restaurant', collectionHint: 'Ready on Click & Collect rack' },
+  { name: 'Asda Express', category: 'grocery', collectionHint: 'Forecourt Express counter collection', requiresAgeCheck: true },
+  { name: 'Leon', category: 'restaurant', collectionHint: 'Partner pickup window on right' },
+  { name: 'Waitrose Little', category: 'grocery', collectionHint: 'Priority grocery crate at service desk' },
+  { name: 'Itsu', category: 'restaurant', collectionHint: 'Cold sushi & hot broth packed separately' },
+  { name: "McDonald's", category: 'restaurant', collectionHint: 'Delivery bay #1 · Check drink seal' },
+  { name: 'KFC', category: 'restaurant', collectionHint: 'Collect from Driver Waiting Area' },
+  { name: 'PizzaExpress', category: 'restaurant', collectionHint: 'Ask host desk for Uber Eats bag' },
 ];
 
 const PET_NOTES = [
@@ -297,6 +317,7 @@ interface LocalOfferOptions {
   airportQueueCode?: string;
   areaPreference?: DriverPreferences['areaPreference'];
   isEV?: boolean;
+  acceptCashJobs?: boolean;
 }
 
 export function generateLocalTripOffer({
@@ -313,6 +334,7 @@ export function generateLocalTripOffer({
   airportQueueCode,
   areaPreference = 'all',
   isEV = false,
+  acceptCashJobs = true,
 }: LocalOfferOptions): TripOffer {
   const baseLatLng = realLatLng ?? mapToLatLng(anchorCoords);
   const currentLat = baseLatLng.lat;
@@ -493,10 +515,13 @@ export function generateLocalTripOffer({
     dropoffArea = `${localTown} Local`;
   }
 
-  if (isDelivery) {
-    const merchant = EATS_MERCHANTS[seedIndex % EATS_MERCHANTS.length];
-    if (!pickupAddress.toLowerCase().includes(merchant.toLowerCase())) {
-      pickupAddress = `${merchant} · ${pickupAddress}`;
+  const selectedMerchant = isDelivery
+    ? UK_EATS_CATALOG[seedIndex % UK_EATS_CATALOG.length]
+    : undefined;
+
+  if (isDelivery && selectedMerchant) {
+    if (!pickupAddress.toLowerCase().includes(selectedMerchant.name.toLowerCase())) {
+      pickupAddress = `${selectedMerchant.name} · ${pickupAddress}`;
     }
   }
 
@@ -594,25 +619,45 @@ export function generateLocalTripOffer({
     ? `#UE-${(4100 + ((seedIndex * 79) % 5800)).toString(16).toUpperCase()}`
     : undefined;
 
-  const riderNote = isDelivery
-    ? `Order ${eatsOrderCode} · ${
-        seedIndex % 2 === 0 ? '2x Hot Bags · Leave at front door (photo required)' : 'Ring doorbell · Hand order directly'
-      }`
-    : serviceName === 'Uber Pet'
-    ? PET_NOTES[seedIndex % PET_NOTES.length]
-    : serviceName === 'UberXL'
-    ? `Group of ${4 + (seedIndex % 3)} passengers with luggage — outside ${pickupAddress}.`
-    : serviceName === 'Comfort'
-    ? `Comfort preference: Quiet ride & cool cabin · ${pickupAddress}.`
-    : airportPin
-    ? `Flight arrival matched via ${airportPin.name} FIFO Queue · Waiting at pickup bay.`
-    : `Waiting outside ${pickupAddress} in ${localTown}.`;
+  // ~28% of eligible passenger jobs are Cash + UK Taxi Meter when Cash Jobs enabled
+  const isCashJob =
+    Boolean(acceptCashJobs) && !isDelivery && !isIntercity && seedIndex % 4 === 3;
+  const meterRates = isCashJob ? getUKTaxiMeterRates(serviceName) : null;
+  const meteredStartEst =
+    isCashJob && meterRates
+      ? Number(
+          (
+            meterRates.flagFall +
+            tripMiles * meterRates.ratePerMile +
+            Math.max(1, Math.round(tripMinutes * 0.25)) * meterRates.waitPerMin +
+            (surchargeAmount ?? 0)
+          ).toFixed(2)
+        )
+      : undefined;
+  const finalFare = isCashJob && meteredStartEst ? meteredStartEst : fare;
+
+  const riderNote =
+    isDelivery && selectedMerchant
+      ? `Collect at ${selectedMerchant.name} (${eatsOrderCode}) · ${selectedMerchant.collectionHint}${
+          selectedMerchant.requiresAgeCheck ? ' · Challenge 25 ID Check' : ''
+        }`
+      : isCashJob
+      ? `Cash Fare (${meterRates?.tariffLabel}) · Customer paying cash in vehicle at dropoff`
+      : serviceName === 'Uber Pet'
+      ? PET_NOTES[seedIndex % PET_NOTES.length]
+      : serviceName === 'UberXL'
+      ? `Group of ${4 + (seedIndex % 3)} passengers with luggage — outside ${pickupAddress}.`
+      : serviceName === 'Comfort'
+      ? `Comfort preference: Quiet ride & cool cabin · ${pickupAddress}.`
+      : airportPin
+      ? `Flight arrival matched via ${airportPin.name} FIFO Queue · Waiting at pickup bay.`
+      : `Waiting outside ${pickupAddress} in ${localTown}.`;
 
   return {
     id: `local-${type}-${isIntercity ? 'ic-' : ''}${Date.now()}-${seedIndex}`,
     type,
     serviceName,
-    fare,
+    fare: finalFare,
     rating: Number((4.86 + ((seedIndex % 13) * 0.01)).toFixed(2)),
     riderName,
     riderTrips: 45 + ((seedIndex * 37) % 480),
@@ -630,8 +675,17 @@ export function generateLocalTripOffer({
     surgeLockedBonus: surgeLockedBonus > 0 ? surgeLockedBonus : undefined,
     boostBonus: effectiveBoost,
     eatsOrderCode,
+    merchantName: selectedMerchant?.name,
+    merchantCategory: selectedMerchant?.category,
+    requiresAgeCheck: selectedMerchant?.requiresAgeCheck,
+    paymentMethod: isCashJob ? 'cash' : 'card',
+    isMeteredFare: isCashJob,
+    meterStartFare: meterRates?.flagFall,
+    meterRatePerMile: meterRates?.ratePerMile,
+    meterWaitPerMin: meterRates?.waitPerMin,
     isAirportPickup: Boolean(airportPin || zoneInfo.isAirportZone),
     inLondonCC: zoneInfo.appliedLondonCC,
+    ulezStatus: zoneInfo.ulezStatus,
     pinCode,
     surchargeLabel,
     surchargeAmount,
@@ -651,7 +705,8 @@ export function buildLocalOfferPool(
   startSeed = 0,
   servicePrefs?: ServicePrefsInput,
   areaPreference?: DriverPreferences['areaPreference'],
-  isEV = false
+  isEV = false,
+  acceptCashJobs = true
 ): TripOffer[] {
   const offers: TripOffer[] = [];
   for (let i = 0; i < 6; i++) {
@@ -664,6 +719,7 @@ export function buildLocalOfferPool(
         servicePrefs,
         areaPreference,
         isEV,
+        acceptCashJobs,
       })
     );
   }

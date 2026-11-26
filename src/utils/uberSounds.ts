@@ -9,7 +9,38 @@ export type UberSoundName =
   | 'decline'
   | 'mapReport'
   | 'cashOut'
-  | 'message';
+  | 'message'
+  | 'highSurgeDispatch'
+  | 'cashDispatch'
+  | 'waitExpired'
+  | 'cameraAlert';
+
+export type HapticPatternKind = 'light' | 'accept' | 'dispatch' | 'cash' | 'alert';
+
+export function triggerHaptic(kind: HapticPatternKind = 'light'): void {
+  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+  try {
+    switch (kind) {
+      case 'accept':
+        navigator.vibrate([25, 35, 50]);
+        break;
+      case 'dispatch':
+        navigator.vibrate([45, 55, 45]);
+        break;
+      case 'cash':
+        navigator.vibrate([30, 30, 30, 40, 65]);
+        break;
+      case 'alert':
+        navigator.vibrate([70, 40, 70]);
+        break;
+      default:
+        navigator.vibrate(18);
+        break;
+    }
+  } catch {
+    // Ignore unsupported or blocked haptics
+  }
+}
 
 type Mp3Key =
   | 'online'
@@ -366,6 +397,32 @@ class UberSoundEngine {
         this.playSynthTone([
           { freq: 740, delay: 0, dur: 0.09, gain: 0.1 },
           { freq: 987.77, delay: 0.07, dur: 0.12, gain: 0.1 },
+        ]);
+        break;
+      case 'highSurgeDispatch':
+        this.playSynthTone([
+          { freq: 659.25, delay: 0, dur: 0.11, gain: 0.15 },
+          { freq: 880, delay: 0.09, dur: 0.12, gain: 0.16 },
+          { freq: 1174.66, delay: 0.18, dur: 0.22, gain: 0.18 },
+        ]);
+        break;
+      case 'cashDispatch':
+        this.playSynthTone([
+          { freq: 523.25, delay: 0, dur: 0.09, gain: 0.14 },
+          { freq: 659.25, delay: 0.08, dur: 0.09, gain: 0.14 },
+          { freq: 1046.5, delay: 0.16, dur: 0.2, gain: 0.17 },
+        ]);
+        break;
+      case 'waitExpired':
+        this.playSynthTone([
+          { freq: 440, delay: 0, dur: 0.14, type: 'triangle', gain: 0.14 },
+          { freq: 554.37, delay: 0.14, dur: 0.18, type: 'triangle', gain: 0.15 },
+        ]);
+        break;
+      case 'cameraAlert':
+        this.playSynthTone([
+          { freq: 920, delay: 0, dur: 0.08, type: 'square', gain: 0.08 },
+          { freq: 920, delay: 0.12, dur: 0.09, type: 'square', gain: 0.08 },
         ]);
         break;
     }

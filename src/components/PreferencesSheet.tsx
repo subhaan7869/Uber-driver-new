@@ -1,13 +1,16 @@
 import React from 'react';
 import {
+  Banknote,
   Car,
   Check,
   CircleDot,
   Clock,
   Compass,
   ExternalLink,
+  Filter,
   Layers,
   Lock,
+  Mic,
   Moon,
   Package,
   PawPrint,
@@ -19,7 +22,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { DriverPreferences, NavProvider } from '../types/driver';
+import { DriverPreferences, NavProvider, TripFilterRules } from '../types/driver';
 import { carBluetoothMedia } from '../utils/carBluetoothMedia';
 import { uberSounds } from '../utils/uberSounds';
 
@@ -27,6 +30,7 @@ interface PreferencesSheetProps {
   preferences: DriverPreferences;
   accountTier?: 'Diamond' | 'Platinum' | 'Gold';
   onTogglePreference: (key: keyof DriverPreferences) => void;
+  onUpdateTripFilter?: (next: TripFilterRules) => void;
   onSetNavProvider?: (provider: NavProvider) => void;
   onSetFloatingDotMode?: (mode: 'dot' | 'card') => void;
   onSetAreaPreference?: (area: NonNullable<DriverPreferences['areaPreference']>) => void;
@@ -82,6 +86,7 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
   preferences,
   accountTier = 'Diamond',
   onTogglePreference,
+  onUpdateTripFilter,
   onSetNavProvider,
   onSetFloatingDotMode,
   onSetAreaPreference,
@@ -89,6 +94,14 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
   onClose,
 }) => {
   const areaUnlocked = accountTier === 'Platinum' || accountTier === 'Diamond';
+  const currentFilter: TripFilterRules = preferences.tripFilter ?? {
+    enabled: false,
+    minFareGbp: 7.5,
+    minPerMileGbp: 1.5,
+    maxPickupMiles: 2.5,
+    minRiderRating: 4.75,
+    autoDeclineBelowTarget: false,
+  };
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white dark:bg-[#141416] w-full sm:max-w-[430px] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl border border-black/10 dark:border-white/10 max-h-[88vh] overflow-y-auto">
@@ -519,6 +532,90 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
             </div>
           )}
 
+          {/* Cash Jobs + UK Digital Taxi Meter Toggle */}
+          <button
+            type="button"
+            onClick={() => onTogglePreference('acceptCashJobs')}
+            className="w-full flex items-center justify-between py-1 text-left"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <Banknote className="w-4 h-4 text-[#05944F] shrink-0" />
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">Cash Jobs (Digital Taxi Meter)</p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Accept metered cash passenger trips with change calculator
+                </p>
+              </div>
+            </div>
+            <div
+              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                preferences.acceptCashJobs ? 'bg-[#05944F]' : 'bg-[#DCDCDC] dark:bg-white/20'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.acceptCashJobs ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </button>
+
+          {/* Low-Glare OLED Night Shield */}
+          <button
+            type="button"
+            onClick={() => onTogglePreference('nightShieldEnabled')}
+            className="w-full flex items-center justify-between py-1 text-left"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <Moon className="w-4 h-4 text-[#7C3AED] shrink-0" />
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">OLED Night Shield Dimmer</p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Extra warm low-glare overlay for late-night motorway shifts
+                </p>
+              </div>
+            </div>
+            <div
+              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                preferences.nightShieldEnabled ? 'bg-[#7C3AED]' : 'bg-[#DCDCDC] dark:bg-white/20'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.nightShieldEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </button>
+
+          {/* Hands-Free Voice Commands */}
+          <button
+            type="button"
+            onClick={() => onTogglePreference('voiceCommandsEnabled')}
+            className="w-full flex items-center justify-between py-1 text-left"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <Mic className="w-4 h-4 text-[#276EF1] shrink-0" />
+              <div>
+                <p className="text-[15px] font-bold text-black dark:text-white">Hands-Free Voice Commands</p>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                  Say &ldquo;Accept trip&rdquo;, &ldquo;Decline&rdquo;, &ldquo;Go offline&rdquo;, or &ldquo;Navigate&rdquo;
+                </p>
+              </div>
+            </div>
+            <div
+              className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                preferences.voiceCommandsEnabled ? 'bg-[#276EF1]' : 'bg-[#DCDCDC] dark:bg-white/20'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                  preferences.voiceCommandsEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </button>
+
           <button
             type="button"
             onClick={() => onTogglePreference('autoAccept')}
@@ -527,7 +624,9 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
             <div>
               <p className="text-[15px] font-bold text-black dark:text-white">Auto-accept trip requests</p>
               <p className="text-[12px] text-[#545454] dark:text-neutral-400">
-                Automatically accept incoming Exclusive offers
+                {currentFilter.enabled
+                  ? 'Only auto-accept Exclusive offers meeting your filter rules'
+                  : 'Automatically accept incoming Exclusive offers'}
               </p>
             </div>
             <div
@@ -542,6 +641,154 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
               />
             </div>
           </button>
+
+          {/* Auto-Accept & Profit Trip Filter Rules */}
+          {onUpdateTripFilter && (
+            <div className="p-3.5 rounded-2xl bg-[#F6F6F6] dark:bg-white/5 border border-black/10 dark:border-white/10 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-[#276EF1]" />
+                  <p className="text-[14px] font-bold text-black dark:text-white">Trip Filter Rules</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateTripFilter({ ...currentFilter, enabled: !currentFilter.enabled })
+                  }
+                  className={`px-3 h-7 rounded-full text-[11.5px] font-bold transition-colors ${
+                    currentFilter.enabled
+                      ? 'bg-[#276EF1] text-white'
+                      : 'bg-white dark:bg-white/10 text-[#545454] dark:text-neutral-300 border border-black/10 dark:border-white/10'
+                  }`}
+                >
+                  {currentFilter.enabled ? 'Rules Active' : 'Enable Rules'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[12px]">
+                <div>
+                  <span className="text-[11px] font-semibold text-[#545454] dark:text-neutral-400 block mb-1">
+                    Min Fare (£{currentFilter.minFareGbp.toFixed(1)})
+                  </span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {[6, 7.5, 10].map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() =>
+                          onUpdateTripFilter({ ...currentFilter, enabled: true, minFareGbp: v })
+                        }
+                        className={`h-8 rounded-lg font-bold tabular-nums ${
+                          currentFilter.minFareGbp === v
+                            ? 'bg-black dark:bg-[#276EF1] text-white'
+                            : 'bg-white dark:bg-white/10 text-black dark:text-white'
+                        }`}
+                      >
+                        £{v}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-semibold text-[#545454] dark:text-neutral-400 block mb-1">
+                    Min £/mile (£{currentFilter.minPerMileGbp.toFixed(2)})
+                  </span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {[1.25, 1.5, 1.85].map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() =>
+                          onUpdateTripFilter({ ...currentFilter, enabled: true, minPerMileGbp: v })
+                        }
+                        className={`h-8 rounded-lg font-bold tabular-nums ${
+                          currentFilter.minPerMileGbp === v
+                            ? 'bg-black dark:bg-[#276EF1] text-white'
+                            : 'bg-white dark:bg-white/10 text-black dark:text-white'
+                        }`}
+                      >
+                        £{v.toFixed(2)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-semibold text-[#545454] dark:text-neutral-400 block mb-1">
+                    Max Pickup ({currentFilter.maxPickupMiles} mi)
+                  </span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {[1.5, 2.5, 4].map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() =>
+                          onUpdateTripFilter({ ...currentFilter, enabled: true, maxPickupMiles: v })
+                        }
+                        className={`h-8 rounded-lg font-bold tabular-nums ${
+                          currentFilter.maxPickupMiles === v
+                            ? 'bg-black dark:bg-[#276EF1] text-white'
+                            : 'bg-white dark:bg-white/10 text-black dark:text-white'
+                        }`}
+                      >
+                        {v}m
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-semibold text-[#545454] dark:text-neutral-400 block mb-1">
+                    Min Rating ({currentFilter.minRiderRating.toFixed(2)}★)
+                  </span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {[4.6, 4.75, 4.9].map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() =>
+                          onUpdateTripFilter({ ...currentFilter, enabled: true, minRiderRating: v })
+                        }
+                        className={`h-8 rounded-lg font-bold tabular-nums ${
+                          currentFilter.minRiderRating === v
+                            ? 'bg-black dark:bg-[#276EF1] text-white'
+                            : 'bg-white dark:bg-white/10 text-black dark:text-white'
+                        }`}
+                      >
+                        {v}★
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateTripFilter({
+                    ...currentFilter,
+                    enabled: true,
+                    autoDeclineBelowTarget: !currentFilter.autoDeclineBelowTarget,
+                  })
+                }
+                className="w-full pt-1.5 border-t border-black/10 dark:border-white/10 flex items-center justify-between text-left"
+              >
+                <span className="text-[12px] font-semibold text-black dark:text-neutral-200">
+                  Auto-decline offers below target rules
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                    currentFilter.autoDeclineBelowTarget
+                      ? 'bg-[#E11900] text-white'
+                      : 'bg-white dark:bg-white/10 text-[#545454] dark:text-neutral-400'
+                  }`}
+                >
+                  {currentFilter.autoDeclineBelowTarget ? 'ON' : 'OFF'}
+                </span>
+              </button>
+            </div>
+          )}
 
           <button
             type="button"

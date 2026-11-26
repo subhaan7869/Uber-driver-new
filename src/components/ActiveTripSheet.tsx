@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Banknote,
   Camera,
   Check,
   CheckCircle2,
@@ -20,23 +21,28 @@ import {
   Route,
   Send,
   Share2,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Star,
+  Store,
   User,
   UserX,
   X,
 } from 'lucide-react';
 import { NavProvider, RouteStep, TripOffer, TripStage, UKWeatherCondition } from '../types/driver';
+import { triggerHaptic, uberSounds } from '../utils/uberSounds';
 import { mapToLatLng } from '../utils/ukGeo';
 import { getAirportTerminalBay, getUKWeatherInfo } from '../utils/ukRealism';
 import { SwipeButton } from './SwipeButton';
+import { TaxiMeterWidget } from './TaxiMeterWidget';
 
 interface ActiveTripSheetProps {
   trip: TripOffer;
   stage: TripStage;
   liveEtaLabel?: string;
   liveDistanceLabel?: string;
+  navProgress?: number;
   routeSteps?: RouteStep[];
   currentStepIdx?: number;
   waitFeeAccrued?: number;
@@ -71,7 +77,7 @@ interface ActiveTripSheetProps {
   onArriveStop?: () => void;
   onContinueFromStop?: () => void;
   onArriveDropoff: () => void;
-  onCompleteTrip: () => void;
+  onCompleteTrip: (meteredFinalFare?: number) => void;
   onSubmitRating: (stars: number, tags: string[]) => void;
   onNoShowCancel?: (fee: number) => void;
   onAcceptQueued?: () => void;
@@ -88,6 +94,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
   stage,
   liveEtaLabel,
   liveDistanceLabel,
+  navProgress = 0,
   routeSteps = [],
   currentStepIdx = 0,
   waitFeeAccrued = 0,
@@ -120,6 +127,10 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
 }) => {
   const [waitSecondsLeft, setWaitSecondsLeft] = useState(120); // 2:00 UK free wait
   const [paidWaitSeconds, setPaidWaitSeconds] = useState(0);
+  const [liveMeterFare, setLiveMeterFare] = useState<number | undefined>(
+    trip.isMeteredFare ? trip.fare : undefined
+  );
+  const waitExpiredSoundRef = useRef(false);
   const [showRiderContact, setShowRiderContact] = useState(false);
   const [maskedCallActive, setMaskedCallActive] = useState(false);
   const [showRiderProfile, setShowRiderProfile] = useState(false);
@@ -159,8 +170,9 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
     setSelectedRating(5);
     setMaskedCallActive(false);
     setEatsDeliveryProof('none');
+    setLiveMeterFare(trip.isMeteredFare ? trip.fare : undefined);
     setUnreadChatCount(trip.riderNote || trip.pinCode ? 1 : 0);
-  }, [trip.id, trip.pickupAddress, trip.pinCode, trip.riderNote]);
+  }, [trip.id, trip.pickupAddress, trip.pinCode, trip.riderNote, trip.isMeteredFare, trip.fare]);
 
   useEffect(() => {
     if (showRiderContact) {
@@ -171,17 +183,26 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
   useEffect(() => {
     if (stage !== 'waiting') {
       setShowStartConfirm(false);
+      waitExpiredSoundRef.current = false;
       return;
     }
     setWaitSecondsLeft(120);
     setPaidWaitSeconds(0);
+    waitExpiredSoundRef.current = false;
     setShowPinGate(false);
     setShowStartConfirm(false);
     setPinInput('');
     setPinError(null);
     const interval = setInterval(() => {
       setWaitSecondsLeft((prev) => {
-        if (prev > 0) return prev - 1;
+        if (prev > 0) {
+          if (prev === 1 && !waitExpiredSoundRef.current) {
+            waitExpiredSoundRef.current = true;
+            uberSounds.play('waitExpired');
+            triggerHaptic('alert');
+          }
+          return prev - 1;
+        }
         setPaidWaitSeconds((p) => p + 1);
         return 0;
       });
@@ -282,32 +303,46 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
   // Stage: Completed -> UK Fare Breakdown + Rider Tags + Rate Rider
   if (stage === 'completed') {
     const surcharge = trip.surchargeAmount ?? 0;
-    const grossTotal = Number((trip.fare + waitFeeAccrued).toFixed(2));
-    const uberFee = Number((Math.max(0, trip.fare - surcharge) * 0.25).toFixed(2));
+    const effectiveFare = trip.isMeteredFare && liveMeterFare ? liveMeterFare : trip.fare;
+    const grossTotal = Number((effectiveFare + waitFeeAccrued).toFixed(2));
+    const uberFee = Number((Math.max(0, effectiveFare - surcharge) * 0.25).toFixed(2));
     const netDriver = Number((grossTotal - uberFee).toFixed(2));
     const hmrcRelief = Number((trip.tripMiles * 0.45).toFixed(2));
 
     return (
       <div className="bg-white dark:bg-[#141416] rounded-t-3xl lg:rounded-2xl shadow-2xl border border-black/10 dark:border-white/10 p-5 max-h-[85vh] overflow-y-auto">
         <div className="text-center mb-3.5">
-          <div className="inline-flex items-center gap-1.5 mb-1">
+          <div className="inline-flex items-center gap-1.5 mb-1 flex-wrap justify-center">
             <span className="text-[13px] font-semibold text-[#05944F]">
-              {trip.isIntercity ? 'Intercity trip completed' : 'Trip completed'}
+              {trip.isIntercity
+                ? 'Intercity trip completed'
+                : trip.paymentMethod === 'cash'
+                ? 'Cash Taxi Meter trip completed'
+                : 'Trip completed'}
             </span>
+            {trip.merchantName && (
+              <span className="px-2 py-0.5 rounded bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300 text-[11px] font-bold">
+                {trip.merchantName}
+              </span>
+            )}
           </div>
           <h3 className="text-[28px] font-extrabold text-black dark:text-white tabular-nums">
             +£{grossTotal.toFixed(2)}
           </h3>
           <p className="text-[13px] text-[#545454] dark:text-neutral-400 mt-0.5">
             {trip.serviceName} · {trip.tripMiles} mi · {trip.tripMinutes} min
+            {trip.paymentMethod === 'cash' ? ' · Cash Collected' : ''}
           </p>
         </div>
 
         {/* UK Receipt Summary */}
         <div className="rounded-xl bg-[#F6F6F6] dark:bg-white/5 p-3 mb-4 space-y-1 text-[12px] tabular-nums">
           <div className="flex justify-between text-[#545454] dark:text-neutral-400">
-            <span>Gross fare {trip.surchargeLabel ? `(incl. ${trip.surchargeLabel})` : ''}</span>
-            <span className="font-semibold text-black dark:text-white">£{trip.fare.toFixed(2)}</span>
+            <span>
+              {trip.isMeteredFare ? 'Final Metered Cash Fare' : 'Gross fare'}{' '}
+              {trip.surchargeLabel ? `(incl. ${trip.surchargeLabel})` : ''}
+            </span>
+            <span className="font-semibold text-black dark:text-white">£{effectiveFare.toFixed(2)}</span>
           </div>
           {trip.boostBonus && trip.boostBonus > 0 && (
             <div className="flex justify-between text-[#276EF1]">
@@ -797,7 +832,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
                 <SlidersHorizontal className="w-5 h-5 text-black dark:text-white" />
               </button>
 
-              <div className="text-center">
+              <div className="text-center min-w-0">
                 <div className="flex items-center justify-center gap-1.5 text-[19px] font-bold text-black dark:text-white tabular-nums">
                   <span>{liveEtaLabel ?? `${trip.pickupMinutes} min`}</span>
                   <span className="w-5 h-5 rounded-full bg-[#05944F] text-white inline-flex items-center justify-center">
@@ -805,11 +840,12 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
                   </span>
                   <span>{liveDistanceLabel ?? `${trip.pickupMiles} mi`}</span>
                 </div>
-                <p className="text-[14px] text-[#545454] dark:text-neutral-400 font-medium">
+                <p className="text-[14px] text-[#545454] dark:text-neutral-400 font-medium truncate">
                   {trip.serviceName === 'Uber Eats'
-                    ? `Collect ${trip.eatsOrderCode || 'Uber Eats'} · ${trip.riderName}`
+                    ? `Collect ${trip.eatsOrderCode || 'Uber Eats'} · ${trip.merchantName || trip.pickupAddress}`
                     : `Picking up ${trip.riderName}`}
                   {trip.isIntercity ? ' · Intercity' : ''}
+                  {trip.paymentMethod === 'cash' ? ' · Cash Meter' : ''}
                 </p>
               </div>
 
@@ -822,6 +858,54 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
                 <List className="w-5 h-5 text-black dark:text-white" />
               </button>
             </div>
+
+            {trip.serviceName === 'Uber Eats' && trip.merchantName && (
+              <div className="mt-3 p-3 rounded-xl bg-[#FFFBEB] dark:bg-amber-950/40 border border-[#F59E0B]/30 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-[12px] font-extrabold text-[#B45309] dark:text-amber-300">
+                    <Store className="w-3.5 h-3.5" />
+                    {trip.merchantName}
+                    {trip.merchantCategory === 'grocery'
+                      ? ' (Grocery Shop)'
+                      : trip.merchantCategory === 'pharmacy'
+                      ? ' (Pharmacy)'
+                      : ' (Restaurant)'}
+                  </span>
+                  {trip.requiresAgeCheck && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#FEECEB] dark:bg-red-950/60 text-[#E11900] dark:text-red-300 text-[10.5px] font-extrabold">
+                      <ShieldAlert className="w-3 h-3" />
+                      Challenge 25
+                    </span>
+                  )}
+                </div>
+                <p className="text-[12px] text-[#545454] dark:text-neutral-300 leading-snug">
+                  {trip.riderNote || `Order ${trip.eatsOrderCode ?? '#UE'} · Check bag seal & receipt`}
+                </p>
+              </div>
+            )}
+
+            {trip.paymentMethod === 'cash' && (
+              <div className="mt-2.5 px-3 py-2 rounded-xl bg-[#E6F4EA] dark:bg-emerald-950/50 border border-[#05944F]/30 flex items-center justify-between text-[12px]">
+                <span className="font-bold text-[#05944F] flex items-center gap-1.5">
+                  <Banknote className="w-4 h-4" />
+                  Cash Job · UK Taxi Meter starts on pickup
+                </span>
+                <span className="font-extrabold text-black dark:text-white tabular-nums">
+                  Est. £{trip.fare.toFixed(2)}
+                </span>
+              </div>
+            )}
+
+            {trip.ulezStatus && (
+              <div className="mt-2 flex items-center justify-between px-3 py-1.5 rounded-lg bg-[#F3F3F3] dark:bg-white/5 text-[11px] font-semibold text-[#276EF1]">
+                <span>{trip.ulezStatus}</span>
+                {trip.surchargeLabel && trip.surchargeAmount ? (
+                  <span className="tabular-nums font-bold">
+                    {trip.surchargeLabel} (+£{trip.surchargeAmount.toFixed(2)})
+                  </span>
+                ) : null}
+              </div>
+            )}
 
             {airportBayInfo && (
               <div className="mt-3 p-3 rounded-xl bg-[#E8F0FE] dark:bg-[#192338] border border-[#276EF1]/30 space-y-1">
@@ -1152,77 +1236,89 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
 
         {/* STAGE 3A: EN ROUTE TO STOP 1 OR FINAL DROPOFF */}
         {stage === 'enroute' && (
-          <div className="p-4">
-            <div className="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={onOpenPreferences}
-                className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors"
-                aria-label="Driving preferences"
-              >
-                <SlidersHorizontal className="w-5 h-5 text-black dark:text-white" />
-              </button>
+          <div className="p-4 space-y-3">
+            {trip.paymentMethod === 'cash' && trip.isMeteredFare && (
+              <TaxiMeterWidget
+                trip={trip}
+                stage={stage}
+                navProgress={navProgress}
+                onFareChange={setLiveMeterFare}
+              />
+            )}
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={onOpenPreferences}
+                  className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors"
+                  aria-label="Driving preferences"
+                >
+                  <SlidersHorizontal className="w-5 h-5 text-black dark:text-white" />
+                </button>
 
-              <div className="text-center">
-                <div className="flex items-center justify-center gap-1.5 text-[19px] font-bold text-black dark:text-white tabular-nums">
-                  <span>{liveEtaLabel ?? `${trip.tripMinutes} min`}</span>
-                  <span className="w-2.5 h-2.5 bg-black dark:bg-white inline-block" />
-                  <span>{liveDistanceLabel ?? `${trip.tripMiles} mi`}</span>
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-1.5 text-[19px] font-bold text-black dark:text-white tabular-nums">
+                    <span>{liveEtaLabel ?? `${trip.tripMinutes} min`}</span>
+                    <span className="w-2.5 h-2.5 bg-black dark:bg-white inline-block" />
+                    <span>{liveDistanceLabel ?? `${trip.tripMiles} mi`}</span>
+                  </div>
+                  <p className="text-[13.5px] text-[#545454] dark:text-neutral-400 font-medium truncate max-w-[240px] flex items-center justify-center gap-1">
+                    {trip.isIntercity && <Route className="w-3.5 h-3.5 text-[#7A1C79] shrink-0" />}
+                    {trip.stopAddress && !stopVisited
+                      ? `Heading to Stop 1 · ${trip.riderName}`
+                      : trip.isIntercity
+                      ? `Intercity to ${trip.dropoffArea.split('·')[0].trim()}`
+                      : trip.merchantName
+                      ? `Delivering ${trip.merchantName} to ${trip.riderName}`
+                      : `Dropping off ${trip.riderName}`}
+                  </p>
                 </div>
-                <p className="text-[13.5px] text-[#545454] dark:text-neutral-400 font-medium truncate max-w-[240px] flex items-center justify-center gap-1">
-                  {trip.isIntercity && <Route className="w-3.5 h-3.5 text-[#7A1C79] shrink-0" />}
-                  {trip.stopAddress && !stopVisited
-                    ? `Heading to Stop 1 · ${trip.riderName}`
-                    : trip.isIntercity
-                    ? `Intercity to ${trip.dropoffArea.split('·')[0].trim()}`
-                    : `Dropping off ${trip.riderName}`}
-                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setShowTripDetails((v) => !v)}
+                  className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors"
+                  aria-label="Trip details"
+                >
+                  <List className="w-5 h-5 text-black dark:text-white" />
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setShowTripDetails((v) => !v)}
-                className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors"
-                aria-label="Trip details"
-              >
-                <List className="w-5 h-5 text-black dark:text-white" />
-              </button>
-            </div>
-
-            <div className="mt-3 pt-3 border-t border-[#EEEEEE] dark:border-white/10 flex items-center justify-between gap-2">
-              <span className="text-[13px] text-[#545454] dark:text-neutral-400 truncate flex-1">
-                {trip.stopAddress && !stopVisited
-                  ? `Stop 1: ${trip.stopAddress}`
-                  : `To ${trip.dropoffAddress}`}
-              </span>
-              {navProvider !== 'uber' && (
-                <a
-                  href={externalNavHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 h-10 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] text-[12px] font-bold flex items-center justify-center gap-1 whitespace-nowrap shrink-0"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>{externalNavLabel}</span>
-                </a>
-              )}
-              {trip.stopAddress && !stopVisited && onArriveStop ? (
-                <button
-                  type="button"
-                  onClick={onArriveStop}
-                  className="px-4 h-10 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-black text-[13px] font-bold whitespace-nowrap shrink-0 transition-colors"
-                >
-                  Arrived at Stop 1
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onArriveDropoff}
-                  className="px-4 h-10 rounded-xl bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] text-white text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors"
-                >
-                  Arrived at Dropoff
-                </button>
-              )}
+              <div className="mt-3 pt-3 border-t border-[#EEEEEE] dark:border-white/10 flex items-center justify-between gap-2">
+                <span className="text-[13px] text-[#545454] dark:text-neutral-400 truncate flex-1">
+                  {trip.stopAddress && !stopVisited
+                    ? `Stop 1: ${trip.stopAddress}`
+                    : `To ${trip.dropoffAddress}`}
+                </span>
+                {navProvider !== 'uber' && (
+                  <a
+                    href={externalNavHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 h-10 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] text-[12px] font-bold flex items-center justify-center gap-1 whitespace-nowrap shrink-0"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>{externalNavLabel}</span>
+                  </a>
+                )}
+                {trip.stopAddress && !stopVisited && onArriveStop ? (
+                  <button
+                    type="button"
+                    onClick={onArriveStop}
+                    className="px-4 h-10 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-black text-[13px] font-bold whitespace-nowrap shrink-0 transition-colors"
+                  >
+                    Arrived at Stop 1
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onArriveDropoff}
+                    className="px-4 h-10 rounded-xl bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] text-white text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors"
+                  >
+                    Arrived at Dropoff
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1356,8 +1452,26 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
                     </button>
                   </div>
                 )}
+                {trip.paymentMethod === 'cash' && trip.isMeteredFare && (
+                  <div className="mb-3">
+                    <TaxiMeterWidget
+                      trip={trip}
+                      stage={stage}
+                      navProgress={1}
+                      onFareChange={setLiveMeterFare}
+                    />
+                  </div>
+                )}
+
                 <div className="mt-2">
-                  <SwipeButton label={`Complete ${trip.serviceName}`} onComplete={onCompleteTrip} />
+                  <SwipeButton
+                    label={
+                      trip.paymentMethod === 'cash' && liveMeterFare
+                        ? `Collect £${liveMeterFare.toFixed(2)} Cash & Complete`
+                        : `Complete ${trip.serviceName}`
+                    }
+                    onComplete={() => onCompleteTrip(trip.isMeteredFare ? liveMeterFare : undefined)}
+                  />
                 </div>
               </>
             )}

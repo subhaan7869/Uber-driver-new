@@ -30,7 +30,14 @@ import {
   Zap,
 } from 'lucide-react';
 import { useFirebase } from '../contexts/FirebaseContext';
-import { ComplimentCounts, DriverAccount, DriverPreferences, TripStats } from '../types/driver';
+import {
+  ComplimentCounts,
+  DriverAccount,
+  DriverPreferences,
+  InsurancePolicyInfo,
+  TripStats,
+} from '../types/driver';
+import { buildDefaultInsurancePolicy } from '../utils/authStorage';
 import { buildAppleShortcutItems } from '../utils/iosPwa';
 import { NotificationPermissionState } from '../utils/notifications';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -71,6 +78,7 @@ interface MenuViewProps {
     docId: string,
     nextStatus: 'verified' | 'expiring_soon' | 'expired'
   ) => void;
+  onUpdateInsurancePolicy?: (policy: InsurancePolicyInfo) => void;
   onResetRestLock?: () => void;
   onExportTaxCsv?: () => void;
   offlinePendingCount?: number;
@@ -152,6 +160,7 @@ export const MenuView: React.FC<MenuViewProps> = ({
   onOpenPermissions,
   onNotifyToast,
   onUpdateComplianceDoc,
+  onUpdateInsurancePolicy,
   onResetRestLock,
   onExportTaxCsv,
   offlinePendingCount = 0,
@@ -452,6 +461,107 @@ export const MenuView: React.FC<MenuViewProps> = ({
                   </button>
                 );
               })}
+
+              {/* PHV Hire & Reward Insurance Certificate Card */}
+              {(() => {
+                const policy =
+                  account.insurancePolicy ??
+                  buildDefaultInsurancePolicy(account.id, account.city, Boolean(account.isEV));
+                return (
+                  <div className="p-4 rounded-2xl border border-[#05944F]/30 bg-[#F2FBF6] dark:bg-emerald-950/25 space-y-2.5 text-[13px]">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-[11px] font-extrabold uppercase tracking-wide text-[#05944F]">
+                          Hire &amp; Reward PHV Insurance
+                        </p>
+                        <p className="text-[15.5px] font-extrabold text-black dark:text-white mt-0.5">
+                          {policy.insurer}
+                        </p>
+                        <p className="text-[12px] text-[#545454] dark:text-neutral-300 tabular-nums">
+                          Policy {policy.policyNumber} · {policy.coverType}
+                        </p>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-extrabold shrink-0 ${
+                          policy.status === 'active'
+                            ? 'bg-[#05944F] text-white'
+                            : 'bg-[#E11900] text-white'
+                        }`}
+                      >
+                        {policy.status === 'active' ? 'Insured' : 'Renewal Due'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 pt-1 text-center tabular-nums">
+                      <div className="rounded-xl bg-white dark:bg-white/5 p-2 border border-black/5 dark:border-white/5">
+                        <p className="text-[13.5px] font-extrabold text-black dark:text-white">
+                          £{policy.weeklyPremiumGbp}/wk
+                        </p>
+                        <p className="text-[10.5px] text-[#545454] dark:text-neutral-400">Premium</p>
+                      </div>
+                      <div className="rounded-xl bg-white dark:bg-white/5 p-2 border border-black/5 dark:border-white/5">
+                        <p className="text-[13.5px] font-extrabold text-black dark:text-white">
+                          £{policy.excessGbp}
+                        </p>
+                        <p className="text-[10.5px] text-[#545454] dark:text-neutral-400">Excess</p>
+                      </div>
+                      <div className="rounded-xl bg-white dark:bg-white/5 p-2 border border-black/5 dark:border-white/5">
+                        <p className="text-[13.5px] font-extrabold text-[#05944F]">
+                          {policy.includesPublicLiability5M ? '£5M' : 'None'}
+                        </p>
+                        <p className="text-[10.5px] text-[#545454] dark:text-neutral-400">Liability</p>
+                      </div>
+                    </div>
+
+                    {onUpdateInsurancePolicy && (
+                      <div className="flex items-center justify-between gap-2 pt-1">
+                        <span className="text-[11.5px] text-[#545454] dark:text-neutral-400 tabular-nums">
+                          Valid until {policy.validUntil} ({policy.daysRemaining}d)
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateInsurancePolicy({
+                                ...policy,
+                                weeklyPremiumGbp: Math.max(25, policy.weeklyPremiumGbp - 5),
+                              })
+                            }
+                            className="px-2 h-7 rounded-lg bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[11px] font-bold text-black dark:text-white"
+                          >
+                            −£5/wk
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateInsurancePolicy({
+                                ...policy,
+                                weeklyPremiumGbp: Math.min(180, policy.weeklyPremiumGbp + 5),
+                              })
+                            }
+                            className="px-2 h-7 rounded-lg bg-white dark:bg-white/10 border border-black/10 dark:border-white/10 text-[11px] font-bold text-black dark:text-white"
+                          >
+                            +£5/wk
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateInsurancePolicy({
+                                ...policy,
+                                status: policy.status === 'active' ? 'lapsed' : 'active',
+                                daysRemaining: policy.status === 'active' ? 0 : 365,
+                              })
+                            }
+                            className="px-2.5 h-7 rounded-lg bg-black dark:bg-[#276EF1] text-white text-[11px] font-bold"
+                          >
+                            {policy.status === 'active' ? 'Test Lapse' : 'Renew'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-white dark:bg-[#16181D] space-y-3 text-[13.5px]">
                 <div className="flex items-center justify-between gap-2">

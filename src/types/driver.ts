@@ -48,6 +48,52 @@ export interface ComputedRoute {
   source: 'osrm' | 'uk-corridor';
 }
 
+export type PaymentMethod = 'card' | 'cash';
+
+export type EatsMerchantCategory = 'restaurant' | 'grocery' | 'pharmacy';
+
+export interface InsurancePolicyInfo {
+  insurer: string;
+  policyNumber: string;
+  coverType:
+    | 'Hire & Reward Comprehensive'
+    | 'Hire & Reward Third Party Fire & Theft'
+    | 'Pay-As-You-Go PHV';
+  weeklyPremiumGbp: number;
+  excessGbp: number;
+  validUntil: string;
+  daysRemaining: number;
+  includesPublicLiability5M: boolean;
+  status: 'active' | 'expiring_soon' | 'lapsed';
+}
+
+export interface PayoutRecord {
+  id: string;
+  amount: number;
+  fee: number;
+  netAmount: number;
+  method: 'instant' | 'bank';
+  destinationLabel: string;
+  reference: string;
+  timestamp: string;
+  dateKey: string;
+}
+
+export interface TripFilterRules {
+  enabled: boolean;
+  minFareGbp: number;
+  minPerMileGbp: number;
+  maxPickupMiles: number;
+  minRiderRating: number;
+  autoDeclineBelowTarget: boolean;
+}
+
+export interface DriverCostSettings {
+  fuelOrKwhPerMileGbp: number;
+  weeklyInsuranceGbp: number;
+  weeklyVehicleCostGbp: number;
+}
+
 export interface ComplianceDoc {
   id: string;
   title: string;
@@ -76,6 +122,7 @@ export interface DriverAccount {
   batteryPct?: number;
   isEV?: boolean;
   complianceDocs?: ComplianceDoc[];
+  insurancePolicy?: InsurancePolicyInfo;
   restLockedUntil?: number | null;
 }
 
@@ -110,12 +157,21 @@ export interface TripOffer {
   pinCode?: string;
   surchargeLabel?: string;
   surchargeAmount?: number;
+  ulezStatus?: string;
   isIntercity?: boolean;
   intercityCorridor?: string;
   stopAddress?: string;
   stopCoords?: Coordinates;
   riderNote?: string;
   eatsOrderCode?: string;
+  merchantName?: string;
+  merchantCategory?: EatsMerchantCategory;
+  requiresAgeCheck?: boolean;
+  paymentMethod?: PaymentMethod;
+  isMeteredFare?: boolean;
+  meterStartFare?: number;
+  meterRatePerMile?: number;
+  meterWaitPerMin?: number;
   boostBonus?: number;
   surgeLockedBonus?: number;
   isAirportPickup?: boolean;
@@ -218,9 +274,17 @@ export interface CompletedTrip {
   dateKey?: string;
   isIntercity?: boolean;
   isNoShowFee?: boolean;
+  paymentMethod?: PaymentMethod;
+  isMeteredFare?: boolean;
+  meteredFare?: number;
+  merchantName?: string;
+  merchantCategory?: EatsMerchantCategory;
   tags?: string[];
   claimFiled?: 'valeting' | 'fare_review';
   claimAmount?: number;
+  claimIncidentLabel?: string;
+  claimPhotoName?: string;
+  claimNotes?: string;
   peakPeriod?: boolean;
 }
 
@@ -320,4 +384,9 @@ export interface DriverPreferences {
   floatingDotAlertMode: 'dot' | 'card';
   areaPreference?: 'all' | 'central' | 'east' | 'west' | 'local';
   carBluetoothMedia?: boolean;
+  acceptCashJobs?: boolean;
+  voiceCommandsEnabled?: boolean;
+  nightShieldEnabled?: boolean;
+  tripFilter?: TripFilterRules;
+  costSettings?: DriverCostSettings;
 }

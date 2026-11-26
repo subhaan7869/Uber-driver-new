@@ -139,9 +139,35 @@ export interface UKZoneSurchargeResult {
   appliedLondonCC: boolean;
   isAirportZone: boolean;
   airportCode?: string;
+  ulezStatus?: string;
   zoneExpenseCategory?: 'congestion' | 'toll';
   zoneExpenseLabel?: string;
   zoneExpenseAmount?: number;
+}
+
+export interface UKTaxiMeterRates {
+  tariffLabel: 'Tariff 1 · Day' | 'Tariff 2 · Night & Weekend';
+  flagFall: number;
+  ratePerMile: number;
+  waitPerMin: number;
+}
+
+export function getUKTaxiMeterRates(
+  serviceName: string,
+  now: Date = new Date()
+): UKTaxiMeterRates {
+  const hour = now.getHours();
+  const day = now.getDay();
+  const isNightOrWeekend = hour >= 22 || hour < 6 || day === 0 || day === 6;
+  const premiumBoost =
+    serviceName === 'UberXL' ? 1.32 : serviceName === 'Comfort' ? 1.15 : 1.0;
+
+  return {
+    tariffLabel: isNightOrWeekend ? 'Tariff 2 · Night & Weekend' : 'Tariff 1 · Day',
+    flagFall: Number(((isNightOrWeekend ? 4.4 : 3.6) * premiumBoost).toFixed(2)),
+    ratePerMile: Number(((isNightOrWeekend ? 2.85 : 2.35) * premiumBoost).toFixed(2)),
+    waitPerMin: isNightOrWeekend ? 0.5 : 0.4,
+  };
 }
 
 export function detectUKZoneSurcharge(
@@ -152,8 +178,42 @@ export function detectUKZoneSurcharge(
 ): UKZoneSurchargeResult {
   const pickupLL = mapToLatLng(pickupCoords);
   const dropoffLL = mapToLatLng(dropoffCoords);
+  const inGreaterLondon =
+    haversineMiles(pickupLL.lat, pickupLL.lng, 51.5074, -0.1278) <= 13.5 ||
+    haversineMiles(dropoffLL.lat, dropoffLL.lng, 51.5074, -0.1278) <= 13.5;
+  const ulezStatus = inGreaterLondon
+    ? isEV
+      ? 'London ULEZ Exempt (Zero-Emission EV)'
+      : 'London ULEZ Compliant (Euro 6 Hybrid)'
+    : undefined;
 
-  // Check UK Airports first
+  // Check Stansted (STN) & Luton (LTN) Airports
+  const pStn = haversineMiles(pickupLL.lat, pickupLL.lng, 51.886, 0.2389);
+  const dStn = haversineMiles(dropoffLL.lat, dropoffLL.lng, 51.886, 0.2389);
+  if (pStn <= 2.4 || dStn <= 2.4) {
+    return {
+      surchargeLabel: 'Stansted (STN) Express Drop-off Fee',
+      surchargeAmount: 7.0,
+      appliedLondonCC: false,
+      isAirportZone: true,
+      airportCode: 'STN',
+      ulezStatus,
+    };
+  }
+  const pLtn = haversineMiles(pickupLL.lat, pickupLL.lng, 51.8763, -0.3717);
+  const dLtn = haversineMiles(dropoffLL.lat, dropoffLL.lng, 51.8763, -0.3717);
+  if (pLtn <= 2.4 || dLtn <= 2.4) {
+    return {
+      surchargeLabel: 'Luton (LTN) Priority Set-Down Fee',
+      surchargeAmount: 5.0,
+      appliedLondonCC: false,
+      isAirportZone: true,
+      airportCode: 'LTN',
+      ulezStatus,
+    };
+  }
+
+  // Check UK Airports
   for (const ap of UK_AIRPORT_MAP_PINS) {
     const apLL = mapToLatLng(ap.coords);
     const pDist = haversineMiles(pickupLL.lat, pickupLL.lng, apLL.lat, apLL.lng);
@@ -171,6 +231,7 @@ export function detectUKZoneSurcharge(
         appliedLondonCC: false,
         isAirportZone: true,
         airportCode: ap.code,
+        ulezStatus,
       };
     }
   }
@@ -236,6 +297,7 @@ export function detectUKZoneSurcharge(
         surchargeAmount: 15.0,
         appliedLondonCC: true,
         isAirportZone: false,
+        ulezStatus,
       };
     }
     return {
@@ -243,12 +305,14 @@ export function detectUKZoneSurcharge(
       surchargeAmount: 1.0,
       appliedLondonCC: false,
       isAirportZone: false,
+      ulezStatus,
     };
   }
 
   return {
     appliedLondonCC: false,
     isAirportZone: false,
+    ulezStatus,
   };
 }
 
@@ -399,6 +463,12 @@ export function getAirportTerminalBay(
   } else if (hay.includes('birmingham') || hay.includes('bhx')) {
     code = 'BHX';
     bayLocation = 'Birmingham Express Drop & Pick · Lane 3, Bay 08';
+  } else if (hay.includes('stansted') || hay.includes('stn')) {
+    code = 'STN';
+    bayLocation = 'Stansted Express Set-Down & PHV Bay · Zone C';
+  } else if (hay.includes('luton') || hay.includes('ltn')) {
+    code = 'LTN';
+    bayLocation = 'Luton Priority Pick-Up · Terminal Forecourt Bay 6';
   } else if (hay.includes('edinburgh') || hay.includes('edi')) {
     code = 'EDI';
     bayLocation = 'Edinburgh Pickup Zone · Multi-Storey Ground Row C';

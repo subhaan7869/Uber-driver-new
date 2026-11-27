@@ -250,6 +250,32 @@ export interface BusySoonZone {
   coords: Coordinates;
 }
 
+export type PeakTimeSlotId = 'morning' | 'afternoon' | 'evening' | 'late_night';
+
+export interface PeakTimeWindow {
+  id: PeakTimeSlotId;
+  label: 'Morning' | 'Afternoon' | 'Evening' | 'Late Night';
+  windowLabel: string;
+  demandLevel: 'Peak Rush' | 'Steady' | 'Night Surge';
+  surgeMultiplier: number;
+  estHourlyRange: string;
+  ridesFocus: string;
+  eatsFocus: string;
+  isPeak: boolean;
+}
+
+export interface BusyRestaurantPin {
+  id: string;
+  name: string;
+  category: EatsMerchantCategory;
+  coords: Coordinates;
+  busyTier: 'hot' | 'busy';
+  estOrdersPerHr: number;
+  avgPayoutGbp: number;
+  prepWaitMin: number;
+  peakNote: string;
+}
+
 export type NavProvider = 'uber' | 'google' | 'waze' | 'apple';
 
 export interface CompletedTrip {

@@ -98,6 +98,7 @@ import {
   NavManeuverKind,
   NavProvider,
   PayoutRecord,
+  PeakTimeSlotId,
   ReserveTrip,
   SurgeZone,
   TripActivityEntry,
@@ -190,6 +191,7 @@ import {
 import {
   computeUberProTier,
   detectUKZoneSurcharge,
+  getBusyEatsRestaurantsNear,
   getNearbyAirportQueuePin,
   getStickySurgeAtCoords,
   getUKDemandContext,
@@ -574,6 +576,7 @@ export default function App() {
   const [demandNow, setDemandNow] = useState<Date>(() => new Date());
   const WEATHER_CYCLE: UKWeatherCondition[] = ['Clear', 'Light Drizzle', 'Heavy Rain', 'Thames Fog'];
   const [weatherCondition, setWeatherCondition] = useState<UKWeatherCondition>('Clear');
+  const [selectedPeakSlot, setSelectedPeakSlot] = useState<PeakTimeSlotId | 'auto'>('auto');
   const [streakCount, setStreakCount] = useState<number>(0);
 
   useEffect(() => {
@@ -592,8 +595,8 @@ export default function App() {
   }, []);
 
   const demandContext = useMemo(
-    () => getUKDemandContext(demandNow, weatherCondition),
-    [demandNow, weatherCondition]
+    () => getUKDemandContext(demandNow, weatherCondition, selectedPeakSlot),
+    [demandNow, weatherCondition, selectedPeakSlot]
   );
 
   const [trafficAlert, setTrafficAlert] = useState<{
@@ -817,6 +820,26 @@ export default function App() {
       setToastMsg((prev) => (prev === msg ? null : prev));
     }, 2600);
   }, []);
+
+  const handleSelectPeakSlot = useCallback(
+    (slot: PeakTimeSlotId | 'auto') => {
+      setSelectedPeakSlot(slot);
+      if (slot === 'auto') {
+        showToast('Demand switched back to live UK clock');
+      } else {
+        const label =
+          slot === 'morning'
+            ? 'Morning Peak (07:00–10:00)'
+            : slot === 'afternoon'
+            ? 'Afternoon (12:00–16:30)'
+            : slot === 'evening'
+            ? 'Evening Peak (16:30–21:00)'
+            : 'Late Night Surge (22:00–03:30)';
+        showToast(`Peak busy time: ${label}`);
+      }
+    },
+    [showToast]
+  );
 
   // Notify driver immediately when a new GitHub -> Vercel deployment triggers auto-restart
   useEffect(() => {
@@ -3843,7 +3866,15 @@ export default function App() {
 
     if (isServiceKey) {
       const label = SERVICE_LABELS[key] || String(key);
-      showToast(`${label} ${nextPrefs[key] ? 'enabled for dispatch' : 'paused'}`);
+      if (key === 'deliveries') {
+        showToast(
+          nextPrefs.deliveries
+            ? 'Uber Eats enabled — busy restaurant icons shown on map'
+            : 'Uber Eats paused — restaurant icons hidden'
+        );
+      } else {
+        showToast(`${label} ${nextPrefs[key] ? 'enabled for dispatch' : 'paused'}`);
+      }
       if (radarOffers.length > 0) {
         const nextServiceFilter: ServicePrefsInput = {
           uberX: nextPrefs.uberX,
@@ -4730,6 +4761,15 @@ export default function App() {
     [driverPos, localGeoVersion]
   );
 
+  // Busy restaurant map hotspots ONLY when Uber Eats (deliveries) is enabled in preferences
+  const busyRestaurants = useMemo(
+    () =>
+      preferences.deliveries
+        ? getBusyEatsRestaurantsNear(driverPos, demandContext.activeSlotId, currentJobCity)
+        : [],
+    [preferences.deliveries, driverPos, demandContext.activeSlotId, currentJobCity]
+  );
+
   const myLocationCoords = useMemo(
     () =>
       isLiveGpsInUK && realCoords
@@ -4931,6 +4971,7 @@ export default function App() {
             offerTripPolyline={offerTripRoute?.polyline}
             surgeZones={INITIAL_SURGE_ZONES}
             busySoonZones={BUSY_SOON_ZONES}
+            busyRestaurants={busyRestaurants}
             mapReports={mapReports}
             destination={destination}
             showSurgeHeatmap={tripStage === 'idle'}
@@ -4948,6 +4989,7 @@ export default function App() {
             showUKZones={preferences.showUKZones}
             showSpeedCameras={preferences.speedCameraWarnings}
             showBusySoonZones={preferences.showBusySoonZones}
+            showBusyRestaurants={preferences.deliveries}
             hideMapControls={
               (tripStage === 'idle' && (Boolean(pendingOffer) || showRadarList)) ||
               (tripStage !== 'idle' &&
@@ -4959,6 +5001,11 @@ export default function App() {
             }
             onSelectSurgeZone={handleSelectSurgeZone}
             onSelectBusySoonZone={handleSelectBusySoonZone}
+            onSelectBusyRestaurant={(rest) => {
+              showToast(
+                `${rest.name} · ${rest.busyTier === 'hot' ? 'Very Busy' : 'Busy'} (~${rest.estOrdersPerHr}/hr · £${rest.avgPayoutGbp.toFixed(2)} avg · ${rest.prepWaitMin}m wait)`
+              );
+            }}
             onToggleMapLayers={() => {
               setShowMapToolsMenu(false);
               setShowMapLayersPopover((v) => !v);
@@ -5322,7 +5369,7 @@ export default function App() {
                       className="h-9 px-3 rounded-full bg-white/95 dark:bg-[#18191D]/95 backdrop-blur-md text-black dark:text-white text-[11.5px] font-bold shadow-md border border-black/10 dark:border-white/10 flex items-center gap-1.5 whitespace-nowrap"
                     >
                       <Flame className="w-3.5 h-3.5 text-[#D97706]" />
-                      <span>{demandContext.demandLevel}</span>
+                      <span>{demandContext.activeSlotLabel} · {demandContext.demandLevel}</span>
                     </button>
                     {(() => {
                       const shiftMin = Math.max(0, activeAccount.drivingMinutesUsedToday ?? 0);
@@ -6019,6 +6066,8 @@ export default function App() {
               weatherCondition={weatherCondition}
               onCycleWeather={handleCycleWeather}
               streakCount={streakCount}
+              selectedPeakSlot={selectedPeakSlot}
+              onSelectPeakSlot={handleSelectPeakSlot}
             />
           )}
 
@@ -6365,6 +6414,11 @@ export default function App() {
           questCompletedCount={ledger.questCompletedCount}
           enrolledIds={enrolledOppIds}
           activeAirportQueueCode={airportQueue?.code ?? null}
+          currentDemand={demandContext}
+          selectedPeakSlot={selectedPeakSlot}
+          onSelectPeakSlot={handleSelectPeakSlot}
+          eatsEnabled={preferences.deliveries}
+          cityName={currentJobCity}
           onJoinAirportQueue={(code, airportName) => {
             setAirportQueue({
               code,

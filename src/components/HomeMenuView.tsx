@@ -30,10 +30,11 @@ import {
   DriverAccount,
   DriverOnlineStatus,
   DriverPreferences,
+  PeakTimeSlotId,
   TripStats,
   UKWeatherCondition,
 } from '../types/driver';
-import { getUKWeatherInfo, UKDemandContext } from '../utils/ukRealism';
+import { getUKWeatherInfo, UK_PEAK_TIME_WINDOWS, UKDemandContext } from '../utils/ukRealism';
 import { formatOnlineTimer } from '../utils/timeFormat';
 
 interface HomeMenuViewProps {
@@ -76,6 +77,8 @@ interface HomeMenuViewProps {
   weatherCondition?: UKWeatherCondition;
   onCycleWeather?: () => void;
   streakCount?: number;
+  selectedPeakSlot?: PeakTimeSlotId | 'auto';
+  onSelectPeakSlot?: (slot: PeakTimeSlotId | 'auto') => void;
 }
 
 export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
@@ -118,6 +121,8 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
   weatherCondition = 'Clear',
   onCycleWeather,
   streakCount = 0,
+  selectedPeakSlot = 'auto',
+  onSelectPeakSlot,
 }) => {
   const formatMmSs = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -232,15 +237,17 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
             Uber Pro {account.tier}
           </span>
           {demandContext && (
-            <span
-              className={`px-3 py-1 rounded-full text-[11.5px] font-bold ${
+            <button
+              type="button"
+              onClick={() => onOpenOpportunities('trends')}
+              className={`px-3 py-1 rounded-full text-[11.5px] font-bold transition-colors ${
                 demandContext.demandLevel === 'Peak Rush' || demandContext.demandLevel === 'Night Surge'
                   ? 'bg-[#FFF3D6] dark:bg-amber-950/60 text-[#B45309] dark:text-amber-300'
                   : 'bg-[#F3F3F3] dark:bg-white/10 text-[#545454] dark:text-neutral-300'
               }`}
             >
-              {demandContext.demandLevel} · {demandContext.periodLabel}
-            </span>
+              {demandContext.activeSlotLabel} · {demandContext.demandLevel}
+            </button>
           )}
           {lockedSurgeAmount > 0 && (
             <span className="px-3 py-1 rounded-full bg-[#7A1C79] text-white text-[11.5px] font-bold tabular-nums">
@@ -602,6 +609,72 @@ export const HomeMenuView: React.FC<HomeMenuViewProps> = ({
             Manage
           </span>
         </button>
+
+        {/* Peak Busy Times (Morning / Afternoon / Evening / Late Night) */}
+        <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#16181D] space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Flame className="w-4 h-4 text-[#D97706]" />
+              <p className="text-[14px] font-bold text-black dark:text-white">
+                Peak Busy Times
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              {selectedPeakSlot !== 'auto' && onSelectPeakSlot && (
+                <button
+                  type="button"
+                  onClick={() => onSelectPeakSlot('auto')}
+                  className="text-[12px] font-bold text-[#276EF1] hover:underline"
+                >
+                  Live
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onOpenOpportunities('trends')}
+                className="text-[12px] font-bold text-[#276EF1] hover:underline"
+              >
+                Full Chart
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {UK_PEAK_TIME_WINDOWS.map((win) => {
+              const isActive = demandContext?.activeSlotId === win.id;
+              const isPinned = selectedPeakSlot === win.id;
+              return (
+                <button
+                  key={win.id}
+                  type="button"
+                  onClick={() =>
+                    onSelectPeakSlot ? onSelectPeakSlot(isPinned ? 'auto' : win.id) : onOpenOpportunities('trends')
+                  }
+                  className={`min-h-[44px] p-2.5 rounded-xl border text-left transition-all ${
+                    isActive
+                      ? 'border-[#276EF1] bg-[#EEF4FF] dark:bg-[#192338]'
+                      : 'border-black/5 dark:border-white/10 bg-white dark:bg-black/25 hover:border-black/20 dark:hover:border-white/25'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[12.5px] font-extrabold text-black dark:text-white">
+                      {win.label}
+                    </span>
+                    <span
+                      className={`text-[11px] font-extrabold tabular-nums ${
+                        isActive ? 'text-[#276EF1]' : 'text-[#05944F]'
+                      }`}
+                    >
+                      {win.surgeMultiplier.toFixed(2)}x
+                    </span>
+                  </div>
+                  <p className="text-[10.5px] text-[#545454] dark:text-neutral-400 mt-0.5 tabular-nums truncate">
+                    {win.windowLabel}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Busy Soon Predictive UK Hotspots */}
         <div className="p-4 rounded-2xl border border-[#F59E0B]/30 bg-[#FFFBEB] dark:bg-amber-950/25 space-y-2.5">

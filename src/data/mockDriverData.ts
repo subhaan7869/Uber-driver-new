@@ -358,15 +358,20 @@ export const SAMPLE_TRIP_OFFERS: TripOffer[] = [
 
 export const INITIAL_COMPLETED_TRIPS: CompletedTrip[] = [];
 
-export const HOURLY_TRENDS = [
-  { hour: '6a', demand: 65, label: '£28/hr' },
-  { hour: '8a', demand: 92, label: '£42/hr' },
-  { hour: '10a', demand: 58, label: '£24/hr' },
-  { hour: '12p', demand: 74, label: '£31/hr' },
-  { hour: '2p', demand: 62, label: '£26/hr' },
-  { hour: '4p', demand: 88, label: '£39/hr' },
-  { hour: '6p', demand: 98, label: '£48/hr' },
-  { hour: '8p', demand: 82, label: '£36/hr' },
+export const HOURLY_TRENDS: Array<{
+  hour: string;
+  demand: number;
+  label: string;
+  slotId: 'morning' | 'afternoon' | 'evening' | 'late_night';
+}> = [
+  { hour: '7a', demand: 82, label: '£34/hr', slotId: 'morning' },
+  { hour: '9a', demand: 90, label: '£40/hr', slotId: 'morning' },
+  { hour: '12p', demand: 76, label: '£31/hr', slotId: 'afternoon' },
+  { hour: '3p', demand: 68, label: '£28/hr', slotId: 'afternoon' },
+  { hour: '5p', demand: 92, label: '£43/hr', slotId: 'evening' },
+  { hour: '7p', demand: 98, label: '£49/hr', slotId: 'evening' },
+  { hour: '10p', demand: 86, label: '£39/hr', slotId: 'late_night' },
+  { hour: '12a', demand: 94, label: '£48/hr', slotId: 'late_night' },
 ];
 
 export const PEAK_EVENTS_SCHEDULE = [

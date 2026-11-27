@@ -6,6 +6,7 @@ import { Layers, Route as RouteIcon } from 'lucide-react';
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
 import {
+  BusyRestaurantPin,
   BusySoonZone,
   Coordinates,
   DestinationConfig,
@@ -36,6 +37,7 @@ interface UberMapProps {
   offerTripPolyline?: Coordinates[];
   surgeZones: SurgeZone[];
   busySoonZones?: BusySoonZone[];
+  busyRestaurants?: BusyRestaurantPin[];
   mapReports: MapReportPin[];
   destination: DestinationConfig;
   showSurgeHeatmap: boolean;
@@ -47,11 +49,13 @@ interface UberMapProps {
   showUKZones?: boolean;
   showSpeedCameras?: boolean;
   showBusySoonZones?: boolean;
+  showBusyRestaurants?: boolean;
   weatherCondition?: UKWeatherCondition;
   compact?: boolean;
   hideMapControls?: boolean;
   onSelectSurgeZone?: (zone: SurgeZone) => void;
   onSelectBusySoonZone?: (zone: BusySoonZone) => void;
+  onSelectBusyRestaurant?: (restaurant: BusyRestaurantPin) => void;
   onToggleMapLayers?: () => void;
 }
 
@@ -429,6 +433,7 @@ export const UberMap: React.FC<UberMapProps> = ({
   offerTripPolyline,
   surgeZones,
   busySoonZones = [],
+  busyRestaurants = [],
   mapReports,
   destination,
   showSurgeHeatmap,
@@ -440,11 +445,13 @@ export const UberMap: React.FC<UberMapProps> = ({
   showUKZones = true,
   showSpeedCameras = true,
   showBusySoonZones = true,
+  showBusyRestaurants = false,
   weatherCondition = 'Clear',
   compact = false,
   hideMapControls = false,
   onSelectSurgeZone,
   onSelectBusySoonZone,
+  onSelectBusyRestaurant,
   onToggleMapLayers,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -472,6 +479,8 @@ export const UberMap: React.FC<UberMapProps> = ({
   onSelectSurgeRef.current = onSelectSurgeZone;
   const onSelectBusySoonRef = useRef(onSelectBusySoonZone);
   onSelectBusySoonRef.current = onSelectBusySoonZone;
+  const onSelectBusyRestaurantRef = useRef(onSelectBusyRestaurant);
+  onSelectBusyRestaurantRef.current = onSelectBusyRestaurant;
 
   const manualPanRef = useRef(hasManualPan);
   manualPanRef.current = hasManualPan;
@@ -1253,6 +1262,50 @@ export const UberMap: React.FC<UberMapProps> = ({
           );
         });
       }
+
+      if (showBusyRestaurants && !pendingOffer && busyRestaurants.length > 0) {
+        busyRestaurants.forEach((rest) => {
+          const ll = mapToLatLng(rest.coords);
+          const isHot = rest.busyTier === 'hot';
+          const badgeBg = isHot ? '#EA580C' : '#D97706';
+          const haloBg = isHot ? 'rgba(234,88,12,0.22)' : 'rgba(245,158,11,0.18)';
+          const iconSvg =
+            rest.category === 'grocery'
+              ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>`
+              : rest.category === 'pharmacy'
+              ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`
+              : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/></svg>`;
+
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.title = `${rest.name} · ${isHot ? 'Very Busy' : 'Busy'} (${rest.estOrdersPerHr}/hr)`;
+          btn.style.cssText =
+            'display:flex;flex-direction:column;align-items:center;gap:2px;background:transparent;border:none;padding:2px;cursor:pointer;';
+          btn.innerHTML = `
+            <div style="position:relative;display:flex;align-items:center;justify-content:center;width:36px;height:36px;">
+              <span style="position:absolute;inset:0;border-radius:9999px;background:${haloBg};"></span>
+              <span style="position:relative;width:28px;height:28px;border-radius:9999px;background:${badgeBg};border:2px solid #FFFFFF;box-shadow:0 3px 10px rgba(0,0,0,0.34);display:flex;align-items:center;justify-content:center;">${iconSvg}</span>
+            </div>
+            <span style="background:${
+              nightMode ? 'rgba(17,24,39,0.94)' : 'rgba(255,255,255,0.95)'
+            };color:${
+            nightMode ? '#FFFFFF' : '#111827'
+          };padding:1px 6px;border-radius:6px;font-size:10px;font-weight:800;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.22);border:1px solid ${
+            isHot ? 'rgba(234,88,12,0.45)' : 'rgba(0,0,0,0.1)'
+          };">${escapeHtml(rest.name)}${isHot ? ' · Busy' : ''}</span>
+          `;
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onSelectBusyRestaurantRef.current?.(rest);
+          });
+
+          pinMarkersRef.current.push(
+            new maplibregl.Marker({ element: btn, anchor: 'center' })
+              .setLngLat([ll.lng, ll.lat])
+              .addTo(map)
+          );
+        });
+      }
     }
 
     if (zoomLevel >= 9) {
@@ -1301,11 +1354,14 @@ export const UberMap: React.FC<UberMapProps> = ({
     tripStage,
     surgeZones,
     busySoonZones,
+    busyRestaurants,
     showBusySoonZones,
+    showBusyRestaurants,
     pendingOffer,
     zoomLevel,
     showSpeedCameras,
     mapReports,
+    nightMode,
   ]);
 
   // Persistent 60fps Driver Puck Marker

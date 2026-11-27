@@ -1,10 +1,22 @@
-import { CompletedTrip, Coordinates, ExpenseEntry, SurgeZone, UKWeatherCondition } from '../types/driver';
+import {
+  BusyRestaurantPin,
+  CompletedTrip,
+  Coordinates,
+  EatsMerchantCategory,
+  ExpenseEntry,
+  PeakTimeSlotId,
+  PeakTimeWindow,
+  SurgeZone,
+  UKWeatherCondition,
+} from '../types/driver';
 import { haversineMiles } from './localDispatch';
-import { mapToLatLng, UK_AIRPORT_MAP_PINS } from './ukGeo';
+import { clampMapCoords, mapToLatLng, projectLatLngToMap, UK_AIRPORT_MAP_PINS } from './ukGeo';
 
 export type UKDemandLevel = 'Peak Rush' | 'Night Surge' | 'Steady' | 'Quiet';
 
 export interface UKDemandContext {
+  activeSlotId: PeakTimeSlotId;
+  activeSlotLabel: 'Morning' | 'Afternoon' | 'Evening' | 'Late Night';
   periodLabel: string;
   demandLevel: UKDemandLevel;
   dispatchMinSec: number;
@@ -12,6 +24,53 @@ export interface UKDemandContext {
   surgeMultiplier: number;
   isPeakBoostHours: boolean;
 }
+
+export const UK_PEAK_TIME_WINDOWS: PeakTimeWindow[] = [
+  {
+    id: 'morning',
+    label: 'Morning',
+    windowLabel: '07:00 – 10:00',
+    demandLevel: 'Peak Rush',
+    surgeMultiplier: 1.35,
+    estHourlyRange: '£32–£44/hr',
+    ridesFocus: 'Commuters, rail stations & airport drop-offs',
+    eatsFocus: 'Breakfast & coffee · Pret, Greggs, McDonald’s',
+    isPeak: true,
+  },
+  {
+    id: 'afternoon',
+    label: 'Afternoon',
+    windowLabel: '12:00 – 16:30',
+    demandLevel: 'Steady',
+    surgeMultiplier: 1.2,
+    estHourlyRange: '£26–£35/hr',
+    ridesFocus: 'Lunch errands, retail hubs & school/hospital runs',
+    eatsFocus: 'Lunch rush · Nando’s, Wagamama, Itsu & Tesco',
+    isPeak: false,
+  },
+  {
+    id: 'evening',
+    label: 'Evening',
+    windowLabel: '16:30 – 21:00',
+    demandLevel: 'Peak Rush',
+    surgeMultiplier: 1.5,
+    estHourlyRange: '£38–£52/hr',
+    ridesFocus: 'After-work rush, Boost+ zones & dining districts',
+    eatsFocus: 'Dinner peak · Dishoom, Five Guys & PizzaExpress',
+    isPeak: true,
+  },
+  {
+    id: 'late_night',
+    label: 'Late Night',
+    windowLabel: '22:00 – 03:30',
+    demandLevel: 'Night Surge',
+    surgeMultiplier: 1.6,
+    estHourlyRange: '£36–£54/hr',
+    ridesFocus: 'Nightlife, gigs & weekend economy surge',
+    eatsFocus: 'Late takeaways · McDonald’s 24h, KFC & Wingstop',
+    isPeak: true,
+  },
+];
 
 export interface UKWeatherInfo {
   condition: UKWeatherCondition;
@@ -69,7 +128,8 @@ export function computeUberProTier(
 
 export function getUKDemandContext(
   now: Date = new Date(),
-  weather: UKWeatherCondition = 'Clear'
+  weather: UKWeatherCondition = 'Clear',
+  overrideSlot: PeakTimeSlotId | 'auto' = 'auto'
 ): UKDemandContext {
   const hour = now.getHours();
   const minute = now.getMinutes();
@@ -77,51 +137,65 @@ export function getUKDemandContext(
   const isWeekend = now.getDay() === 5 || now.getDay() === 6;
   const weatherInfo = getUKWeatherInfo(weather);
 
+  let activeSlotId: PeakTimeSlotId;
+  if (overrideSlot !== 'auto') {
+    activeSlotId = overrideSlot;
+  } else if (timeFloat >= 4.0 && timeFloat < 12.0) {
+    activeSlotId = 'morning';
+  } else if (timeFloat >= 12.0 && timeFloat < 16.5) {
+    activeSlotId = 'afternoon';
+  } else if (timeFloat >= 16.5 && timeFloat < 21.5) {
+    activeSlotId = 'evening';
+  } else {
+    activeSlotId = 'late_night';
+  }
+
   let base: UKDemandContext;
-  if (timeFloat >= 7.0 && timeFloat < 10.0) {
+  if (activeSlotId === 'morning') {
+    const isMorningRush = overrideSlot === 'morning' || (timeFloat >= 6.5 && timeFloat < 10.25);
     base = {
-      periodLabel: 'Morning Commute Rush',
-      demandLevel: 'Peak Rush',
-      dispatchMinSec: 5,
-      dispatchMaxSec: 13,
-      surgeMultiplier: 1.35,
-      isPeakBoostHours: true,
+      activeSlotId: 'morning',
+      activeSlotLabel: 'Morning',
+      periodLabel: isMorningRush ? 'Morning Commute Rush' : 'Mid-Morning Steady',
+      demandLevel: isMorningRush ? 'Peak Rush' : 'Steady',
+      dispatchMinSec: isMorningRush ? 5 : 8,
+      dispatchMaxSec: isMorningRush ? 13 : 19,
+      surgeMultiplier: isMorningRush ? 1.35 : 1.12,
+      isPeakBoostHours: isMorningRush,
     };
-  } else if (timeFloat >= 16.5 && timeFloat < 20.0) {
+  } else if (activeSlotId === 'afternoon') {
+    const isLunchRush = overrideSlot === 'afternoon' || (timeFloat >= 12.0 && timeFloat < 14.5);
     base = {
+      activeSlotId: 'afternoon',
+      activeSlotLabel: 'Afternoon',
+      periodLabel: isLunchRush ? 'Afternoon Lunch & Retail Peak' : 'Afternoon City Flow',
+      demandLevel: isLunchRush ? 'Steady' : 'Steady',
+      dispatchMinSec: isLunchRush ? 6 : 7,
+      dispatchMaxSec: isLunchRush ? 15 : 18,
+      surgeMultiplier: isLunchRush ? 1.2 : 1.12,
+      isPeakBoostHours: false,
+    };
+  } else if (activeSlotId === 'evening') {
+    base = {
+      activeSlotId: 'evening',
+      activeSlotLabel: 'Evening',
       periodLabel: 'Evening Peak & Boost+',
       demandLevel: 'Peak Rush',
       dispatchMinSec: 5,
       dispatchMaxSec: 12,
-      surgeMultiplier: 1.45,
+      surgeMultiplier: 1.5,
       isPeakBoostHours: true,
-    };
-  } else if (timeFloat >= 22.0 || timeFloat < 3.5) {
-    base = {
-      periodLabel: isWeekend ? 'Weekend Night Economy' : 'Late Night Demand',
-      demandLevel: 'Night Surge',
-      dispatchMinSec: 6,
-      dispatchMaxSec: 15,
-      surgeMultiplier: isWeekend ? 1.6 : 1.4,
-      isPeakBoostHours: false,
-    };
-  } else if ((timeFloat >= 12.0 && timeFloat < 16.5) || (timeFloat >= 20.0 && timeFloat < 22.0)) {
-    base = {
-      periodLabel: 'Active City Flow',
-      demandLevel: 'Steady',
-      dispatchMinSec: 7,
-      dispatchMaxSec: 18,
-      surgeMultiplier: 1.12,
-      isPeakBoostHours: false,
     };
   } else {
     base = {
-      periodLabel: 'Off-Peak Cruising',
-      demandLevel: 'Quiet',
-      dispatchMinSec: 10,
-      dispatchMaxSec: 24,
-      surgeMultiplier: 1.0,
-      isPeakBoostHours: false,
+      activeSlotId: 'late_night',
+      activeSlotLabel: 'Late Night',
+      periodLabel: isWeekend ? 'Weekend Night Economy' : 'Late Night Demand',
+      demandLevel: 'Night Surge',
+      dispatchMinSec: 5,
+      dispatchMaxSec: 14,
+      surgeMultiplier: isWeekend ? 1.65 : 1.5,
+      isPeakBoostHours: true,
     };
   }
 
@@ -131,6 +205,91 @@ export function getUKDemandContext(
     dispatchMaxSec: Math.max(8, base.dispatchMaxSec - weatherInfo.dispatchBoostSec),
     surgeMultiplier: Number((base.surgeMultiplier + weatherInfo.surgeAdd).toFixed(2)),
   };
+}
+
+const EATS_RESTAURANTS_BY_SLOT: Record<
+  PeakTimeSlotId,
+  Array<{
+    name: string;
+    category: EatsMerchantCategory;
+    busyTier: 'hot' | 'busy';
+    estOrdersPerHr: number;
+    avgPayoutGbp: number;
+    prepWaitMin: number;
+    peakNote: string;
+  }>
+> = {
+  morning: [
+    { name: 'Pret A Manger', category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 16, avgPayoutGbp: 7.4, prepWaitMin: 2, peakNote: 'Morning coffee & pastry rush' },
+    { name: 'Greggs', category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 19, avgPayoutGbp: 6.5, prepWaitMin: 2, peakNote: 'Breakfast baps & hot drinks' },
+    { name: "McDonald's", category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 21, avgPayoutGbp: 7.2, prepWaitMin: 3, peakNote: 'Breakfast McMuffin surge' },
+    { name: 'Leon', category: 'restaurant', busyTier: 'busy', estOrdersPerHr: 11, avgPayoutGbp: 7.9, prepWaitMin: 3, peakNote: 'Commuter office orders' },
+    { name: 'Tesco Express', category: 'grocery', busyTier: 'busy', estOrdersPerHr: 10, avgPayoutGbp: 8.6, prepWaitMin: 4, peakNote: 'Morning grocery top-ups' },
+    { name: 'Boots Pharmacy', category: 'pharmacy', busyTier: 'busy', estOrdersPerHr: 8, avgPayoutGbp: 9.1, prepWaitMin: 3, peakNote: 'Rapid health & essentials' },
+  ],
+  afternoon: [
+    { name: "Nando's", category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 15, avgPayoutGbp: 8.9, prepWaitMin: 4, peakNote: 'Afternoon lunch & peri-peri orders' },
+    { name: 'Wagamama', category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 14, avgPayoutGbp: 9.4, prepWaitMin: 4, peakNote: 'Busy kitchen hatch · Doubles likely' },
+    { name: 'Itsu', category: 'restaurant', busyTier: 'busy', estOrdersPerHr: 12, avgPayoutGbp: 7.6, prepWaitMin: 2, peakNote: 'Quick lunch bag collection' },
+    { name: 'Tortilla', category: 'restaurant', busyTier: 'busy', estOrdersPerHr: 11, avgPayoutGbp: 7.8, prepWaitMin: 2, peakNote: 'High street burrito rush' },
+    { name: "Sainsbury's Local", category: 'grocery', busyTier: 'busy', estOrdersPerHr: 9, avgPayoutGbp: 8.5, prepWaitMin: 3, peakNote: 'Afternoon snack & grocery drops' },
+    { name: 'Five Guys', category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 13, avgPayoutGbp: 9.2, prepWaitMin: 5, peakNote: 'Fresh fries cooked on arrival' },
+  ],
+  evening: [
+    { name: 'Dishoom', category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 18, avgPayoutGbp: 10.6, prepWaitMin: 4, peakNote: 'Evening dinner hotspot · High tips' },
+    { name: 'Wingstop UK', category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 20, avgPayoutGbp: 9.8, prepWaitMin: 4, peakNote: 'Peak dinner orders · Stacked drops' },
+    { name: 'Five Guys', category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 17, avgPayoutGbp: 9.5, prepWaitMin: 5, peakNote: 'Steady double-order queue' },
+    { name: "Nando's", category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 19, avgPayoutGbp: 9.2, prepWaitMin: 4, peakNote: 'Hot shelf full · Minimal wait' },
+    { name: 'PizzaExpress', category: 'restaurant', busyTier: 'busy', estOrdersPerHr: 12, avgPayoutGbp: 9.9, prepWaitMin: 5, peakNote: 'Family dinner deliveries' },
+    { name: 'Co-op Food', category: 'grocery', busyTier: 'busy', estOrdersPerHr: 11, avgPayoutGbp: 8.4, prepWaitMin: 3, peakNote: 'Evening meal-deal baskets' },
+  ],
+  late_night: [
+    { name: "McDonald's", category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 24, avgPayoutGbp: 9.4, prepWaitMin: 4, peakNote: 'Late-night delivery bay #1 surging' },
+    { name: 'KFC', category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 18, avgPayoutGbp: 9.1, prepWaitMin: 4, peakNote: 'High-demand late bucket orders' },
+    { name: 'Wingstop UK', category: 'restaurant', busyTier: 'hot', estOrdersPerHr: 16, avgPayoutGbp: 10.2, prepWaitMin: 5, peakNote: 'Late-night boost active' },
+    { name: 'Franco Manca', category: 'restaurant', busyTier: 'busy', estOrdersPerHr: 11, avgPayoutGbp: 9.6, prepWaitMin: 4, peakNote: 'Late sourdough pizza runs' },
+    { name: 'Asda Express', category: 'grocery', busyTier: 'busy', estOrdersPerHr: 10, avgPayoutGbp: 8.9, prepWaitMin: 3, peakNote: '24h forecourt night snacks' },
+    { name: 'Morrisons Daily', category: 'grocery', busyTier: 'busy', estOrdersPerHr: 9, avgPayoutGbp: 8.4, prepWaitMin: 3, peakNote: 'Late essentials & chilled bags' },
+  ],
+};
+
+export function getBusyEatsRestaurantsNear(
+  driverCoords: Coordinates,
+  slotId: PeakTimeSlotId,
+  cityName: string
+): BusyRestaurantPin[] {
+  const ll = mapToLatLng(driverCoords);
+  // Quantize anchor so pins stay fixed on local streets while cruising small distances
+  const anchorLat = Math.round(ll.lat * 110) / 110;
+  const anchorLng = Math.round(ll.lng * 80) / 80;
+  const cosLat = Math.max(0.2, Math.cos((anchorLat * Math.PI) / 180));
+  const catalog = EATS_RESTAURANTS_BY_SLOT[slotId] ?? EATS_RESTAURANTS_BY_SLOT.evening;
+  const offsets: Array<{ miles: number; deg: number }> = [
+    { miles: 0.38, deg: 35 },
+    { miles: 0.62, deg: 145 },
+    { miles: 0.54, deg: 240 },
+    { miles: 0.85, deg: 310 },
+    { miles: 1.15, deg: 85 },
+    { miles: 1.32, deg: 195 },
+  ];
+
+  return catalog.map((item, idx) => {
+    const off = offsets[idx % offsets.length];
+    const rad = (off.deg * Math.PI) / 180;
+    const lat = anchorLat + (off.miles * Math.cos(rad)) / 69.0;
+    const lng = anchorLng + (off.miles * Math.sin(rad)) / (69.0 * cosLat);
+    return {
+      id: `eats-hotspot-${slotId}-${idx}-${cityName.toLowerCase().replace(/\s+/g, '-')}`,
+      name: item.name,
+      category: item.category,
+      coords: clampMapCoords(projectLatLngToMap(lat, lng)),
+      busyTier: item.busyTier,
+      estOrdersPerHr: item.estOrdersPerHr,
+      avgPayoutGbp: item.avgPayoutGbp,
+      prepWaitMin: item.prepWaitMin,
+      peakNote: `${cityName} · ${item.peakNote}`,
+    };
+  });
 }
 
 export interface UKZoneSurchargeResult {

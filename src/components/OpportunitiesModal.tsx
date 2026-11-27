@@ -3,11 +3,13 @@ import {
   BarChart3,
   CalendarClock,
   Check,
+  Clock,
   Flame,
   MapPin,
   Plane,
   Route,
   Trophy,
+  Utensils,
   X,
 } from 'lucide-react';
 import {
@@ -16,12 +18,19 @@ import {
   PEAK_EVENTS_SCHEDULE,
   UK_AIRPORT_QUEUES,
 } from '../data/mockDriverData';
+import { PeakTimeSlotId } from '../types/driver';
+import { UK_PEAK_TIME_WINDOWS, UKDemandContext } from '../utils/ukRealism';
 
 interface OpportunitiesModalProps {
   initialSection?: 'opportunities' | 'trends' | 'airports';
   questCompletedCount: number;
   enrolledIds?: string[];
   activeAirportQueueCode?: string | null;
+  currentDemand?: UKDemandContext;
+  selectedPeakSlot?: PeakTimeSlotId | 'auto';
+  onSelectPeakSlot?: (slot: PeakTimeSlotId | 'auto') => void;
+  eatsEnabled?: boolean;
+  cityName?: string;
   onJoinAirportQueue?: (code: string, airportName: string) => void;
   onToggleEnroll?: (id: string) => void;
   onClose: () => void;
@@ -32,6 +41,11 @@ export const OpportunitiesModal: React.FC<OpportunitiesModalProps> = ({
   questCompletedCount,
   enrolledIds: controlledEnrolledIds,
   activeAirportQueueCode = null,
+  currentDemand,
+  selectedPeakSlot = 'auto',
+  onSelectPeakSlot,
+  eatsEnabled = false,
+  cityName = 'UK',
   onJoinAirportQueue,
   onToggleEnroll,
   onClose,
@@ -191,36 +205,134 @@ export const OpportunitiesModal: React.FC<OpportunitiesModalProps> = ({
           </div>
         ) : section === 'trends' ? (
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <BarChart3 className="w-4 h-4 text-[#276EF1]" />
-              <p className="text-[13px] font-semibold text-[#545454] dark:text-neutral-400">
-                London · Estimated hourly demand today
-              </p>
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <BarChart3 className="w-4 h-4 text-[#276EF1] shrink-0" />
+                <p className="text-[13px] font-semibold text-[#545454] dark:text-neutral-400 truncate">
+                  {cityName} · Peak Busy Times Today
+                </p>
+              </div>
+              {selectedPeakSlot !== 'auto' && onSelectPeakSlot && (
+                <button
+                  type="button"
+                  onClick={() => onSelectPeakSlot('auto')}
+                  className="text-[12px] font-bold text-[#276EF1] hover:underline whitespace-nowrap shrink-0"
+                >
+                  Use Live Time
+                </button>
+              )}
             </div>
+
+            {/* Morning / Afternoon / Evening / Late Night Peak Busy Times */}
+            <div className="grid grid-cols-2 gap-2.5 mb-4">
+              {UK_PEAK_TIME_WINDOWS.map((win) => {
+                const isActive = currentDemand?.activeSlotId === win.id;
+                const isPinned = selectedPeakSlot === win.id;
+                return (
+                  <button
+                    key={win.id}
+                    type="button"
+                    onClick={() =>
+                      onSelectPeakSlot?.(isPinned ? 'auto' : win.id)
+                    }
+                    className={`min-h-[44px] p-3 rounded-2xl border text-left transition-all ${
+                      isActive
+                        ? 'border-[#276EF1] bg-[#EEF4FF] dark:bg-[#192338] shadow-xs'
+                        : 'border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#1B1D22] hover:border-black/25 dark:hover:border-white/25'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="text-[14px] font-extrabold text-black dark:text-white">
+                        {win.label}
+                      </span>
+                      <span
+                        className={`text-[11px] font-extrabold tabular-nums ${
+                          isActive
+                            ? 'text-[#276EF1]'
+                            : win.isPeak
+                            ? 'text-[#D97706] dark:text-amber-300'
+                            : 'text-[#545454] dark:text-neutral-400'
+                        }`}
+                      >
+                        {win.surgeMultiplier.toFixed(2)}x
+                      </span>
+                    </div>
+                    <p className="text-[11.5px] font-medium text-[#545454] dark:text-neutral-400 mt-0.5 tabular-nums flex items-center gap-1">
+                      <Clock className="w-3 h-3 shrink-0" />
+                      <span>{win.windowLabel}</span>
+                    </p>
+                    <p className="text-[12px] font-bold text-black dark:text-white mt-1.5 tabular-nums">
+                      {win.estHourlyRange}
+                      {isActive ? ' · Active' : ''}
+                    </p>
+                    <p className="text-[11px] text-[#545454] dark:text-neutral-400 mt-0.5 line-clamp-1">
+                      {eatsEnabled ? win.eatsFocus : win.ridesFocus}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {eatsEnabled && (
+              <div className="mb-4 p-3 rounded-2xl border border-[#EA580C]/25 bg-[#FFF7ED] dark:bg-orange-950/30 flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#EA580C] text-white flex items-center justify-center shrink-0">
+                  <Utensils className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[13px] font-bold text-black dark:text-white">
+                    Busy restaurant icons active on map
+                  </p>
+                  <p className="text-[11.5px] text-[#545454] dark:text-neutral-300 truncate">
+                    {UK_PEAK_TIME_WINDOWS.find(
+                      (w) => w.id === (currentDemand?.activeSlotId ?? 'evening')
+                    )?.eatsFocus}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="p-4 rounded-2xl border border-[#E6E6E6] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#1B1D22]">
               <div className="grid grid-cols-8 gap-2 items-end h-36 pt-4">
-                {HOURLY_TRENDS.map((slot) => (
-                  <div key={slot.hour} className="flex flex-col items-center h-full justify-end gap-1.5">
-                    <span className="text-[10px] font-bold text-black dark:text-white tabular-nums">
-                      {slot.label.replace('/hr', '')}
-                    </span>
-                    <div className="w-full flex-1 flex items-end justify-center">
-                      <div
-                        style={{ height: `${slot.demand}%` }}
-                        className={`w-full max-w-[20px] rounded-t-md ${
-                          slot.demand >= 85 ? 'bg-[#276EF1]' : 'bg-black/75 dark:bg-white/70'
+                {HOURLY_TRENDS.map((slot) => {
+                  const slotSelected = currentDemand?.activeSlotId === slot.slotId;
+                  return (
+                    <div key={slot.hour} className="flex flex-col items-center h-full justify-end gap-1.5">
+                      <span className="text-[10px] font-bold text-black dark:text-white tabular-nums">
+                        {slot.label.replace('/hr', '')}
+                      </span>
+                      <div className="w-full flex-1 flex items-end justify-center">
+                        <div
+                          style={{ height: `${slot.demand}%` }}
+                          className={`w-full max-w-[20px] rounded-t-md transition-colors ${
+                            slotSelected
+                              ? eatsEnabled
+                                ? 'bg-[#EA580C]'
+                                : 'bg-[#276EF1]'
+                              : slot.demand >= 85
+                              ? 'bg-[#276EF1]/60'
+                              : 'bg-black/65 dark:bg-white/55'
+                          }`}
+                        />
+                      </div>
+                      <span
+                        className={`text-[11px] font-semibold ${
+                          slotSelected
+                            ? 'text-black dark:text-white font-bold'
+                            : 'text-[#6B6B6B] dark:text-neutral-400'
                         }`}
-                      />
+                      >
+                        {slot.hour}
+                      </span>
                     </div>
-                    <span className="text-[11px] font-semibold text-[#6B6B6B] dark:text-neutral-400">
-                      {slot.hour}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
-            <p className="text-[13px] text-[#545454] dark:text-neutral-400 mt-3 leading-relaxed">
-              Peak earnings expected between <strong className="text-black dark:text-white">16:00 – 20:00</strong> near Soho, Canary Wharf, and King’s Cross.
+            <p className="text-[12.5px] text-[#545454] dark:text-neutral-400 mt-3 leading-relaxed">
+              Tap <strong className="text-black dark:text-white">Morning</strong>,{' '}
+              <strong className="text-black dark:text-white">Afternoon</strong>,{' '}
+              <strong className="text-black dark:text-white">Evening</strong>, or{' '}
+              <strong className="text-black dark:text-white">Late Night</strong> above to preview demand surge &amp; Eats hotspots.
             </p>
 
             <div className="mt-5 space-y-2.5">
@@ -241,7 +353,7 @@ export const OpportunitiesModal: React.FC<OpportunitiesModalProps> = ({
                       {ev.area} · {ev.time}
                     </p>
                   </div>
-                  <span className="px-2 py-0.5 rounded-md bg-[#7C3AED]/15 text-[#7C3AED] dark:text-[#C4B5FD] text-[11px] font-bold whitespace-nowrap shrink-0">
+                  <span className="text-[11.5px] font-bold text-[#7C3AED] dark:text-[#C4B5FD] whitespace-nowrap shrink-0">
                     {ev.surgeEst}
                   </span>
                 </div>

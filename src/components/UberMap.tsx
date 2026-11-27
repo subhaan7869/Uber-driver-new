@@ -49,6 +49,7 @@ interface UberMapProps {
   showBusySoonZones?: boolean;
   weatherCondition?: UKWeatherCondition;
   compact?: boolean;
+  hideMapControls?: boolean;
   onSelectSurgeZone?: (zone: SurgeZone) => void;
   onSelectBusySoonZone?: (zone: BusySoonZone) => void;
   onToggleMapLayers?: () => void;
@@ -441,6 +442,7 @@ export const UberMap: React.FC<UberMapProps> = ({
   showBusySoonZones = true,
   weatherCondition = 'Clear',
   compact = false,
+  hideMapControls = false,
   onSelectSurgeZone,
   onSelectBusySoonZone,
   onToggleMapLayers,
@@ -1465,43 +1467,45 @@ export const UberMap: React.FC<UberMapProps> = ({
         />
       )}
 
-      {/* Zoom In / Zoom Out + 3D Camera + Map Layers Controls */}
-      {!compact && (
+      {/* Zoom In / Zoom Out + 3D Camera + Map Layers Controls (positioned clear of Top Nav & Bottom Controls) */}
+      {!compact && !hideMapControls && (
         <div
-          className={`flex flex-col items-center gap-1.5 absolute right-4 z-20 ${
-            tripStage === 'idle' ? 'top-[122px]' : 'top-[148px]'
+          className={`flex flex-col items-center gap-1.5 absolute right-3.5 z-20 ${
+            tripStage === 'idle' ? 'top-[116px]' : 'top-[214px]'
           }`}
         >
-          <button
-            type="button"
-            onClick={handleZoomIn}
-            className="w-11 h-11 rounded-full bg-white dark:bg-[#1E2028] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center text-[20px] font-bold text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38] active:scale-95 transition-all"
-            aria-label="Zoom in map"
-            title="Zoom in"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            onClick={handleZoomOut}
-            className="w-11 h-11 rounded-full bg-white dark:bg-[#1E2028] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center text-[20px] font-bold text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38] active:scale-95 transition-all"
-            aria-label="Zoom out map"
-            title="Zoom out"
-          >
-            −
-          </button>
+          <div className="flex flex-col w-10 rounded-2xl overflow-hidden bg-white dark:bg-[#1E2028] shadow-lg border border-black/10 dark:border-white/10 divide-y divide-black/10 dark:divide-white/10">
+            <button
+              type="button"
+              onClick={handleZoomIn}
+              className="w-10 h-10 flex items-center justify-center text-[19px] font-bold text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38] active:scale-95 transition-all"
+              aria-label="Zoom in map"
+              title="Zoom in"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={handleZoomOut}
+              className="w-10 h-10 flex items-center justify-center text-[19px] font-bold text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38] active:scale-95 transition-all"
+              aria-label="Zoom out map"
+              title="Zoom out"
+            >
+              −
+            </button>
+          </div>
           {isNavigatingActive && (
-            <>
+            <div className="flex flex-col w-10 rounded-2xl overflow-hidden bg-white dark:bg-[#1E2028] shadow-lg border border-black/10 dark:border-white/10 divide-y divide-black/10 dark:divide-white/10">
               <button
                 type="button"
                 onClick={() => {
                   setRouteOverviewMode(false);
                   setNavCamera3D((v) => !v);
                 }}
-                className={`w-11 h-11 rounded-full shadow-lg border text-[11px] font-extrabold flex items-center justify-center active:scale-95 transition-all ${
+                className={`w-10 h-9 text-[11px] font-extrabold flex items-center justify-center active:scale-95 transition-all ${
                   navCamera3D && !routeOverviewMode
-                    ? 'bg-[#276EF1] border-[#276EF1] text-white'
-                    : 'bg-white dark:bg-[#1E2028] border-black/5 dark:border-white/10 text-black dark:text-white'
+                    ? 'bg-[#276EF1] text-white'
+                    : 'text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38]'
                 }`}
                 aria-label={navCamera3D ? 'Switch to flat 2D map' : 'Switch to 3D chase cam'}
                 title={navCamera3D ? '3D Chase Cam' : '2D Flat Map'}
@@ -1530,26 +1534,26 @@ export const UberMap: React.FC<UberMapProps> = ({
                     });
                   }
                 }}
-                className={`w-11 h-11 rounded-full shadow-lg border flex items-center justify-center active:scale-95 transition-all ${
+                className={`w-10 h-9 flex items-center justify-center active:scale-95 transition-all ${
                   routeOverviewMode
-                    ? 'bg-black dark:bg-[#276EF1] border-black dark:border-[#276EF1] text-white'
-                    : 'bg-white dark:bg-[#1E2028] border-black/5 dark:border-white/10 text-black dark:text-white'
+                    ? 'bg-black dark:bg-[#276EF1] text-white'
+                    : 'text-black dark:text-white hover:bg-[#F8F8F8] dark:hover:bg-[#2A2D38]'
                 }`}
                 aria-label={routeOverviewMode ? 'Return to Turn-by-Turn' : 'Show Full Route Overview'}
                 title={routeOverviewMode ? 'Back to Turn-by-Turn' : 'Route Overview'}
               >
                 <RouteIcon className="w-4 h-4" />
               </button>
-            </>
+            </div>
           )}
           {onToggleMapLayers && (
             <button
               type="button"
               onClick={onToggleMapLayers}
-              className={`w-11 h-11 rounded-full shadow-lg border flex items-center justify-center active:scale-95 transition-all ${
+              className={`w-10 h-10 rounded-full shadow-lg border flex items-center justify-center active:scale-95 transition-all ${
                 showTrafficLayer || showUKZones
                   ? 'bg-white dark:bg-[#1E2028] border-[#276EF1]/35 text-[#276EF1]'
-                  : 'bg-white dark:bg-[#1E2028] border-black/5 dark:border-white/10 text-black dark:text-white'
+                  : 'bg-white dark:bg-[#1E2028] border-black/10 dark:border-white/10 text-black dark:text-white'
               }`}
               aria-label="Toggle UK traffic and ULEZ layers"
               title="UK Traffic & ULEZ Layers"
@@ -1561,11 +1565,11 @@ export const UberMap: React.FC<UberMapProps> = ({
             <button
               type="button"
               onClick={handleRecenter}
-              className="px-2.5 py-1 rounded-full bg-black/85 dark:bg-[#276EF1] text-white text-[10px] font-bold tabular-nums shadow-md hover:bg-black active:scale-95 transition-all whitespace-nowrap"
+              className="px-2 py-1 rounded-full bg-black/85 dark:bg-[#276EF1] text-white text-[10px] font-bold tabular-nums shadow-md hover:bg-black active:scale-95 transition-all whitespace-nowrap"
               aria-label="Re-center map"
               title="Re-center & reset zoom"
             >
-              {hasManualPan ? 'Re-center' : `z${zoomLevel.toFixed(1)}`}
+              {hasManualPan ? 'Center' : `z${zoomLevel.toFixed(1)}`}
             </button>
           )}
         </div>

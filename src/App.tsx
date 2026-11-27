@@ -21,6 +21,7 @@ import {
   MessageSquarePlus,
   Mic,
   Moon,
+  MoreHorizontal,
   Plane,
   Radar,
   RefreshCw,
@@ -610,6 +611,15 @@ export default function App() {
   const [breakSecondsLeft, setBreakSecondsLeft] = useState<number>(0);
   const delayedTipTimersRef = useRef<number[]>([]);
   const [showChargersModal, setShowChargersModal] = useState<boolean>(false);
+  const [isTripSheetExpanded, setIsTripSheetExpanded] = useState<boolean>(false);
+  const [showMapToolsMenu, setShowMapToolsMenu] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (tripStage === 'idle') {
+      setIsTripSheetExpanded(false);
+    }
+    setShowMapToolsMenu(false);
+  }, [tripStage]);
 
   const prevAccountIdRef = useRef<string | undefined>(activeAccount?.id);
   const recordedReceivedIdsRef = useRef<Set<string>>(new Set());
@@ -4864,14 +4874,30 @@ export default function App() {
             showUKZones={preferences.showUKZones}
             showSpeedCameras={preferences.speedCameraWarnings}
             showBusySoonZones={preferences.showBusySoonZones}
+            hideMapControls={
+              (tripStage === 'idle' && (Boolean(pendingOffer) || showRadarList)) ||
+              (tripStage !== 'idle' &&
+                (isTripSheetExpanded ||
+                  tripStage === 'waiting' ||
+                  tripStage === 'stop_wait' ||
+                  tripStage === 'dropoff_arrived' ||
+                  tripStage === 'completed'))
+            }
             onSelectSurgeZone={handleSelectSurgeZone}
             onSelectBusySoonZone={handleSelectBusySoonZone}
-            onToggleMapLayers={() => setShowMapLayersPopover((v) => !v)}
+            onToggleMapLayers={() => {
+              setShowMapToolsMenu(false);
+              setShowMapLayersPopover((v) => !v);
+            }}
           />
 
           {/* Compact UK Map Layers Popover */}
           {showMapLayersPopover && (
-            <div className="absolute right-16 bottom-[236px] z-30 w-56 rounded-2xl bg-white/95 dark:bg-[#16181E]/95 backdrop-blur-md p-3 shadow-2xl border border-black/10 dark:border-white/10 space-y-2">
+            <div
+              className={`absolute right-16 z-30 w-56 rounded-2xl bg-white/95 dark:bg-[#16181E]/95 backdrop-blur-md p-3 shadow-2xl border border-black/10 dark:border-white/10 space-y-2 ${
+                tripStage === 'idle' ? 'top-[116px]' : 'top-[214px]'
+              }`}
+            >
               <div className="flex items-center justify-between">
                 <span className="text-[12px] font-extrabold text-black dark:text-white">
                   UK Map Layers
@@ -5146,7 +5172,7 @@ export default function App() {
 
           {/* Active Destination Mode Banner, Permissions Pill & Optional Install Pill */}
           {tripStage === 'idle' && (
-            <div className="absolute top-[112px] inset-x-4 z-20 flex flex-col items-center gap-2 pointer-events-none">
+            <div className="absolute top-[112px] inset-x-14 z-20 flex flex-col items-center gap-2 pointer-events-none">
               {destination.active && (
                 <button
                   type="button"
@@ -5302,134 +5328,182 @@ export default function App() {
             </div>
           )}
 
-          {/* FLOATING LEFT MAP CONTROLS (Dynamic UK Speed Limit Sign + Blue Shield Safety Toolkit) */}
-          <div
-            className={`absolute left-4 z-20 flex flex-col items-center gap-3 ${
-              tripStage === 'idle' ? 'bottom-[128px]' : 'bottom-[218px]'
-            }`}
-          >
-            {tripStage !== 'idle' && preferences.speedLimitAlerts && (
-              <div className="flex flex-col items-center gap-1.5">
-                <div className="w-12 h-12 rounded-full bg-white border-[4px] border-[#E11900] shadow-md flex items-center justify-center leading-none">
-                  <span className="text-[19px] font-extrabold text-black tabular-nums">
-                    {liveNav?.speedLimitMph ?? 30}
-                  </span>
-                </div>
-                {(liveSpeedMph !== null || tripStage === 'pickup' || tripStage === 'enroute') && (
-                  <div
-                    className={`px-2.5 py-0.5 rounded-full text-white text-[11px] font-extrabold shadow-md tabular-nums ${
-                      (liveSpeedMph ?? simSpeedMph) > (liveNav?.speedLimitMph ?? 30)
-                        ? 'bg-[#E11900]'
-                        : 'bg-black'
-                    }`}
+          {/* FLOATING LEFT & RIGHT MAP CONTROLS (Hidden when sheets/offers occupy the map) */}
+          {(() => {
+            const hideBottomSideControls =
+              (tripStage === 'idle' && (Boolean(pendingOffer) || showRadarList)) ||
+              (tripStage !== 'idle' &&
+                (isTripSheetExpanded ||
+                  tripStage === 'waiting' ||
+                  tripStage === 'stop_wait' ||
+                  tripStage === 'dropoff_arrived' ||
+                  tripStage === 'completed' ||
+                  Boolean(queuedOffer || riderChangeOffer || stackedEatsOffer || trafficAlert)));
+
+            if (hideBottomSideControls) return null;
+
+            return (
+              <>
+                {/* FLOATING LEFT MAP CONTROLS (Dynamic UK Speed Limit Sign + Blue Shield Safety Toolkit) */}
+                <div
+                  className={`absolute left-3.5 z-20 flex flex-col items-center gap-2.5 ${
+                    tripStage === 'idle' ? 'bottom-[120px]' : 'bottom-[162px]'
+                  }`}
+                >
+                  {tripStage !== 'idle' && preferences.speedLimitAlerts && (
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="w-11 h-11 rounded-full bg-white border-[4px] border-[#E11900] shadow-md flex items-center justify-center leading-none">
+                        <span className="text-[17px] font-extrabold text-black tabular-nums">
+                          {liveNav?.speedLimitMph ?? 30}
+                        </span>
+                      </div>
+                      {(liveSpeedMph !== null || tripStage === 'pickup' || tripStage === 'enroute') && (
+                        <div
+                          className={`px-2 py-0.5 rounded-full text-white text-[10.5px] font-extrabold shadow-md tabular-nums ${
+                            (liveSpeedMph ?? simSpeedMph) > (liveNav?.speedLimitMph ?? 30)
+                              ? 'bg-[#E11900]'
+                              : 'bg-black'
+                          }`}
+                        >
+                          {liveSpeedMph ?? simSpeedMph} mph
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowSafetyModal(true)}
+                    className="w-11 h-11 rounded-full bg-white dark:bg-[#18191D] shadow-lg border border-black/10 dark:border-white/10 flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all"
+                    aria-label="Safety Toolkit"
                   >
-                    {liveSpeedMph ?? simSpeedMph} mph
+                    <Shield className="w-5 h-5 text-[#276EF1] stroke-[2.2]" />
+                  </button>
+                </div>
+
+                {/* FLOATING RIGHT MAP CONTROLS (Compact 3-button dock: Quick Tools Tray, Map Report, Recenter GPS) */}
+                <div
+                  className={`absolute right-3.5 z-20 flex flex-col items-center gap-2 ${
+                    tripStage === 'idle' ? 'bottom-[120px]' : 'bottom-[162px]'
+                  }`}
+                >
+                  {/* Map Tools Button + Horizontal Pop-out Tray (Night Mode, Sound, Trends) */}
+                  <div className="relative">
+                    {showMapToolsMenu && (
+                      <div className="absolute right-12 top-0 flex items-center gap-1.5 p-1 rounded-full bg-white/95 dark:bg-[#18191D]/95 backdrop-blur-md shadow-xl border border-black/10 dark:border-white/10">
+                        <button
+                          type="button"
+                          onClick={handleToggleNightMode}
+                          className="w-9 h-9 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/20 flex items-center justify-center active:scale-95 transition-all"
+                          aria-label={preferences.nightMode ? 'Switch to Day Mode' : 'Switch to Night Mode'}
+                          title={preferences.nightMode ? 'Night Mode On' : 'Day Mode'}
+                        >
+                          {preferences.nightMode ? (
+                            <Sun className="w-4 h-4 text-[#FFC043]" />
+                          ) : (
+                            <Moon className="w-4 h-4 text-black" />
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            uberSounds.unlock();
+                            const willEnable = !preferences.soundEffects;
+                            handleTogglePreference('soundEffects');
+                            if (willEnable) {
+                              uberSounds.setEnabled(true);
+                              uberSounds.play('exclusiveDispatch');
+                            }
+                          }}
+                          className="w-9 h-9 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/20 flex items-center justify-center active:scale-95 transition-all"
+                          aria-label={preferences.soundEffects ? 'Mute driver sounds' : 'Unmute driver sounds'}
+                          title={preferences.soundEffects ? 'Sounds On' : 'Sounds Muted'}
+                        >
+                          {preferences.soundEffects ? (
+                            <Volume2 className="w-4 h-4 text-black dark:text-white" />
+                          ) : (
+                            <VolumeX className="w-4 h-4 text-[#E11900]" />
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowMapToolsMenu(false);
+                            setOpportunitiesModalMode('trends');
+                          }}
+                          className="w-9 h-9 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/20 flex items-center justify-center active:scale-95 transition-all"
+                          aria-label="Hourly earnings trends"
+                          title="Hourly trends"
+                        >
+                          <BarChart2 className="w-4 h-4 text-black dark:text-white" />
+                        </button>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMapLayersPopover(false);
+                        setShowMapToolsMenu((v) => !v);
+                      }}
+                      className={`w-10 h-10 rounded-full shadow-lg border flex items-center justify-center active:scale-95 transition-all ${
+                        showMapToolsMenu
+                          ? 'bg-black dark:bg-[#276EF1] text-white border-transparent'
+                          : 'bg-white dark:bg-[#18191D] text-black dark:text-white border-black/10 dark:border-white/10 hover:bg-[#F8F8F8] dark:hover:bg-[#22242A]'
+                      }`}
+                      aria-label="Map tools: night mode, sound and trends"
+                      title="Night Mode, Sound & Trends"
+                    >
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
                   </div>
-                )}
-              </div>
-            )}
 
-            <button
-              type="button"
-              onClick={() => setShowSafetyModal(true)}
-              className="w-12 h-12 rounded-full bg-white dark:bg-[#18191D] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all"
-              aria-label="Safety Toolkit"
-            >
-              <Shield className="w-6 h-6 text-[#276EF1] stroke-[2.2]" />
-            </button>
-          </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMapToolsMenu(false);
+                      setShowMapReportModal(true);
+                    }}
+                    className="w-10 h-10 rounded-full bg-white dark:bg-[#18191D] shadow-lg border border-black/10 dark:border-white/10 flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all"
+                    aria-label="Add a map report"
+                    title="Add a map report"
+                  >
+                    <MessageSquarePlus className="w-4 h-4 text-black dark:text-white" />
+                  </button>
 
-          {/* FLOATING RIGHT MAP CONTROLS (Night Mode, Sound, Map Report, Trends, Recenter GPS) */}
-          <div
-            className={`absolute right-4 z-20 flex flex-col items-center gap-2.5 ${
-              tripStage === 'idle' ? 'bottom-[128px]' : 'bottom-[218px]'
-            }`}
-          >
-            <button
-              type="button"
-              onClick={handleToggleNightMode}
-              className="w-12 h-12 rounded-full bg-white dark:bg-[#18191D] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all"
-              aria-label={preferences.nightMode ? 'Switch to Day Mode' : 'Switch to Night Mode'}
-              title={preferences.nightMode ? 'Night Mode On' : 'Day Mode'}
-            >
-              {preferences.nightMode ? (
-                <Sun className="w-5 h-5 text-[#FFC043]" />
-              ) : (
-                <Moon className="w-5 h-5 text-black" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                uberSounds.unlock();
-                const willEnable = !preferences.soundEffects;
-                handleTogglePreference('soundEffects');
-                if (willEnable) {
-                  uberSounds.setEnabled(true);
-                  uberSounds.play('exclusiveDispatch');
-                }
-              }}
-              className="w-12 h-12 rounded-full bg-white dark:bg-[#18191D] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all"
-              aria-label={preferences.soundEffects ? 'Mute driver sounds' : 'Unmute driver sounds'}
-              title={preferences.soundEffects ? 'Sounds On' : 'Sounds Muted'}
-            >
-              {preferences.soundEffects ? (
-                <Volume2 className="w-5 h-5 text-black dark:text-white" />
-              ) : (
-                <VolumeX className="w-5 h-5 text-[#E11900]" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowMapReportModal(true)}
-              className="w-12 h-12 rounded-full bg-white dark:bg-[#18191D] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all"
-              aria-label="Add a map report"
-              title="Add a map report"
-            >
-              <MessageSquarePlus className="w-5 h-5 text-black dark:text-white" />
-            </button>
-
-            {tripStage === 'idle' && (
-              <button
-                type="button"
-                onClick={() => setOpportunitiesModalMode('trends')}
-                className="w-12 h-12 rounded-full bg-white dark:bg-[#18191D] shadow-lg border border-black/5 dark:border-white/10 flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all"
-                aria-label="Hourly earnings trends"
-                title="Hourly trends"
-              >
-                <BarChart2 className="w-5 h-5 text-black dark:text-white" />
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                if (anchoredToLastJobRef.current) {
-                  showToast(
-                    `Centered on previous job area · ${getResolvedLocalCityName(driverPos)}`
-                  );
-                } else if (isLiveGpsInUK && realCoords && tripStage === 'idle') {
-                  const projected = clampMapCoords(
-                    projectLatLngToMap(realCoords.lat, realCoords.lng)
-                  );
-                  setDriverPos(projected);
-                  showToast(`Centered on live GPS · ${getResolvedLocalCityName(projected)}`);
-                }
-                setRecenterSignal((s) => s + 1);
-              }}
-              className={`w-12 h-12 rounded-full bg-white dark:bg-[#18191D] shadow-lg border flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all ${
-                isLiveGpsInUK ? 'border-[#276EF1]/35' : 'border-black/5 dark:border-white/10'
-              }`}
-              aria-label="Recenter map"
-              title="Recenter GPS"
-            >
-              <Compass
-                className={`w-5 h-5 ${isLiveGpsInUK ? 'text-[#276EF1]' : 'text-black dark:text-white'}`}
-              />
-            </button>
-          </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMapToolsMenu(false);
+                      if (anchoredToLastJobRef.current) {
+                        showToast(
+                          `Centered on previous job area · ${getResolvedLocalCityName(driverPos)}`
+                        );
+                      } else if (isLiveGpsInUK && realCoords && tripStage === 'idle') {
+                        const projected = clampMapCoords(
+                          projectLatLngToMap(realCoords.lat, realCoords.lng)
+                        );
+                        setDriverPos(projected);
+                        showToast(`Centered on live GPS · ${getResolvedLocalCityName(projected)}`);
+                      }
+                      setRecenterSignal((s) => s + 1);
+                    }}
+                    className={`w-11 h-11 rounded-full bg-white dark:bg-[#18191D] shadow-lg border flex items-center justify-center hover:bg-[#F8F8F8] dark:hover:bg-[#22242A] active:scale-95 transition-all ${
+                      isLiveGpsInUK ? 'border-[#276EF1]/35' : 'border-black/10 dark:border-white/10'
+                    }`}
+                    aria-label="Recenter map"
+                    title="Recenter GPS"
+                  >
+                    <Compass
+                      className={`w-5 h-5 ${isLiveGpsInUK ? 'text-[#276EF1]' : 'text-black dark:text-white'}`}
+                    />
+                  </button>
+                </div>
+              </>
+            );
+          })()}
 
           {/* ICONIC CIRCULAR BLUE "GO" BUTTON ON MAP */}
           {onlineStatus === 'offline' && tripStage === 'idle' && (
@@ -5447,12 +5521,20 @@ export default function App() {
           )}
 
           {/* VOICE COMMANDS QUICK STRIP (iOS Safari fallback tap chips + Web Speech indicator) */}
-          {preferences.voiceCommandsEnabled && onlineStatus === 'online' && !showRadarList && (
-            <div
-              className={`absolute inset-x-4 z-30 flex justify-center pointer-events-none ${
-                pendingOffer || tripStage !== 'idle' ? 'top-[104px]' : 'bottom-[136px]'
-              }`}
-            >
+          {preferences.voiceCommandsEnabled &&
+            onlineStatus === 'online' &&
+            !showRadarList &&
+            !isTripSheetExpanded &&
+            (tripStage === 'idle' || tripStage === 'pickup' || tripStage === 'enroute') && (
+              <div
+                className={`absolute z-30 flex justify-center pointer-events-none ${
+                  pendingOffer
+                    ? 'top-[108px] inset-x-12'
+                    : tripStage !== 'idle'
+                    ? 'bottom-[166px] inset-x-16'
+                    : 'bottom-[204px] inset-x-16'
+                }`}
+              >
               <div className="pointer-events-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/90 dark:bg-[#18191D]/95 text-white border border-white/15 shadow-xl text-[11px] font-bold">
                 <span className="inline-flex items-center gap-1 pr-1.5 border-r border-white/15">
                   <Mic
@@ -5593,6 +5675,7 @@ export default function App() {
                 }}
                 onCancelTrip={handleCancelTrip}
                 onOpenPreferences={() => setShowPreferencesModal(true)}
+                onExpandedChange={setIsTripSheetExpanded}
                 onShareCompletedReceipt={() => {
                   const surcharge = activeTrip.surchargeAmount ?? 0;
                   const uberFee = Number((Math.max(0, activeTrip.fare - surcharge) * 0.25).toFixed(2));

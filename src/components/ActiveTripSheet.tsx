@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
+  ChevronUp,
   CloudRain,
   ExternalLink,
   KeyRound,
@@ -85,6 +86,7 @@ interface ActiveTripSheetProps {
   onCancelTrip: () => void;
   onOpenPreferences: () => void;
   onShareCompletedReceipt?: () => void;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 const RIDER_TAGS = ['Friendly', 'Ready at pickup', 'Great tipper', 'Late at curb', 'Left item'];
@@ -124,6 +126,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
   onCancelTrip,
   onOpenPreferences,
   onShareCompletedReceipt,
+  onExpandedChange,
 }) => {
   const [waitSecondsLeft, setWaitSecondsLeft] = useState(120); // 2:00 UK free wait
   const [paidWaitSeconds, setPaidWaitSeconds] = useState(0);
@@ -131,6 +134,10 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
     trip.isMeteredFare ? trip.fare : undefined
   );
   const waitExpiredSoundRef = useRef(false);
+  const [sheetExpanded, setSheetExpanded] = useState(false);
+  const [dragOffsetY, setDragOffsetY] = useState(0);
+  const touchStartYRef = useRef<number | null>(null);
+  const detailsScrollRef = useRef<HTMLDivElement | null>(null);
   const [showRiderContact, setShowRiderContact] = useState(false);
   const [maskedCallActive, setMaskedCallActive] = useState(false);
   const [showRiderProfile, setShowRiderProfile] = useState(false);
@@ -172,7 +179,23 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
     setEatsDeliveryProof('none');
     setLiveMeterFare(trip.isMeteredFare ? trip.fare : undefined);
     setUnreadChatCount(trip.riderNote || trip.pinCode ? 1 : 0);
+    setSheetExpanded(false);
+    setShowTripDetails(false);
+    setDragOffsetY(0);
   }, [trip.id, trip.pickupAddress, trip.pinCode, trip.riderNote, trip.isMeteredFare, trip.fare]);
+
+  useEffect(() => {
+    if (stage === 'pickup' || stage === 'enroute') {
+      setSheetExpanded(false);
+      setShowTripDetails(false);
+      setDragOffsetY(0);
+    }
+  }, [stage]);
+
+  useEffect(() => {
+    const isPullUpStage = stage === 'pickup' || stage === 'enroute';
+    onExpandedChange?.(isPullUpStage ? sheetExpanded : stage !== 'idle');
+  }, [stage, sheetExpanded, onExpandedChange]);
 
   useEffect(() => {
     if (showRiderContact) {
@@ -444,19 +467,54 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
     );
   }
 
+  const handleSheetTouchStart = (e: React.TouchEvent) => {
+    touchStartYRef.current = e.touches[0]?.clientY ?? null;
+  };
+
+  const handleSheetTouchMove = (e: React.TouchEvent) => {
+    if (touchStartYRef.current === null) return;
+    const currentY = e.touches[0]?.clientY ?? touchStartYRef.current;
+    const deltaY = currentY - touchStartYRef.current;
+    if (sheetExpanded) {
+      const scrollTop = detailsScrollRef.current?.scrollTop ?? 0;
+      if (deltaY > 0 && scrollTop <= 2) {
+        setDragOffsetY(Math.min(72, deltaY * 0.45));
+      }
+    } else if (deltaY < 0) {
+      setDragOffsetY(Math.max(-56, deltaY * 0.45));
+    }
+  };
+
+  const handleSheetTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartYRef.current === null) return;
+    const endY = e.changedTouches[0]?.clientY ?? touchStartYRef.current;
+    const deltaY = endY - touchStartYRef.current;
+    touchStartYRef.current = null;
+    setDragOffsetY(0);
+
+    if (!sheetExpanded && deltaY < -28) {
+      triggerHaptic('light');
+      setSheetExpanded(true);
+    } else if (sheetExpanded && deltaY > 32) {
+      const scrollTop = detailsScrollRef.current?.scrollTop ?? 0;
+      if (scrollTop <= 8) {
+        triggerHaptic('light');
+        setSheetExpanded(false);
+      }
+    }
+  };
+
+  const isPullUpStage = stage === 'pickup' || stage === 'enroute';
+  const showBackdrop = isPullUpStage && sheetExpanded;
+
   return (
-    <div className="space-y-2">
-      {/* Live UK Weather Wet-Road / Rain Surge Advisory */}
-      {weatherCondition !== 'Clear' && (stage === 'pickup' || stage === 'enroute') && (
-        <div className="bg-[#0F172A] text-white rounded-2xl px-3.5 py-2.5 shadow-lg border border-sky-400/30 flex items-center justify-between gap-2.5">
-          <div className="flex items-center gap-2 min-w-0">
-            <CloudRain className="w-4 h-4 text-sky-400 shrink-0" />
-            <p className="text-[12px] font-semibold truncate">{weatherInfo.advisory}</p>
-          </div>
-          <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10.5px] font-bold shrink-0 tabular-nums">
-            +{weatherInfo.surgeAdd.toFixed(2)}x
-          </span>
-        </div>
+    <div className="space-y-2 relative">
+      {showBackdrop && (
+        <div
+          aria-hidden="true"
+          onClick={() => setSheetExpanded(false)}
+          className="fixed inset-0 -z-10 bg-black/35 backdrop-blur-[1px] transition-opacity"
+        />
       )}
 
       {/* Dynamic Traffic Delay & Reroute Banner */}
@@ -603,7 +661,14 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
         </div>
       )}
 
-      <div className="bg-white dark:bg-[#141416] rounded-t-3xl lg:rounded-2xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden">
+      <div
+        style={{
+          transform: dragOffsetY !== 0 ? `translateY(${dragOffsetY}px)` : undefined,
+        }}
+        className={`bg-white dark:bg-[#141416] rounded-t-3xl lg:rounded-2xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden transition-transform duration-200 ease-out ${
+          isPullUpStage && sheetExpanded ? 'max-h-[74dvh] flex flex-col' : ''
+        }`}
+      >
         {/* Sub-modal: Contact Rider (Chat + Masked Relay Call) */}
         {showRiderContact && (
           <div className="p-4 border-b border-[#EEEEEE] dark:border-white/10 bg-[#FAFAFA] dark:bg-[#1B1D22]">
@@ -818,148 +883,380 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
           </div>
         )}
 
-        {/* STAGE 1: PICKUP NAVIGATION */}
-        {stage === 'pickup' && (
-          <div className="p-4">
-            <div className="w-10 h-1 bg-[#DCDCDC] dark:bg-white/20 rounded-full mx-auto mb-3 lg:hidden" />
-            <div className="flex items-center justify-between gap-2">
+        {/* STAGE 1 & STAGE 3A: PULL-UP JOB DETAILS MENU (Compact dock by default, pull/tap up for full UK job details) */}
+        {isPullUpStage && (
+          <div className={sheetExpanded ? 'flex flex-col min-h-0 flex-1' : ''}>
+            {/* Pull-Up Grabber & Compact Summary Header (Always visible) */}
+            <div
+              onTouchStart={handleSheetTouchStart}
+              onTouchMove={handleSheetTouchMove}
+              onTouchEnd={handleSheetTouchEnd}
+              className="px-4 pt-2 pb-2.5 select-none shrink-0"
+            >
               <button
                 type="button"
-                onClick={onOpenPreferences}
-                className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors"
-                aria-label="Driving preferences"
+                onClick={() => {
+                  triggerHaptic('light');
+                  setSheetExpanded((v) => !v);
+                }}
+                className="w-full flex flex-col items-center pb-1.5 group focus:outline-none"
+                aria-expanded={sheetExpanded}
+                aria-label={sheetExpanded ? 'Collapse job details' : 'Pull up job details'}
               >
-                <SlidersHorizontal className="w-5 h-5 text-black dark:text-white" />
+                <span className="w-10 h-1.5 rounded-full bg-[#D0D0D4] dark:bg-white/25 group-hover:bg-black/40 dark:group-hover:bg-white/45 transition-colors" />
+                <span className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider text-[#6E6E73] dark:text-neutral-400">
+                  {sheetExpanded ? (
+                    <>
+                      <ChevronDown className="w-3 h-3" />
+                      <span>Pull down to map</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronUp className="w-3 h-3" />
+                      <span>
+                        {stage === 'enroute' && trip.paymentMethod === 'cash' && liveMeterFare
+                          ? `Job details · Meter £${liveMeterFare.toFixed(2)}`
+                          : 'Pull up for job details'}
+                      </span>
+                    </>
+                  )}
+                </span>
               </button>
 
-              <div className="text-center min-w-0">
-                <div className="flex items-center justify-center gap-1.5 text-[19px] font-bold text-black dark:text-white tabular-nums">
-                  <span>{liveEtaLabel ?? `${trip.pickupMinutes} min`}</span>
-                  <span className="w-5 h-5 rounded-full bg-[#05944F] text-white inline-flex items-center justify-center">
-                    <User className="w-3 h-3 fill-white" />
-                  </span>
-                  <span>{liveDistanceLabel ?? `${trip.pickupMiles} mi`}</span>
-                </div>
-                <p className="text-[14px] text-[#545454] dark:text-neutral-400 font-medium truncate">
-                  {trip.serviceName === 'Uber Eats'
-                    ? `Collect ${trip.eatsOrderCode || 'Uber Eats'} · ${trip.merchantName || trip.pickupAddress}`
-                    : `Picking up ${trip.riderName}`}
-                  {trip.isIntercity ? ' · Intercity' : ''}
-                  {trip.paymentMethod === 'cash' ? ' · Cash Meter' : ''}
-                </p>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={onOpenPreferences}
+                  className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors shrink-0"
+                  aria-label="Driving preferences"
+                >
+                  <SlidersHorizontal className="w-5 h-5 text-black dark:text-white" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSheetExpanded((v) => !v)}
+                  className="flex-1 min-w-0 text-center py-0.5 focus:outline-none"
+                >
+                  <div className="flex items-center justify-center gap-1.5 text-[18px] font-extrabold text-black dark:text-white tabular-nums leading-tight">
+                    <span>
+                      {liveEtaLabel ??
+                        `${stage === 'pickup' ? trip.pickupMinutes : trip.tripMinutes} min`}
+                    </span>
+                    {stage === 'pickup' ? (
+                      <span className="w-4 h-4 rounded-full bg-[#05944F] text-white inline-flex items-center justify-center">
+                        <User className="w-2.5 h-2.5 fill-white" />
+                      </span>
+                    ) : (
+                      <span className="w-2.5 h-2.5 bg-black dark:bg-white inline-block" />
+                    )}
+                    <span>
+                      {liveDistanceLabel ??
+                        `${stage === 'pickup' ? trip.pickupMiles : trip.tripMiles} mi`}
+                    </span>
+                  </div>
+                  <p className="text-[13px] text-[#545454] dark:text-neutral-400 font-medium truncate">
+                    {stage === 'pickup'
+                      ? trip.serviceName === 'Uber Eats'
+                        ? `Collect ${trip.eatsOrderCode || 'Uber Eats'} · ${trip.merchantName || trip.pickupAddress}`
+                        : `Picking up ${trip.riderName}`
+                      : trip.stopAddress && !stopVisited
+                      ? `Stop 1: ${trip.stopAddress}`
+                      : trip.merchantName
+                      ? `Delivering ${trip.merchantName} · ${trip.dropoffAddress}`
+                      : `To ${trip.dropoffAddress}`}
+                  </p>
+                  {!sheetExpanded && (
+                    <p className="text-[11px] font-semibold text-[#276EF1] dark:text-[#7AB0FF] truncate tabular-nums mt-0.5">
+                      {[
+                        trip.paymentMethod === 'cash'
+                          ? stage === 'enroute' && liveMeterFare
+                            ? `Cash Meter £${liveMeterFare.toFixed(2)}`
+                            : `Cash Est. £${trip.fare.toFixed(2)}`
+                          : `£${trip.fare.toFixed(2)} ${trip.serviceName}`,
+                        airportBayInfo ? `${airportBayInfo.airportCode} ${airportBayInfo.anprCode}` : null,
+                        trip.requiresAgeCheck ? 'Challenge 25' : null,
+                        weatherCondition !== 'Clear' ? `${weatherCondition} +${weatherInfo.surgeAdd.toFixed(2)}x` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic('light');
+                    setSheetExpanded((v) => !v);
+                  }}
+                  className="relative w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors shrink-0"
+                  aria-label={sheetExpanded ? 'Hide job details' : 'Show job details'}
+                >
+                  {sheetExpanded ? (
+                    <ChevronDown className="w-5 h-5 text-black dark:text-white" />
+                  ) : (
+                    <ChevronUp className="w-5 h-5 text-black dark:text-white" />
+                  )}
+                </button>
               </div>
-
-              <button
-                type="button"
-                onClick={() => setShowTripDetails((v) => !v)}
-                className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors"
-                aria-label="Trip details"
-              >
-                <List className="w-5 h-5 text-black dark:text-white" />
-              </button>
             </div>
 
-            {trip.serviceName === 'Uber Eats' && trip.merchantName && (
-              <div className="mt-3 p-3 rounded-xl bg-[#FFFBEB] dark:bg-amber-950/40 border border-[#F59E0B]/30 space-y-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[12px] font-extrabold text-[#B45309] dark:text-amber-300">
-                    <Store className="w-3.5 h-3.5" />
-                    {trip.merchantName}
-                    {trip.merchantCategory === 'grocery'
-                      ? ' (Grocery Shop)'
-                      : trip.merchantCategory === 'pharmacy'
-                      ? ' (Pharmacy)'
-                      : ' (Restaurant)'}
-                  </span>
-                  {trip.requiresAgeCheck && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#FEECEB] dark:bg-red-950/60 text-[#E11900] dark:text-red-300 text-[10.5px] font-extrabold">
-                      <ShieldAlert className="w-3 h-3" />
-                      Challenge 25
+            {/* Keep Cash Taxi Meter mounted during enroute so timer/extras keep running seamlessly */}
+            {stage === 'enroute' && trip.paymentMethod === 'cash' && trip.isMeteredFare && !sheetExpanded && (
+              <div className="hidden" aria-hidden="true">
+                <TaxiMeterWidget
+                  trip={trip}
+                  stage={stage}
+                  navProgress={navProgress}
+                  onFareChange={setLiveMeterFare}
+                />
+              </div>
+            )}
+
+            {/* Expanded Scrollable Job Details Drawer */}
+            {sheetExpanded && (
+              <div
+                ref={detailsScrollRef}
+                onTouchStart={handleSheetTouchStart}
+                onTouchMove={handleSheetTouchMove}
+                onTouchEnd={handleSheetTouchEnd}
+                className="flex-1 min-h-0 overflow-y-auto px-4 pb-3 pt-1 space-y-2.5 border-t border-[#EEEEEE] dark:border-white/10"
+              >
+                {/* Live UK Weather Advisory (inside pull-up menu so map edges stay clear) */}
+                {weatherCondition !== 'Clear' && (
+                  <div className="bg-[#0F172A] text-white rounded-xl px-3 py-2 border border-sky-400/30 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CloudRain className="w-4 h-4 text-sky-400 shrink-0" />
+                      <p className="text-[12px] font-semibold truncate">{weatherInfo.advisory}</p>
+                    </div>
+                    <span className="text-sky-300 text-[11px] font-bold shrink-0 tabular-nums">
+                      +{weatherInfo.surgeAdd.toFixed(2)}x
                     </span>
+                  </div>
+                )}
+
+                {/* Cash Taxi Meter (Live interactive meter during enroute) */}
+                {stage === 'enroute' && trip.paymentMethod === 'cash' && trip.isMeteredFare && (
+                  <TaxiMeterWidget
+                    trip={trip}
+                    stage={stage}
+                    navProgress={navProgress}
+                    onFareChange={setLiveMeterFare}
+                  />
+                )}
+
+                {/* Eats Store / Restaurant Pickup Details */}
+                {trip.serviceName === 'Uber Eats' && trip.merchantName && (
+                  <div className="p-3 rounded-xl bg-[#FFFBEB] dark:bg-amber-950/40 border border-[#F59E0B]/30 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 text-[12px] font-extrabold text-[#B45309] dark:text-amber-300">
+                        <Store className="w-3.5 h-3.5" />
+                        {trip.merchantName}
+                        {trip.merchantCategory === 'grocery'
+                          ? ' (Grocery Shop)'
+                          : trip.merchantCategory === 'pharmacy'
+                          ? ' (Pharmacy)'
+                          : ' (Restaurant)'}
+                      </span>
+                      {trip.requiresAgeCheck && (
+                        <span className="inline-flex items-center gap-1 text-[#E11900] dark:text-red-300 text-[10.5px] font-extrabold">
+                          <ShieldAlert className="w-3 h-3" />
+                          Challenge 25
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[12px] text-[#545454] dark:text-neutral-300 leading-snug">
+                      {trip.riderNote || `Order ${trip.eatsOrderCode ?? '#UE'} · Check bag seal & receipt`}
+                    </p>
+                  </div>
+                )}
+
+                {/* Cash Job Pickup Notice */}
+                {stage === 'pickup' && trip.paymentMethod === 'cash' && (
+                  <div className="px-3 py-2.5 rounded-xl bg-[#E6F4EA] dark:bg-emerald-950/50 border border-[#05944F]/30 flex items-center justify-between text-[12px]">
+                    <span className="font-bold text-[#05944F] flex items-center gap-1.5">
+                      <Banknote className="w-4 h-4" />
+                      Cash Job · UK Taxi Meter starts on pickup
+                    </span>
+                    <span className="font-extrabold text-black dark:text-white tabular-nums">
+                      Est. £{trip.fare.toFixed(2)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Airport Terminal Pickup Bay + ANPR Pass */}
+                {airportBayInfo && (
+                  <div className="p-3 rounded-xl bg-[#E8F0FE] dark:bg-[#192338] border border-[#276EF1]/30 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold text-[#276EF1] uppercase tracking-wide">
+                        <Plane className="w-3.5 h-3.5" />
+                        {airportBayInfo.airportCode} Terminal Pickup Bay
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[#05944F] text-[11px] font-extrabold tabular-nums">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        {airportBayInfo.anprCode}
+                      </span>
+                    </div>
+                    <p className="text-[12.5px] font-bold text-black dark:text-white leading-snug">
+                      {airportBayInfo.bayLocation}
+                    </p>
+                    <p className="text-[11px] font-semibold text-[#545454] dark:text-neutral-300 tabular-nums">
+                      Plate {airportBayInfo.plate} · {airportBayInfo.passWindow}
+                    </p>
+                  </div>
+                )}
+
+                {/* ULEZ & Bridge/Congestion Surcharge */}
+                {trip.ulezStatus && (
+                  <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#F3F3F3] dark:bg-white/5 text-[11.5px] font-semibold text-[#276EF1]">
+                    <span>{trip.ulezStatus}</span>
+                    {trip.surchargeLabel && trip.surchargeAmount ? (
+                      <span className="tabular-nums font-bold">
+                        {trip.surchargeLabel} (+£{trip.surchargeAmount.toFixed(2)})
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+
+                {/* Waybill Summary */}
+                <div className="rounded-xl bg-[#F6F6F6] dark:bg-white/5 p-3 space-y-1.5 text-[12.5px] text-[#333333] dark:text-neutral-300">
+                  <div className="flex items-center justify-between font-bold text-black dark:text-white pb-1 border-b border-black/10 dark:border-white/10">
+                    <span>
+                      {trip.riderName} · ★ {trip.rating.toFixed(2)} ({trip.riderTrips} trips)
+                    </span>
+                    <span className="tabular-nums">
+                      £{(stage === 'enroute' && trip.isMeteredFare && liveMeterFare ? liveMeterFare : trip.fare).toFixed(2)} · {trip.serviceName}
+                    </span>
+                  </div>
+                  <p>
+                    <span className="font-semibold text-[#05944F]">Pickup:</span> {trip.pickupAddress}, {trip.pickupArea}
+                  </p>
+                  {trip.stopAddress && (
+                    <p>
+                      <span className="font-semibold text-[#B45309] dark:text-amber-300">Stop 1:</span>{' '}
+                      {trip.stopAddress}
+                    </p>
+                  )}
+                  <p>
+                    <span className="font-semibold text-black dark:text-white">Dropoff:</span>{' '}
+                    {trip.dropoffAddress}, {trip.dropoffArea}
+                  </p>
+                  {trip.pinCode && (
+                    <p className="text-[#276EF1] font-semibold tabular-nums">
+                      4-Digit Rider Verification PIN: {trip.pinCode}
+                    </p>
                   )}
                 </div>
-                <p className="text-[12px] text-[#545454] dark:text-neutral-300 leading-snug">
-                  {trip.riderNote || `Order ${trip.eatsOrderCode ?? '#UE'} · Check bag seal & receipt`}
-                </p>
-              </div>
-            )}
 
-            {trip.paymentMethod === 'cash' && (
-              <div className="mt-2.5 px-3 py-2 rounded-xl bg-[#E6F4EA] dark:bg-emerald-950/50 border border-[#05944F]/30 flex items-center justify-between text-[12px]">
-                <span className="font-bold text-[#05944F] flex items-center gap-1.5">
-                  <Banknote className="w-4 h-4" />
-                  Cash Job · UK Taxi Meter starts on pickup
-                </span>
-                <span className="font-extrabold text-black dark:text-white tabular-nums">
-                  Est. £{trip.fare.toFixed(2)}
-                </span>
-              </div>
-            )}
+                {/* Turn-by-Turn Route Steps */}
+                {routeSteps.length > 0 && (
+                  <div className="pt-1 space-y-1.5">
+                    <p className="text-[11.5px] font-bold text-[#545454] dark:text-neutral-400 flex items-center gap-1.5">
+                      <Navigation className="w-3.5 h-3.5 text-[#276EF1]" />
+                      Turn-by-Turn UK Directions
+                    </p>
+                    {routeSteps.map((st, idx) => (
+                      <div
+                        key={st.id}
+                        className={`px-2.5 py-2 rounded-lg text-[12px] flex items-center justify-between gap-2 ${
+                          idx === currentStepIdx
+                            ? 'bg-[#E8F0FE] dark:bg-[#276EF1]/25 text-[#276EF1] dark:text-[#7AB0FF] font-bold'
+                            : idx < currentStepIdx
+                            ? 'text-[#8E8E93] line-through'
+                            : 'bg-[#F8F8F8] dark:bg-white/5 text-black dark:text-neutral-200'
+                        }`}
+                      >
+                        <span className="truncate">{st.instruction}</span>
+                        {st.distanceMeters > 0 && (
+                          <span className="text-[11px] tabular-nums shrink-0 opacity-75">
+                            {st.distanceMeters >= 1000
+                              ? `${(st.distanceMeters / 1609.34).toFixed(1)} mi`
+                              : `${st.distanceMeters} m`}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-            {trip.ulezStatus && (
-              <div className="mt-2 flex items-center justify-between px-3 py-1.5 rounded-lg bg-[#F3F3F3] dark:bg-white/5 text-[11px] font-semibold text-[#276EF1]">
-                <span>{trip.ulezStatus}</span>
-                {trip.surchargeLabel && trip.surchargeAmount ? (
-                  <span className="tabular-nums font-bold">
-                    {trip.surchargeLabel} (+£{trip.surchargeAmount.toFixed(2)})
-                  </span>
-                ) : null}
-              </div>
-            )}
-
-            {airportBayInfo && (
-              <div className="mt-3 p-3 rounded-xl bg-[#E8F0FE] dark:bg-[#192338] border border-[#276EF1]/30 space-y-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold text-[#276EF1] uppercase tracking-wide">
-                    <Plane className="w-3.5 h-3.5" />
-                    {airportBayInfo.airportCode} Terminal Pickup Bay
-                  </span>
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#05944F] text-white text-[10px] font-extrabold tabular-nums">
-                    <ShieldCheck className="w-3 h-3" />
-                    {airportBayInfo.anprCode}
-                  </span>
+                {/* External Navigation & Cancel Trip */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <a
+                    href={externalNavHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="h-11 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] text-[12.5px] font-bold flex items-center justify-center gap-1.5 hover:bg-[#D9E7FD] transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span>{externalNavLabel}</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSheetExpanded(false);
+                      onCancelTrip();
+                    }}
+                    className="h-11 rounded-xl bg-[#FEECEB] dark:bg-red-950/50 text-[#E11900] dark:text-red-300 text-[12.5px] font-bold hover:bg-[#FDD8D5] transition-colors"
+                  >
+                    Cancel Trip
+                  </button>
                 </div>
-                <p className="text-[12.5px] font-bold text-black dark:text-white leading-snug">
-                  {airportBayInfo.bayLocation}
-                </p>
-                <p className="text-[11px] font-semibold text-[#545454] dark:text-neutral-300 tabular-nums">
-                  Plate {airportBayInfo.plate} · {airportBayInfo.passWindow}
-                </p>
               </div>
             )}
 
-            <div className="mt-3 pt-3 border-t border-[#EEEEEE] dark:border-white/10 flex items-center justify-between gap-2">
+            {/* Pinned Primary Action Bar */}
+            <div className="px-4 pb-3.5 pt-2 border-t border-[#EEEEEE] dark:border-white/10 flex items-center justify-between gap-2 shrink-0 bg-white dark:bg-[#141416]">
               <button
                 type="button"
                 onClick={() => setShowRiderContact((v) => !v)}
-                className="relative flex-1 h-10 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E8E8E8] dark:hover:bg-white/15 text-[13px] font-semibold text-black dark:text-white flex items-center justify-center gap-1.5 transition-colors"
+                className="relative flex-1 h-11 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E8E8E8] dark:hover:bg-white/15 text-[13px] font-semibold text-black dark:text-white flex items-center justify-center gap-1.5 transition-colors px-2 min-w-0"
               >
-                <Phone className="w-4 h-4" />
-                Contact {trip.riderName}
+                <Phone className="w-4 h-4 shrink-0" />
+                <span className="truncate">Contact {trip.riderName}</span>
                 {unreadChatCount > 0 && !showRiderContact && (
-                  <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#276EF1] text-white text-[10.5px] font-bold flex items-center justify-center tabular-nums">
+                  <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#276EF1] text-white text-[10.5px] font-bold flex items-center justify-center tabular-nums shrink-0">
                     {unreadChatCount}
                   </span>
                 )}
               </button>
-              {navProvider !== 'uber' && (
+              {navProvider !== 'uber' && !sheetExpanded && (
                 <a
                   href={externalNavHref}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 h-10 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] text-[12.5px] font-bold flex items-center justify-center gap-1 whitespace-nowrap"
+                  className="w-11 h-11 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] flex items-center justify-center shrink-0"
+                  aria-label={`Open in ${externalNavLabel}`}
+                  title={`Navigate in ${externalNavLabel}`}
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>{externalNavLabel}</span>
+                  <ExternalLink className="w-4 h-4" />
                 </a>
               )}
-              <button
-                type="button"
-                onClick={onArrivePickup}
-                className="flex-1 h-10 rounded-xl bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] text-white text-[13px] font-semibold transition-colors"
-              >
-                Confirm Pickup
-              </button>
+              {stage === 'pickup' ? (
+                <button
+                  type="button"
+                  onClick={onArrivePickup}
+                  className="flex-1 h-11 rounded-xl bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] text-white text-[13px] font-semibold transition-colors whitespace-nowrap px-3"
+                >
+                  Confirm Pickup
+                </button>
+              ) : trip.stopAddress && !stopVisited && onArriveStop ? (
+                <button
+                  type="button"
+                  onClick={onArriveStop}
+                  className="flex-1 h-11 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-black text-[13px] font-bold whitespace-nowrap px-3 transition-colors"
+                >
+                  Arrived at Stop 1
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onArriveDropoff}
+                  className="flex-1 h-11 rounded-xl bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] text-white text-[13px] font-semibold whitespace-nowrap px-3 transition-colors"
+                >
+                  Arrived at Dropoff
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1234,94 +1531,7 @@ export const ActiveTripSheet: React.FC<ActiveTripSheetProps> = ({
           </div>
         )}
 
-        {/* STAGE 3A: EN ROUTE TO STOP 1 OR FINAL DROPOFF */}
-        {stage === 'enroute' && (
-          <div className="p-4 space-y-3">
-            {trip.paymentMethod === 'cash' && trip.isMeteredFare && (
-              <TaxiMeterWidget
-                trip={trip}
-                stage={stage}
-                navProgress={navProgress}
-                onFareChange={setLiveMeterFare}
-              />
-            )}
-            <div>
-              <div className="flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={onOpenPreferences}
-                  className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors"
-                  aria-label="Driving preferences"
-                >
-                  <SlidersHorizontal className="w-5 h-5 text-black dark:text-white" />
-                </button>
-
-                <div className="text-center">
-                  <div className="flex items-center justify-center gap-1.5 text-[19px] font-bold text-black dark:text-white tabular-nums">
-                    <span>{liveEtaLabel ?? `${trip.tripMinutes} min`}</span>
-                    <span className="w-2.5 h-2.5 bg-black dark:bg-white inline-block" />
-                    <span>{liveDistanceLabel ?? `${trip.tripMiles} mi`}</span>
-                  </div>
-                  <p className="text-[13.5px] text-[#545454] dark:text-neutral-400 font-medium truncate max-w-[240px] flex items-center justify-center gap-1">
-                    {trip.isIntercity && <Route className="w-3.5 h-3.5 text-[#7A1C79] shrink-0" />}
-                    {trip.stopAddress && !stopVisited
-                      ? `Heading to Stop 1 · ${trip.riderName}`
-                      : trip.isIntercity
-                      ? `Intercity to ${trip.dropoffArea.split('·')[0].trim()}`
-                      : trip.merchantName
-                      ? `Delivering ${trip.merchantName} to ${trip.riderName}`
-                      : `Dropping off ${trip.riderName}`}
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowTripDetails((v) => !v)}
-                  className="w-11 h-11 rounded-full hover:bg-[#F3F3F3] dark:hover:bg-white/10 flex items-center justify-center transition-colors"
-                  aria-label="Trip details"
-                >
-                  <List className="w-5 h-5 text-black dark:text-white" />
-                </button>
-              </div>
-
-              <div className="mt-3 pt-3 border-t border-[#EEEEEE] dark:border-white/10 flex items-center justify-between gap-2">
-                <span className="text-[13px] text-[#545454] dark:text-neutral-400 truncate flex-1">
-                  {trip.stopAddress && !stopVisited
-                    ? `Stop 1: ${trip.stopAddress}`
-                    : `To ${trip.dropoffAddress}`}
-                </span>
-                {navProvider !== 'uber' && (
-                  <a
-                    href={externalNavHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 h-10 rounded-xl bg-[#E8F0FE] dark:bg-[#276EF1]/20 text-[#276EF1] dark:text-[#7AB0FF] text-[12px] font-bold flex items-center justify-center gap-1 whitespace-nowrap shrink-0"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>{externalNavLabel}</span>
-                  </a>
-                )}
-                {trip.stopAddress && !stopVisited && onArriveStop ? (
-                  <button
-                    type="button"
-                    onClick={onArriveStop}
-                    className="px-4 h-10 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-black text-[13px] font-bold whitespace-nowrap shrink-0 transition-colors"
-                  >
-                    Arrived at Stop 1
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={onArriveDropoff}
-                    className="px-4 h-10 rounded-xl bg-black dark:bg-[#276EF1] hover:bg-neutral-800 dark:hover:bg-[#1E5CD4] text-white text-[13px] font-semibold whitespace-nowrap shrink-0 transition-colors"
-                  >
-                    Arrived at Dropoff
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Stage 3A enroute is handled by the Pull-Up Job Details Menu above */}
 
         {/* STAGE 3B: MULTI-STOP WAIT */}
         {stage === 'stop_wait' && (

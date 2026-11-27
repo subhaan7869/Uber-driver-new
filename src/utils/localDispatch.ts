@@ -1,5 +1,6 @@
 import {
   Coordinates,
+  DestinationConfig,
   DriverPreferences,
   EatsMerchantCategory,
   ReserveCategory,
@@ -72,6 +73,78 @@ function offsetLatLng(
     lat: Number((lat + dLat).toFixed(5)),
     lng: Number((lng + dLng).toFixed(5)),
   };
+}
+
+function bearingBetweenDeg(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toDeg = (r: number) => (r * 180) / Math.PI;
+  const dLng = toRad(lng2 - lng1);
+  const y = Math.sin(dLng) * Math.cos(toRad(lat2));
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLng);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+export interface UKPlaceSearchResult {
+  name: string;
+  address: string;
+  coords: Coordinates;
+}
+
+export async function searchUKPlaces(
+  query: string,
+  biasLatLng?: { lat: number; lng: number }
+): Promise<UKPlaceSearchResult[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+  const params = new URLSearchParams({
+    q: trimmed,
+    limit: '7',
+    lang: 'en',
+    bbox: '-8.6,49.8,2.1,60.9',
+  });
+  if (biasLatLng) {
+    params.set('lat', String(biasLatLng.lat));
+    params.set('lon', String(biasLatLng.lng));
+  }
+  try {
+    const res = await fetch(`https://photon.komoot.io/api/?${params.toString()}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    const features = Array.isArray(data?.features) ? data.features : [];
+    const results: UKPlaceSearchResult[] = [];
+    const seen = new Set<string>();
+    for (const feat of features) {
+      const coords = feat?.geometry?.coordinates;
+      const props = feat?.properties;
+      if (!Array.isArray(coords) || coords.length < 2 || !props) continue;
+      const lng = Number(coords[0]);
+      const lat = Number(coords[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      const name = String(props.name || props.street || props.city || props.town || '').trim();
+      if (!name) continue;
+      const cityPart = props.city || props.town || props.county || 'UK';
+      const postcodePart = props.postcode ? ` ${props.postcode}` : '';
+      const address = [props.street, cityPart].filter(Boolean).join(', ') + postcodePart;
+      const key = `${name.toLowerCase()}|${String(cityPart).toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      results.push({
+        name,
+        address: address || cityPart,
+        coords: clampMapCoords(projectLatLngToMap(lat, lng)),
+      });
+    }
+    return results;
+  } catch {
+    return [];
+  }
 }
 
 function cleanTownName(props: Record<string, any> | undefined, fallbackCoords: Coordinates): string {
@@ -251,6 +324,127 @@ const FALLBACK_LOCAL_DESTINATIONS = [
   'Old Town Square',
 ];
 
+const CITY_CURATED_PLACES: Record<
+  string,
+  { streets: string[]; destinations: string[] }
+> = {
+  manchester: {
+    streets: [
+      'Deansgate',
+      'Oxford Road',
+      'Portland Street',
+      'Whitworth Street West',
+      'Great Ancoats Street',
+      'Peter Street',
+      'Mosley Street',
+      'Wilmslow Road',
+      'Chapel Street, Salford',
+      'Oldham Road',
+    ],
+    destinations: [
+      'Manchester Piccadilly Station',
+      'Spinningfields Square',
+      'Salford Quays MediaCityUK',
+      'Trafford Centre Orient Way',
+      'Northern Quarter Stevenson Sq',
+      'Manchester Airport T2',
+      'Didsbury Village Tram Stop',
+      'Etihad Campus Gate 1',
+      'Old Trafford Forecourt',
+      'Manchester Royal Infirmary',
+    ],
+  },
+  london: {
+    streets: [
+      'Oxford Street',
+      'Baker Street',
+      'Regent Street',
+      'Piccadilly',
+      'Marylebone High St',
+      'Victoria Street',
+      'Kingsway',
+      'Bishopsgate',
+      'Fulham Road',
+      'Kensington High St',
+    ],
+    destinations: [
+      'Paddington Station Taxi Rank',
+      'King’s Cross St Pancras',
+      'Canary Wharf Jubilee Plaza',
+      'Victoria Coach Forecourt',
+      'Covent Garden Piazza',
+      'London Bridge Station',
+      'Waterloo Station Exit 4',
+      'Stratford International',
+    ],
+  },
+  birmingham: {
+    streets: [
+      'New Street',
+      'Corporation Street',
+      'Broad Street',
+      'Colmore Row',
+      'Hagley Road',
+      'Bristol Road',
+      'Digbeth High St',
+      'Moor Street Queensway',
+    ],
+    destinations: [
+      'Birmingham New Street Grand Central',
+      'Bullring & St Martin’s',
+      'Brindleyplace Canalside',
+      'Edgbaston Priory Gate',
+      'Birmingham Airport BHX',
+      'Aston University Campus',
+    ],
+  },
+  liverpool: {
+    streets: [
+      'Lime Street',
+      'Bold Street',
+      'Lord Street',
+      'Dale Street',
+      'Hope Street',
+      'Castle Street',
+    ],
+    destinations: [
+      'Liverpool Lime Street Station',
+      'Royal Albert Dock',
+      'Liverpool ONE Paradise St',
+      'Anfield Stadium Main Stand',
+      'Liverpool John Lennon Airport',
+    ],
+  },
+  leeds: {
+    streets: [
+      'Briggate',
+      'The Headrow',
+      'Boar Lane',
+      'Park Row',
+      'Wellington Street',
+      'Woodhouse Lane',
+    ],
+    destinations: [
+      'Leeds City Rail Station',
+      'Trinity Leeds Arcade',
+      'Leeds Dock Waterfront',
+      'First Direct Arena',
+      'Headingley Stadium',
+    ],
+  },
+};
+
+function getCuratedCityPool(townName: string): { streets: string[]; destinations: string[] } {
+  const lower = townName.toLowerCase();
+  for (const [key, pool] of Object.entries(CITY_CURATED_PLACES)) {
+    if (lower.includes(key)) return pool;
+  }
+  return {
+    streets: FALLBACK_LOCAL_STREETS,
+    destinations: FALLBACK_LOCAL_DESTINATIONS,
+  };
+}
+
 const RIDER_NAMES = [
   'Olivia H.',
   'Marcus T.',
@@ -316,6 +510,7 @@ interface LocalOfferOptions {
   ccAlreadyPaidToday?: boolean;
   airportQueueCode?: string;
   areaPreference?: DriverPreferences['areaPreference'];
+  destination?: DestinationConfig | null;
   isEV?: boolean;
   acceptCashJobs?: boolean;
 }
@@ -333,6 +528,7 @@ export function generateLocalTripOffer({
   ccAlreadyPaidToday = false,
   airportQueueCode,
   areaPreference = 'all',
+  destination,
   isEV = false,
   acceptCashJobs = true,
 }: LocalOfferOptions): TripOffer {
@@ -342,6 +538,7 @@ export function generateLocalTripOffer({
   const localTown = getResolvedLocalCityName(
     realLatLng ? projectLatLngToMap(currentLat, currentLng) : anchorCoords
   );
+  const curatedPool = getCuratedCityPool(localTown);
 
   const hasFreshCache =
     geoCache !== null &&
@@ -359,10 +556,12 @@ export function generateLocalTripOffer({
   }
 
   const intercityEnabled = servicePrefs ? servicePrefs.intercity : includeIntercity;
+  const destActive = Boolean(destination?.active && destination.coords);
   const isIntercity =
     forceIntercity ||
-    (intercityEnabled && standardServices.length === 0) ||
-    (intercityEnabled && seedIndex % 15 === 14);
+    (!destActive &&
+      ((intercityEnabled && standardServices.length === 0) ||
+        (intercityEnabled && seedIndex % 15 === 14)));
   const type: 'exclusive' | 'radar' =
     forceType ?? (seedIndex % 3 === 1 ? 'radar' : 'exclusive');
 
@@ -373,15 +572,15 @@ export function generateLocalTripOffer({
     : 'UberX';
   const isDelivery = serviceName === 'Uber Eats';
 
-  // 1. Pick local PICKUP within 0.35 - 1.35 miles (or Airport Terminal if dispatched from Airport FIFO Queue)
+  // 1. Pick local PICKUP within 0.35 - 1.35 miles of the driver's Job location
   const pickupBearing = ((seedIndex * 73 + 25) % 360);
-  const fallbackPickupDist = 0.45 + ((seedIndex % 5) * 0.18);
+  const fallbackPickupDist = 0.4 + ((seedIndex % 5) * 0.18);
   const pickupFallbackLL = offsetLatLng(currentLat, currentLng, fallbackPickupDist, pickupBearing);
 
   let pickupLat = pickupFallbackLL.lat;
   let pickupLng = pickupFallbackLL.lng;
   let pickupAddress = `${12 + ((seedIndex * 17) % 180)} ${
-    FALLBACK_LOCAL_STREETS[seedIndex % FALLBACK_LOCAL_STREETS.length]
+    curatedPool.streets[seedIndex % curatedPool.streets.length]
   }`;
   let pickupArea = `${localTown} Centre`;
   const airportPin = airportQueueCode
@@ -409,14 +608,62 @@ export function generateLocalTripOffer({
   const pickupMiles = Number(pickupMilesRaw.toFixed(1));
   const pickupMinutes = Math.max(2, Math.round(pickupMiles * 3.1));
 
-  // 2. Pick DROPOFF (local town/city for standard rides, nearest other UK city for Intercity)
+  // 2. Pick DROPOFF (Destination-guided back toward user's target/home location, Intercity, Area filter, or Local city)
   let dropoffLat = currentLat;
   let dropoffLng = currentLng;
-  let dropoffAddress = FALLBACK_LOCAL_DESTINATIONS[seedIndex % FALLBACK_LOCAL_DESTINATIONS.length];
+  let dropoffAddress = curatedPool.destinations[seedIndex % curatedPool.destinations.length];
   let dropoffArea = localTown;
   let intercityCorridor: string | undefined;
+  let effectiveIsIntercity = isIntercity;
 
-  if (isIntercity) {
+  if (destActive && destination && !forceIntercity) {
+    const destLL = mapToLatLng(destination.coords);
+    const distToDest = haversineMiles(pickupLat, pickupLng, destLL.lat, destLL.lng);
+    const toDestBearing = bearingBetweenDeg(pickupLat, pickupLng, destLL.lat, destLL.lng);
+    const shortDest = destination.destinationName.split('·')[0].trim();
+    const destCity = getResolvedLocalCityName(destination.coords);
+    const destCurated = getCuratedCityPool(destCity);
+
+    if (distToDest <= 5.5) {
+      const jitterDist = seedIndex % 2 === 0 ? 0.25 : 0.65 + (seedIndex % 3) * 0.25;
+      const nearLL = offsetLatLng(
+        destLL.lat,
+        destLL.lng,
+        jitterDist,
+        (toDestBearing + (seedIndex % 4) * 55) % 360
+      );
+      dropoffLat = nearLL.lat;
+      dropoffLng = nearLL.lng;
+      dropoffAddress =
+        seedIndex % 2 === 0
+          ? destination.destinationAddress || destination.destinationName
+          : destCurated.destinations[seedIndex % destCurated.destinations.length];
+      dropoffArea = `Near ${shortDest}`;
+    } else if (destination.routeType === 'faster' || distToDest <= 14) {
+      const jitterDist = 0.25 + (seedIndex % 3) * 0.3;
+      const nearLL = offsetLatLng(destLL.lat, destLL.lng, jitterDist, (toDestBearing + 180) % 360);
+      dropoffLat = nearLL.lat;
+      dropoffLng = nearLL.lng;
+      dropoffAddress = destination.destinationAddress || destination.destinationName;
+      dropoffArea = `Near ${shortDest} · Toward You`;
+      if (distToDest >= 16) {
+        effectiveIsIntercity = true;
+        intercityCorridor = `${localTown} → ${shortDest} · Return`;
+      }
+    } else {
+      // Flexible multi-hop along the exact corridor toward destination / user's location
+      const hopFraction = 0.42 + ((seedIndex % 4) * 0.12);
+      const hopMiles = Math.min(Math.max(2.5, distToDest * hopFraction), 15.0);
+      const hopBearing = (toDestBearing + ((seedIndex % 3) - 1) * 10 + 360) % 360;
+      const hopLL = offsetLatLng(pickupLat, pickupLng, hopMiles, hopBearing);
+      const hopCity = nearestUKCity(projectLatLngToMap(hopLL.lat, hopLL.lng));
+      const hopPool = getCuratedCityPool(hopCity);
+      dropoffLat = hopLL.lat;
+      dropoffLng = hopLL.lng;
+      dropoffAddress = hopPool.destinations[(seedIndex + 1) % hopPool.destinations.length];
+      dropoffArea = `Toward ${shortDest} (${hopCity})`;
+    }
+  } else if (effectiveIsIntercity) {
     // Pick nearest OTHER UK city 18–65 miles away from current location
     const candidates = UK_CITIES.map((c) => ({
       city: c,
@@ -445,46 +692,62 @@ export function generateLocalTripOffer({
       intercityCorridor = `${localTown} Regional Express`;
     }
   } else if (areaPreference && areaPreference !== 'all') {
-    const areaBias: Record<
-      Exclude<NonNullable<DriverPreferences['areaPreference']>, 'all'>,
-      { lat: number; lng: number; address: string; area: string }
-    > = {
-      central: {
-        lat: 51.5105 + ((seedIndex % 3) - 1) * 0.008,
-        lng: -0.132 + ((seedIndex % 4) - 1.5) * 0.01,
-        address: ['Soho Square W1D', 'Covent Garden Piazza', 'King’s Cross Concourse', 'Trafalgar Square'][
-          seedIndex % 4
-        ],
-        area: 'Central London · Area Filter',
-      },
-      east: {
-        lat: 51.5055 + ((seedIndex % 3) - 1) * 0.009,
-        lng: -0.022 + ((seedIndex % 4) - 1.5) * 0.015,
-        address: ['Canary Wharf Jubilee Plaza', 'Stratford International', 'Greenwich Pier Cutty Sark', 'ExCeL London East'][
-          seedIndex % 4
-        ],
-        area: 'East & Canary Wharf · Area Filter',
-      },
-      west: {
-        lat: 51.488 + ((seedIndex % 3) - 1) * 0.01,
-        lng: -0.285 + ((seedIndex % 4) - 1.5) * 0.02,
-        address: ['Heathrow Terminal 5 Forecourt', 'Hammersmith Broadway', 'Ealing Broadway Station', 'Paddington Basin'][
-          seedIndex % 4
-        ],
-        area: 'West & Heathrow · Area Filter',
-      },
-      local: {
-        ...offsetLatLng(pickupLat, pickupLng, 1.4 + (seedIndex % 3) * 0.65, (pickupBearing + 120) % 360),
-        address: FALLBACK_LOCAL_DESTINATIONS[(seedIndex + 1) % FALLBACK_LOCAL_DESTINATIONS.length],
-        area: `${localTown} ≤3.5 mi · Local Only`,
-      },
-    };
     const isGreaterLondon = haversineMiles(currentLat, currentLng, 51.5074, -0.1278) <= 28;
-    const chosenBias = areaPreference === 'local' || isGreaterLondon ? areaBias[areaPreference] : areaBias.local;
-    dropoffLat = chosenBias.lat;
-    dropoffLng = chosenBias.lng;
-    dropoffAddress = chosenBias.address;
-    dropoffArea = chosenBias.area;
+    if (isGreaterLondon && areaPreference !== 'local') {
+      const londonAreaBias: Record<
+        'central' | 'east' | 'west',
+        { lat: number; lng: number; address: string; area: string }
+      > = {
+        central: {
+          lat: 51.5105 + ((seedIndex % 3) - 1) * 0.008,
+          lng: -0.132 + ((seedIndex % 4) - 1.5) * 0.01,
+          address: ['Soho Square W1D', 'Covent Garden Piazza', 'King’s Cross Concourse', 'Trafalgar Square'][
+            seedIndex % 4
+          ],
+          area: 'Central London · Area Filter',
+        },
+        east: {
+          lat: 51.5055 + ((seedIndex % 3) - 1) * 0.009,
+          lng: -0.022 + ((seedIndex % 4) - 1.5) * 0.015,
+          address: ['Canary Wharf Jubilee Plaza', 'Stratford International', 'Greenwich Pier Cutty Sark', 'ExCeL London East'][
+            seedIndex % 4
+          ],
+          area: 'East & Canary Wharf · Area Filter',
+        },
+        west: {
+          lat: 51.488 + ((seedIndex % 3) - 1) * 0.01,
+          lng: -0.285 + ((seedIndex % 4) - 1.5) * 0.02,
+          address: ['Heathrow Terminal 5 Forecourt', 'Hammersmith Broadway', 'Ealing Broadway Station', 'Paddington Basin'][
+            seedIndex % 4
+          ],
+          area: 'West & Heathrow · Area Filter',
+        },
+      };
+      const chosenBias = londonAreaBias[areaPreference];
+      dropoffLat = chosenBias.lat;
+      dropoffLng = chosenBias.lng;
+      dropoffAddress = chosenBias.address;
+      dropoffArea = chosenBias.area;
+    } else {
+      // Dynamic city-relative directional filter (works in Manchester, Birmingham, Edinburgh, etc.)
+      const sectorBearing =
+        areaPreference === 'east'
+          ? 85 + (seedIndex % 3) * 15
+          : areaPreference === 'west'
+          ? 265 + (seedIndex % 3) * 15
+          : areaPreference === 'central'
+          ? (pickupBearing + 180) % 360
+          : (pickupBearing + 120) % 360;
+      const distMi = areaPreference === 'local' ? 1.3 + (seedIndex % 3) * 0.65 : 2.1 + (seedIndex % 3) * 0.85;
+      const dropLL = offsetLatLng(pickupLat, pickupLng, distMi, sectorBearing);
+      dropoffLat = dropLL.lat;
+      dropoffLng = dropLL.lng;
+      dropoffAddress = curatedPool.destinations[(seedIndex + 1) % curatedPool.destinations.length];
+      dropoffArea =
+        areaPreference === 'local'
+          ? `${localTown} ≤3.5 mi · Local Only`
+          : `${localTown} (${areaPreference.charAt(0).toUpperCase() + areaPreference.slice(1)})`;
+    }
   } else if (hasFreshCache && geoCache && geoCache.destinations.length > 0) {
     const destPool = geoCache.destinations.filter(
       (d) => haversineMiles(pickupLat, pickupLng, d.lat, d.lng) >= 1.3
@@ -502,7 +765,7 @@ export function generateLocalTripOffer({
       const dropLL = offsetLatLng(pickupLat, pickupLng, localTripDist, (pickupBearing + 135) % 360);
       dropoffLat = dropLL.lat;
       dropoffLng = dropLL.lng;
-      dropoffAddress = FALLBACK_LOCAL_DESTINATIONS[(seedIndex + 3) % FALLBACK_LOCAL_DESTINATIONS.length];
+      dropoffAddress = curatedPool.destinations[(seedIndex + 3) % curatedPool.destinations.length];
       dropoffArea = `${localTown} Local`;
     }
   } else {
@@ -511,7 +774,7 @@ export function generateLocalTripOffer({
     const dropLL = offsetLatLng(pickupLat, pickupLng, localTripDist, dropBearing);
     dropoffLat = dropLL.lat;
     dropoffLng = dropLL.lng;
-    dropoffAddress = FALLBACK_LOCAL_DESTINATIONS[(seedIndex + 3) % FALLBACK_LOCAL_DESTINATIONS.length];
+    dropoffAddress = curatedPool.destinations[(seedIndex + 3) % curatedPool.destinations.length];
     dropoffArea = `${localTown} Local`;
   }
 
@@ -530,11 +793,11 @@ export function generateLocalTripOffer({
     haversineMiles(pickupLat, pickupLng, dropoffLat, dropoffLng) * (isDelivery ? 0.92 : 1.28)
   );
   const tripMiles = Number(tripMilesRaw.toFixed(1));
-  const avgSpeedMph = isIntercity ? 44 : isDelivery ? 16 : 18;
+  const avgSpeedMph = effectiveIsIntercity ? 44 : isDelivery ? 16 : 18;
   const tripMinutes = Math.max(isDelivery ? 5 : 6, Math.round((tripMiles / avgSpeedMph) * 60));
 
   // Optional mid-route stop (~1 in 5 local passenger trips; never on Uber Eats)
-  const hasStop = !isIntercity && !isDelivery && seedIndex % 5 === 2;
+  const hasStop = !effectiveIsIntercity && !destActive && !isDelivery && seedIndex % 5 === 2;
   const stopCoords = hasStop
     ? clampMapCoords(
         projectLatLngToMap(
@@ -544,7 +807,7 @@ export function generateLocalTripOffer({
       )
     : undefined;
   const stopAddress = hasStop
-    ? `${FALLBACK_LOCAL_STREETS[(seedIndex + 4) % FALLBACK_LOCAL_STREETS.length]} (Quick 2m stop)`
+    ? `${curatedPool.streets[(seedIndex + 4) % curatedPool.streets.length]} (Quick 2m stop)`
     : undefined;
 
   const pickupCoordsProjected = clampMapCoords(projectLatLngToMap(pickupLat, pickupLng));
@@ -564,7 +827,7 @@ export function generateLocalTripOffer({
       ? 1.72
       : serviceName === 'Uber Eats'
       ? 1.25
-      : serviceName === 'Intercity'
+      : effectiveIsIntercity || serviceName === 'Intercity'
       ? 1.65
       : 1.5;
 
@@ -621,7 +884,7 @@ export function generateLocalTripOffer({
 
   // ~28% of eligible passenger jobs are Cash + UK Taxi Meter when Cash Jobs enabled
   const isCashJob =
-    Boolean(acceptCashJobs) && !isDelivery && !isIntercity && seedIndex % 4 === 3;
+    Boolean(acceptCashJobs) && !isDelivery && !effectiveIsIntercity && seedIndex % 4 === 3;
   const meterRates = isCashJob ? getUKTaxiMeterRates(serviceName) : null;
   const meteredStartEst =
     isCashJob && meterRates
@@ -654,9 +917,9 @@ export function generateLocalTripOffer({
       : `Waiting outside ${pickupAddress} in ${localTown}.`;
 
   return {
-    id: `local-${type}-${isIntercity ? 'ic-' : ''}${Date.now()}-${seedIndex}`,
+    id: `local-${type}-${effectiveIsIntercity ? 'ic-' : ''}${Date.now()}-${seedIndex}`,
     type,
-    serviceName,
+    serviceName: effectiveIsIntercity ? 'Intercity' : serviceName,
     fare: finalFare,
     rating: Number((4.86 + ((seedIndex % 13) * 0.01)).toFixed(2)),
     riderName,
@@ -689,12 +952,12 @@ export function generateLocalTripOffer({
     pinCode,
     surchargeLabel,
     surchargeAmount,
-    isIntercity,
+    isIntercity: effectiveIsIntercity,
     intercityCorridor,
     stopAddress,
     stopCoords,
     riderNote,
-    expiresInSec: isIntercity ? 20 : type === 'radar' ? 18 : 15,
+    expiresInSec: effectiveIsIntercity ? 20 : type === 'radar' ? 18 : 15,
   };
 }
 
@@ -706,7 +969,8 @@ export function buildLocalOfferPool(
   servicePrefs?: ServicePrefsInput,
   areaPreference?: DriverPreferences['areaPreference'],
   isEV = false,
-  acceptCashJobs = true
+  acceptCashJobs = true,
+  destination?: DestinationConfig | null
 ): TripOffer[] {
   const offers: TripOffer[] = [];
   for (let i = 0; i < 6; i++) {
@@ -718,6 +982,7 @@ export function buildLocalOfferPool(
         includeIntercity,
         servicePrefs,
         areaPreference,
+        destination,
         isEV,
         acceptCashJobs,
       })

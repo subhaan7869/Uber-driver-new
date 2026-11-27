@@ -17,6 +17,7 @@ import {
   GitMerge,
   LayoutGrid,
   List,
+  LocateFixed,
   MapPin,
   MessageSquarePlus,
   Mic,
@@ -173,6 +174,7 @@ import {
   clampMapCoords,
   isWithinUKBounds,
   mapToLatLng,
+  nearestUKCity,
   projectLatLngToMap,
   UK_SPEED_CAMERAS,
 } from './utils/ukGeo';
@@ -181,6 +183,7 @@ import {
   generateLocalReserveTrips,
   generateLocalTripOffer,
   getResolvedLocalCityName,
+  haversineMiles,
   prefetchLocalPlaces,
   ServicePrefsInput,
 } from './utils/localDispatch';
@@ -436,6 +439,15 @@ export default function App() {
     }
     return undefined;
   }, []);
+
+  // Keep Photon street/destination cache synchronized to whichever UK job area the driver is currently positioned in
+  useEffect(() => {
+    if (tripStage !== 'idle') return;
+    const ll = mapToLatLng(driverPos);
+    void prefetchLocalPlaces(ll.lat, ll.lng).then((town) => {
+      if (town) setLocalGeoVersion((v) => v + 1);
+    });
+  }, [driverPos, tripStage]);
 
   const [reserveSeed, setReserveSeed] = useState<number>(0);
   const [scheduledReserves, setScheduledReserves] = useState<ReserveTrip[]>(() => {
@@ -1417,7 +1429,8 @@ export default function App() {
           servicePrefs,
           preferences.areaPreference,
           Boolean(activeAccount?.isEV),
-          preferences.acceptCashJobs ?? true
+          preferences.acceptCashJobs ?? true,
+          destination
         );
         const upcoming = activePool[0];
         if (upcoming) {
@@ -1451,10 +1464,14 @@ export default function App() {
   }, [
     onlineStatus,
     activeAccount?.name,
+    activeAccount?.isEV,
     preferences.intercity,
+    preferences.areaPreference,
+    preferences.acceptCashJobs,
     preferences.floatingDotAlertMode,
     servicePrefs,
     offerIndex,
+    destination,
     handleNativeOverlayAction,
     getActiveGpsLatLng,
   ]);
@@ -1499,6 +1516,7 @@ export default function App() {
         boostBonus: activeBoostBonus,
         ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
         areaPreference: preferences.areaPreference,
+        destination,
         isEV: Boolean(activeAccount?.isEV),
         acceptCashJobs: preferences.acceptCashJobs ?? true,
       });
@@ -1513,6 +1531,7 @@ export default function App() {
         boostBonus: activeBoostBonus,
         ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
         areaPreference: preferences.areaPreference,
+        destination,
         isEV: Boolean(activeAccount?.isEV),
         acceptCashJobs: preferences.acceptCashJobs ?? true,
       });
@@ -1523,6 +1542,7 @@ export default function App() {
       preferences.intercity,
       preferences.areaPreference,
       preferences.acceptCashJobs,
+      destination,
       activeAccount?.isEV,
       servicePrefs,
       lockedSurgeBonus,
@@ -1588,6 +1608,7 @@ export default function App() {
             ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
             airportQueueCode: airportQueue?.position === 1 ? airportQueue.code : undefined,
             areaPreference: preferences.areaPreference,
+            destination,
             isEV: Boolean(activeAccount?.isEV),
             acceptCashJobs: preferences.acceptCashJobs ?? true,
           });
@@ -1659,6 +1680,7 @@ export default function App() {
     preferences.areaPreference,
     preferences.acceptCashJobs,
     preferences.tripFilter,
+    destination,
     activeAccount?.isEV,
     servicePrefs,
     demandContext.dispatchMinSec,
@@ -2335,6 +2357,7 @@ export default function App() {
       boostBonus: activeBoostBonus,
       ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
       areaPreference: preferences.areaPreference,
+      destination,
       isEV: Boolean(activeAccount?.isEV),
     });
     recordOfferReceived(candidate);
@@ -2349,6 +2372,7 @@ export default function App() {
     preferences.stopNewRequests,
     preferences.intercity,
     preferences.areaPreference,
+    destination,
     activeAccount?.isEV,
     servicePrefs,
     stopVisited,
@@ -2912,6 +2936,7 @@ export default function App() {
         boostBonus: activeBoostBonus,
         ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
         areaPreference: preferences.areaPreference,
+        destination,
         isEV: Boolean(activeAccount?.isEV),
       });
       setOfferIndex((i) => i + 1);
@@ -2927,6 +2952,7 @@ export default function App() {
       onlineStatus,
       preferences.intercity,
       preferences.areaPreference,
+      destination,
       activeAccount?.isEV,
       servicePrefs,
       offerIndex,
@@ -3640,6 +3666,7 @@ export default function App() {
     }
 
     // Anchor driver position to the previous job's dropoff area so GPS watch does not pull them back
+    let arrivedAtDestinationTarget = false;
     if (activeTrip) {
       const dropoffCoords = activeTrip.dropoffCoords;
       anchoredToLastJobRef.current = true;
@@ -3649,6 +3676,14 @@ export default function App() {
       void prefetchLocalPlaces(dropLatLng.lat, dropLatLng.lng).then(() => {
         setLocalGeoVersion((v) => v + 1);
       });
+
+      if (destination.active) {
+        const destLatLng = mapToLatLng(destination.coords);
+        if (haversineMiles(dropLatLng.lat, dropLatLng.lng, destLatLng.lat, destLatLng.lng) <= 2.2) {
+          arrivedAtDestinationTarget = true;
+          setDestination(DEFAULT_DESTINATION);
+        }
+      }
     }
 
     const nextQueued = acceptedNextOffer;
@@ -3668,6 +3703,8 @@ export default function App() {
     } else if (nextQueued) {
       handleAcceptOffer(nextQueued);
       showToast(`Starting queued ride · ${nextQueued.riderName}`);
+    } else if (arrivedAtDestinationTarget) {
+      showToast(`Arrived near ${destination.destinationName} · Destination Mode complete`);
     } else if (!tags.includes('Left item')) {
       showToast('Trip completed · Saved to Earnings');
     }
@@ -3825,6 +3862,10 @@ export default function App() {
             forceType: 'radar',
             includeIntercity: nextPrefs.intercity,
             servicePrefs: nextServiceFilter,
+            areaPreference: nextPrefs.areaPreference,
+            destination,
+            isEV: Boolean(activeAccount?.isEV),
+            acceptCashJobs: nextPrefs.acceptCashJobs ?? true,
           }),
           generateLocalTripOffer({
             anchorCoords: driverPosRef.current,
@@ -3833,6 +3874,10 @@ export default function App() {
             forceType: 'radar',
             includeIntercity: nextPrefs.intercity,
             servicePrefs: nextServiceFilter,
+            areaPreference: nextPrefs.areaPreference,
+            destination,
+            isEV: Boolean(activeAccount?.isEV),
+            acceptCashJobs: nextPrefs.acceptCashJobs ?? true,
           }),
         ]);
       }
@@ -4679,6 +4724,33 @@ export default function App() {
   const isLiveGpsInUK =
     realCoords !== null && isWithinUKBounds(realCoords.lat, realCoords.lng);
 
+  const currentJobCity = useMemo(
+    () => getResolvedLocalCityName(driverPos),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [driverPos, localGeoVersion]
+  );
+
+  const myLocationCoords = useMemo(
+    () =>
+      isLiveGpsInUK && realCoords
+        ? clampMapCoords(projectLatLngToMap(realCoords.lat, realCoords.lng))
+        : getCityStartCoords(activeAccount?.city ?? 'London'),
+    [isLiveGpsInUK, realCoords, activeAccount?.city]
+  );
+
+  const myLocationLabel = useMemo(() => {
+    if (isLiveGpsInUK && realCoords) {
+      return nearestUKCity(myLocationCoords);
+    }
+    return activeAccount?.city || 'London';
+  }, [isLiveGpsInUK, realCoords, myLocationCoords, activeAccount?.city]);
+
+  const milesFromMyLocation = useMemo(() => {
+    const dLL = mapToLatLng(driverPos);
+    const mLL = mapToLatLng(myLocationCoords);
+    return Number(haversineMiles(dLL.lat, dLL.lng, mLL.lat, mLL.lng).toFixed(1));
+  }, [driverPos, myLocationCoords]);
+
   const fallbackLocalOffer = useMemo(
     () =>
       generateLocalTripOffer({
@@ -4692,6 +4764,7 @@ export default function App() {
         boostBonus: activeBoostBonus,
         ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
         areaPreference: preferences.areaPreference,
+        destination,
         isEV: Boolean(activeAccount?.isEV),
         acceptCashJobs: preferences.acceptCashJobs ?? true,
       }),
@@ -4703,6 +4776,7 @@ export default function App() {
       preferences.intercity,
       preferences.areaPreference,
       preferences.acceptCashJobs,
+      destination,
       activeAccount?.isEV,
       servicePrefs,
       localGeoVersion,
@@ -5181,13 +5255,63 @@ export default function App() {
                 >
                   <MapPin className="w-3.5 h-3.5 text-[#276EF1]" />
                   <span className="truncate max-w-[200px]">
-                    Heading to {destination.destinationName}
+                    {currentJobCity} → {destination.destinationName}
                   </span>
                   <span className="text-[#545454] dark:text-neutral-400 font-medium">
-                    · {destination.routeType === 'flexible' ? 'Flexible' : 'Faster'}
+                    · {destination.routeType === 'flexible' ? 'Toward' : 'Direct'}
                   </span>
                 </button>
               )}
+
+              {!destination.active &&
+                !pendingOffer &&
+                !showRadarList &&
+                (anchoredToLastJobRef.current || milesFromMyLocation >= 1.5) && (
+                  <div className="pointer-events-auto flex items-center gap-2 flex-wrap justify-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDestination({
+                          active: true,
+                          destinationName: `Near ${myLocationLabel}`,
+                          destinationAddress: isLiveGpsInUK
+                            ? `${myLocationLabel} · Live GPS Area`
+                            : `${myLocationLabel} City Centre`,
+                          routeType: 'flexible',
+                          arriveBy: 'Toward My Location',
+                          coords: myLocationCoords,
+                        });
+                        showToast(
+                          `Routing jobs from ${currentJobCity} toward ${myLocationLabel}`
+                        );
+                      }}
+                      className="h-9 px-3.5 rounded-full bg-[#276EF1] hover:bg-[#1E5CD4] text-white text-[12px] font-bold shadow-lg flex items-center gap-1.5 active:scale-95 transition-all whitespace-nowrap"
+                    >
+                      <LocateFixed className="w-3.5 h-3.5" />
+                      <span>Jobs → Near {myLocationLabel}</span>
+                    </button>
+
+                    {anchoredToLastJobRef.current && isLiveGpsInUK && realCoords && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          anchoredToLastJobRef.current = false;
+                          const projected = clampMapCoords(
+                            projectLatLngToMap(realCoords.lat, realCoords.lng)
+                          );
+                          driverPosRef.current = projected;
+                          setDriverPos(projected);
+                          setRecenterSignal((s) => s + 1);
+                          showToast(`Moved back to live GPS · ${myLocationLabel}`);
+                        }}
+                        className="h-9 px-3 rounded-full bg-white/95 dark:bg-[#18191D]/95 backdrop-blur-md text-black dark:text-white text-[11.5px] font-bold shadow-md border border-black/10 dark:border-white/10 flex items-center gap-1.5 active:scale-95 transition-all whitespace-nowrap"
+                      >
+                        <Compass className="w-3.5 h-3.5 text-[#276EF1]" />
+                        <span>Use Live GPS</span>
+                      </button>
+                    )}
+                  </div>
+                )}
 
               <div className="pointer-events-auto flex items-center gap-2 flex-wrap justify-center">
                 {onlineStatus === 'online' && !pendingOffer && !showRadarList && (
@@ -5301,6 +5425,10 @@ export default function App() {
                             surgeLockedBonus: lockedSurgeBonus,
                             boostBonus: activeBoostBonus,
                             ccAlreadyPaidToday: ledger.ccPaidDateKey === todayDateKey,
+                            areaPreference: preferences.areaPreference,
+                            destination,
+                            isEV: Boolean(activeAccount?.isEV),
+                            acceptCashJobs: preferences.acceptCashJobs ?? true,
                           });
                           setOfferIndex((i) => i + 1);
                           recordOfferReceived(sample);
@@ -6114,6 +6242,10 @@ export default function App() {
               seedIndex: offerIndex,
               includeIntercity: preferences.intercity,
               servicePrefs,
+              areaPreference: preferences.areaPreference,
+              destination,
+              isEV: Boolean(activeAccount?.isEV),
+              acceptCashJobs: preferences.acceptCashJobs ?? true,
             });
             setOfferIndex((i) => i + 1);
             setShowPermissionsModal(false);
@@ -6144,10 +6276,15 @@ export default function App() {
       {showDestinationModal && (
         <DestinationModeModal
           destination={destination}
+          currentJobCity={currentJobCity}
+          myLocationLabel={myLocationLabel}
+          myLocationCoords={myLocationCoords}
+          hasLiveGps={isLiveGpsInUK}
+          driverPos={driverPos}
           onActivate={(cfg) => {
             setDestination(cfg);
             setShowDestinationModal(false);
-            showToast(`Destination Mode set: ${cfg.destinationName}`);
+            showToast(`Jobs from ${currentJobCity} → ${cfg.destinationName}`);
           }}
           onClear={() => {
             setDestination(DEFAULT_DESTINATION);

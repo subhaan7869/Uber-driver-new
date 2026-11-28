@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Banknote, Package, PawPrint, Route, ShieldAlert, Star, Store, User, X } from 'lucide-react';
 import { TripFilterRules, TripOffer } from '../types/driver';
+import { triggerHaptic } from '../utils/uberSounds';
 
 function renderServiceIcon(item: TripOffer, sizeClass = 'w-3 h-3') {
   if (item.isIntercity) return <Route className={sizeClass} />;
@@ -101,6 +102,7 @@ export const TripOfferModal: React.FC<TripOfferModalProps> = ({
   }, [matchingId, matchingSecLeft, offer, radarOffers, onAccept, onRadarMatchFailed, onDeclineRadarItem, onDecline]);
 
   const handleAction = (targetOffer: TripOffer) => {
+    triggerHaptic('accept');
     if (!showRadarList && onMoveToRadarMatch) {
       onMoveToRadarMatch(targetOffer);
       return;

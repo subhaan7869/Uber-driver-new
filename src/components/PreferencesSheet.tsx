@@ -18,13 +18,14 @@ import {
   Route,
   ShieldAlert,
   Sparkles,
+  Vibrate,
   Volume2,
   X,
   Zap,
 } from 'lucide-react';
 import { DriverPreferences, NavProvider, TripFilterRules } from '../types/driver';
 import { carBluetoothMedia } from '../utils/carBluetoothMedia';
-import { uberSounds } from '../utils/uberSounds';
+import { setHapticsEnabled, triggerHaptic, uberSounds } from '../utils/uberSounds';
 
 interface PreferencesSheetProps {
   preferences: DriverPreferences;
@@ -853,6 +854,57 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({
               >
                 <Volume2 className="w-3.5 h-3.5 text-[#276EF1]" />
                 <span>Test Exclusive Chime</span>
+              </button>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => {
+                const willEnable = !(preferences.vibrationEnabled ?? true);
+                onTogglePreference('vibrationEnabled');
+                setHapticsEnabled(willEnable);
+                if (willEnable) {
+                  triggerHaptic('accept');
+                }
+              }}
+              className="w-full flex items-center justify-between py-1 text-left"
+            >
+              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                <Vibrate className="w-4 h-4 text-[#276EF1] shrink-0" />
+                <div>
+                  <p className="text-[15px] font-bold text-black dark:text-white">Vibration & haptics</p>
+                  <p className="text-[12px] text-[#545454] dark:text-neutral-400">
+                    Taptic &amp; vibration pulses for trip offers, Go, alerts &amp; payouts
+                  </p>
+                </div>
+              </div>
+              <div
+                className={`w-12 h-7 rounded-full p-1 transition-colors shrink-0 ${
+                  (preferences.vibrationEnabled ?? true)
+                    ? 'bg-[#276EF1]'
+                    : 'bg-[#DCDCDC] dark:bg-white/20'
+                }`}
+              >
+                <div
+                  className={`w-5 h-5 rounded-full bg-white shadow-xs transition-transform ${
+                    (preferences.vibrationEnabled ?? true) ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </div>
+            </button>
+            {(preferences.vibrationEnabled ?? true) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHapticsEnabled(true);
+                  triggerHaptic('cash');
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 h-10 rounded-xl bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#EAEAEA] dark:hover:bg-white/15 text-[12px] font-bold text-black dark:text-white transition-colors"
+              >
+                <Vibrate className="w-3.5 h-3.5 text-[#276EF1]" />
+                <span>Test Vibration</span>
               </button>
             )}
           </div>

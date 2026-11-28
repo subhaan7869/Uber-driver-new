@@ -33,6 +33,8 @@ import {
   Sun,
   Timer,
   User,
+  Vibrate,
+  VibrateOff,
   Volume2,
   VolumeX,
   X,
@@ -165,7 +167,13 @@ import {
   syncAndroidWidgetState,
   syncNativeAppForeground,
 } from './native/floatingDot';
-import { triggerHaptic, uberSounds } from './utils/uberSounds';
+import {
+  setHapticsEnabled,
+  startDispatchHapticLoop,
+  stopDispatchHapticLoop,
+  triggerHaptic,
+  uberSounds,
+} from './utils/uberSounds';
 import {
   driverVoiceController,
   isSpeechRecognitionSupported,
@@ -1207,12 +1215,19 @@ export default function App() {
   // Preload & sync sound effects preference
   useEffect(() => {
     uberSounds.preload();
-    return () => uberSounds.stopDispatchLoop();
+    return () => {
+      uberSounds.stopDispatchLoop();
+      stopDispatchHapticLoop();
+    };
   }, []);
 
   useEffect(() => {
     uberSounds.setEnabled(preferences.soundEffects);
   }, [preferences.soundEffects]);
+
+  useEffect(() => {
+    setHapticsEnabled(preferences.vibrationEnabled ?? true);
+  }, [preferences.vibrationEnabled]);
 
   // Auto-enable live GPS on load if browser location permission was already granted
   useEffect(() => {
@@ -1305,23 +1320,29 @@ export default function App() {
   // Play looping Uber Driver dispatch ping + unique surge/cash chimes + haptics
   useEffect(() => {
     if (pendingOffer && tripStage === 'idle') {
+      const hapticKind =
+        pendingOffer.paymentMethod === 'cash'
+          ? 'cash'
+          : (pendingOffer.surgeBonus ?? 0) >= 4
+          ? 'alert'
+          : 'dispatch';
       if (pendingOffer.paymentMethod === 'cash') {
         uberSounds.play('cashDispatch');
-        triggerHaptic('cash');
       } else if ((pendingOffer.surgeBonus ?? 0) >= 4) {
         uberSounds.play('highSurgeDispatch');
-        triggerHaptic('dispatch');
-      } else {
-        triggerHaptic('dispatch');
       }
+      triggerHaptic(hapticKind);
+      startDispatchHapticLoop(hapticKind);
       uberSounds.startDispatchLoop(pendingOffer.type === 'radar' ? 'radar' : 'exclusive');
       void pushOfferToNativeBubble(pendingOffer);
     } else {
       uberSounds.stopDispatchLoop();
+      stopDispatchHapticLoop();
       void clearOfferFromNativeBubble();
     }
     return () => {
       uberSounds.stopDispatchLoop();
+      stopDispatchHapticLoop();
     };
   }, [pendingOffer, tripStage]);
 
@@ -2515,6 +2536,7 @@ export default function App() {
   const completeGoOnline = useCallback(() => {
     uberSounds.unlock();
     uberSounds.play('online');
+    triggerHaptic('online');
     const now = Date.now();
     setOnlineStatus('online');
     setOnlineStartedAt(now);
@@ -2591,6 +2613,7 @@ export default function App() {
     } else {
       const finalElapsedLabel = formatOnlineTimer(onlineElapsedSec);
       uberSounds.play('offline');
+      triggerHaptic('offline');
       setOnlineStatus('offline');
       setOnlineStartedAt(null);
       setOnlineElapsedSec(0);
@@ -2713,6 +2736,7 @@ export default function App() {
       );
       uberSounds.unlock();
       uberSounds.play('accept');
+      triggerHaptic('accept');
       setLockedSurgeBonus(0);
       setLockedSurgeLabel(null);
       setPendingOffer(null);
@@ -2862,12 +2886,14 @@ export default function App() {
     );
     setTrafficAlert(null);
     uberSounds.play('accept');
+    triggerHaptic('accept');
     showToast(`Rerouted around congestion · Saved ${saved} min`);
   }, [activeTrip, trafficAlert, showToast]);
 
   const handleAcceptRiderChange = useCallback(() => {
     if (!activeTrip || !riderChangeOffer) return;
     uberSounds.play('accept');
+    triggerHaptic('accept');
     setActiveTrip((prev) => {
       if (!prev) return null;
       const nextFare = Number((prev.fare + riderChangeOffer.extraFare).toFixed(2));
@@ -2900,6 +2926,7 @@ export default function App() {
 
   const handleDeclineRiderChange = useCallback(() => {
     uberSounds.play('decline');
+    triggerHaptic('decline');
     setRiderChangeOffer(null);
     showToast('Kept original destination route');
   }, [showToast]);
@@ -2907,6 +2934,7 @@ export default function App() {
   const handleAcceptStackedEats = useCallback(() => {
     if (!activeTrip || !stackedEatsOffer) return;
     uberSounds.play('accept');
+    triggerHaptic('accept');
     setActiveTrip((prev) => {
       if (!prev) return null;
       return {
@@ -2925,6 +2953,7 @@ export default function App() {
 
   const handleDeclineStackedEats = useCallback(() => {
     uberSounds.play('decline');
+    triggerHaptic('decline');
     setStackedEatsOffer(null);
     showToast('Kept single Uber Eats order');
   }, [showToast]);
@@ -2994,6 +3023,7 @@ export default function App() {
     (offer: TripOffer) => {
       recordOfferDecision(offer, 'declined');
       uberSounds.play('decline');
+      triggerHaptic('decline');
       setPendingOffer(null);
       setRadarMatchingId(null);
       if (offer.type === 'exclusive' && activeAccount?.id) {
@@ -3021,6 +3051,7 @@ export default function App() {
     (trip: ReserveTrip) => {
       uberSounds.unlock();
       uberSounds.play('accept');
+      triggerHaptic('accept');
       const scheduledTrip: ReserveTrip = { ...trip, status: 'scheduled' };
       setAcceptedReserveIds((prev) => [...prev, trip.id]);
       setScheduledReserves((prev) => {
@@ -3048,6 +3079,7 @@ export default function App() {
   const handleCancelReserve = useCallback(
     (tripId: string) => {
       uberSounds.play('decline');
+      triggerHaptic('decline');
       const target = scheduledReserves.find((r) => r.id === tripId);
       setScheduledReserves((prev) => prev.filter((r) => r.id !== tripId));
       if (target && googleUser?.emailVerified) {
@@ -3148,6 +3180,7 @@ export default function App() {
     (offer: TripOffer) => {
       recordOfferDecision(offer, 'declined', 'radar');
       uberSounds.play('decline');
+      triggerHaptic('decline');
       setRadarMatchingId(null);
       setRadarOffers((prev) => {
         const nextList = prev.filter((item) => item.id !== offer.id);
@@ -3163,6 +3196,7 @@ export default function App() {
 
   const handleArrivePickup = () => {
     if (!activeTrip) return;
+    triggerHaptic('light');
     setDriverPos(activeTrip.pickupCoords);
     setTripStage('waiting');
   };
@@ -3170,6 +3204,7 @@ export default function App() {
   const handleStartTrip = (waitFeeAccrued = 0) => {
     uberSounds.unlock();
     uberSounds.play('startTrip');
+    triggerHaptic('accept');
     setTripWaitFee(waitFeeAccrued);
     if (activeTrip) {
       const nextTarget =
@@ -3192,6 +3227,7 @@ export default function App() {
 
   const handleArriveStop = () => {
     if (!activeTrip?.stopCoords) return;
+    triggerHaptic('light');
     setDriverPos(activeTrip.stopCoords);
     setStopVisited(true);
     setTripStage('stop_wait');
@@ -3201,6 +3237,7 @@ export default function App() {
   const handleContinueFromStop = () => {
     if (!activeTrip) return;
     uberSounds.play('startTrip');
+    triggerHaptic('accept');
     const fromCoords = activeTrip.stopCoords ?? activeTrip.pickupCoords;
     const remainingDist = Math.max(
       20,
@@ -3217,6 +3254,7 @@ export default function App() {
 
   const handleArriveDropoff = () => {
     if (!activeTrip) return;
+    triggerHaptic('light');
     setDriverPos(activeTrip.dropoffCoords);
     setTripStage('dropoff_arrived');
   };
@@ -3225,7 +3263,7 @@ export default function App() {
     if (!activeTrip) return;
     uberSounds.unlock();
     uberSounds.play('completeTrip');
-    triggerHaptic('accept');
+    triggerHaptic('complete');
     const currentKey = getLocalDateKey();
     setTodayDateKey(currentKey);
     setTrafficAlert(null);
@@ -3796,6 +3834,7 @@ export default function App() {
 
   const handleCancelTrip = () => {
     uberSounds.play('decline');
+    triggerHaptic('decline');
     if (activeAccount?.id) {
       setAccounts((prev) =>
         prev.map((acct) =>
@@ -3819,6 +3858,7 @@ export default function App() {
 
   const handleAddMapReport = (category: MapReportCategory, label: string) => {
     uberSounds.play('mapReport');
+    triggerHaptic('light');
     const pin: MapReportPin = {
       id: `rep-${Date.now()}`,
       category,
@@ -3861,7 +3901,11 @@ export default function App() {
       }
     }
 
-    const nextPrefs = { ...preferences, [key]: !preferences[key] };
+    const nextValue =
+      key === 'vibrationEnabled'
+        ? !(preferences.vibrationEnabled ?? true)
+        : !preferences[key];
+    const nextPrefs = { ...preferences, [key]: nextValue };
     setPreferences(nextPrefs);
 
     if (isServiceKey) {
@@ -4274,6 +4318,7 @@ export default function App() {
   const handleSendTestNotification = async () => {
     uberSounds.unlock();
     uberSounds.play('message');
+    triggerHaptic('alert');
     if (!preferences.notificationsEnabled) {
       setPreferences((prev) => ({ ...prev, notificationsEnabled: true }));
     }
@@ -4311,6 +4356,7 @@ export default function App() {
   };
 
   const handleCashOut = (amount: number, method: 'instant' | 'bank') => {
+    triggerHaptic('cash');
     const fee = method === 'instant' ? 1.25 : 0;
     const netAmount = Math.max(0, Number((amount - fee).toFixed(2)));
     const now = new Date();
@@ -5599,6 +5645,38 @@ export default function App() {
                             <Volume2 className="w-4 h-4 text-black dark:text-white" />
                           ) : (
                             <VolumeX className="w-4 h-4 text-[#E11900]" />
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const willEnable = !(preferences.vibrationEnabled ?? true);
+                            handleTogglePreference('vibrationEnabled');
+                            setHapticsEnabled(willEnable);
+                            if (willEnable) {
+                              triggerHaptic('accept');
+                            }
+                            showToast(
+                              willEnable ? 'Vibration & haptics enabled' : 'Vibration muted'
+                            );
+                          }}
+                          className="w-9 h-9 rounded-full bg-[#F3F3F3] dark:bg-white/10 hover:bg-[#E5E5E5] dark:hover:bg-white/20 flex items-center justify-center active:scale-95 transition-all"
+                          aria-label={
+                            (preferences.vibrationEnabled ?? true)
+                              ? 'Mute vibration'
+                              : 'Enable vibration'
+                          }
+                          title={
+                            (preferences.vibrationEnabled ?? true)
+                              ? 'Vibration On'
+                              : 'Vibration Off'
+                          }
+                        >
+                          {(preferences.vibrationEnabled ?? true) ? (
+                            <Vibrate className="w-4 h-4 text-black dark:text-white" />
+                          ) : (
+                            <VibrateOff className="w-4 h-4 text-[#E11900]" />
                           )}
                         </button>
 

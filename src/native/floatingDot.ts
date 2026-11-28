@@ -88,6 +88,7 @@ interface UberFloatingBubbleNativePlugin {
   }): Promise<void>;
   updateCarAutoState(options: AndroidAutoStatePayload): Promise<void>;
   requestPinWidget(): Promise<{ supported: boolean }>;
+  vibrate(options: { pattern: number[] }): Promise<void>;
   addListener(
     eventName: 'bubbleTapped',
     listenerFunc: (event: BubbleTappedEvent) => void
@@ -231,6 +232,15 @@ export async function requestPinAndroidWidget(): Promise<boolean> {
     return Boolean(res?.supported);
   } catch {
     return false;
+  }
+}
+
+export async function triggerNativeVibration(pattern: number[]): Promise<void> {
+  if (!isNativeAndroidApk()) return;
+  try {
+    await UberFloatingBubble.vibrate({ pattern });
+  } catch {
+    // Ignore native error
   }
 }
 

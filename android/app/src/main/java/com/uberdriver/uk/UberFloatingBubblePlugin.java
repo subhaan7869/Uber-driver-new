@@ -9,10 +9,14 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.provider.Settings;
 
 import androidx.core.content.ContextCompat;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -394,6 +398,55 @@ public class UberFloatingBubblePlugin extends Plugin {
         pendingOfferId = null;
         pendingOfferJson = null;
         call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void vibrate(PluginCall call) {
+        Context ctx = getContext();
+        if (ctx != null) {
+            try {
+                JSArray arr = call.getArray("pattern");
+                long[] timings;
+                if (arr != null && arr.length() > 0) {
+                    int len = arr.length();
+                    timings = new long[len];
+                    for (int i = 0; i < len; i++) {
+                        timings[i] = Math.max(0L, arr.optLong(i, 30L));
+                    }
+                } else {
+                    timings = new long[] { 30L };
+                }
+
+                Vibrator vibrator = null;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    VibratorManager vm = (VibratorManager) ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                    if (vm != null) {
+                        vibrator = vm.getDefaultVibrator();
+                    }
+                } else {
+                    vibrator = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);
+                }
+
+                if (vibrator != null && vibrator.hasVibrator()) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        if (timings.length == 1) {
+                            vibrator.vibrate(VibrationEffect.createOneShot(Math.max(10L, timings[0]), VibrationEffect.DEFAULT_AMPLITUDE));
+                        } else {
+                            long[] wave = new long[timings.length + 1];
+                            wave[0] = 0L;
+                            System.arraycopy(timings, 0, wave, 1, timings.length);
+                            vibrator.vibrate(VibrationEffect.createWaveform(wave, -1));
+                        }
+                    } else {
+                        long[] wave = new long[timings.length + 1];
+                        wave[0] = 0L;
+                        System.arraycopy(timings, 0, wave, 1, timings.length);
+                        vibrator.vibrate(wave, -1);
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        call.resolve();
     }
 
     private void startServiceCompat(Intent intent) {

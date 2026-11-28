@@ -539,6 +539,7 @@ export const INITIAL_PREFERENCES: DriverPreferences = {
   shareTripStatus: false,
   recordAudio: false,
   soundEffects: true,
+  vibrationEnabled: true,
   notificationsEnabled: true,
   backgroundAppRefresh: true,
   nightMode: false,

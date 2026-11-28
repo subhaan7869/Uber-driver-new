@@ -1,3 +1,5 @@
+import { isNativeAndroidApk, triggerNativeVibration } from '../native/floatingDot';
+
 export type UberSoundName =
   | 'online'
   | 'offline'
@@ -15,31 +17,170 @@ export type UberSoundName =
   | 'waitExpired'
   | 'cameraAlert';
 
-export type HapticPatternKind = 'light' | 'accept' | 'dispatch' | 'cash' | 'alert';
+export type HapticPatternKind =
+  | 'light'
+  | 'accept'
+  | 'dispatch'
+  | 'cash'
+  | 'alert'
+  | 'online'
+  | 'offline'
+  | 'complete'
+  | 'decline';
 
-export function triggerHaptic(kind: HapticPatternKind = 'light'): void {
-  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+let hapticsEnabled = true;
+let dispatchHapticTimer: number | null = null;
+let iosTapticLabelEl: HTMLLabelElement | null = null;
+let iosTapticInputEl: HTMLInputElement | null = null;
+
+export function setHapticsEnabled(enabled: boolean): void {
+  hapticsEnabled = enabled;
+  if (!enabled) {
+    stopDispatchHapticLoop();
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      try {
+        navigator.vibrate(0);
+      } catch {
+        // Ignore
+      }
+    }
+  }
+}
+
+export function isHapticsEnabled(): boolean {
+  return hapticsEnabled;
+}
+
+function isAppleTouchDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return (
+    /iPad|iPhone|iPod/i.test(ua) ||
+    (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints ?? 0) > 1)
+  );
+}
+
+/**
+ * Triggers native iOS 17.4+ / 18+ Taptic Engine feedback inside Safari / Home Screen PWAs
+ * by toggling a visually hidden `<label><input type="checkbox" switch /></label>`.
+ * Never uses `display: none` or `visibility: hidden` so WebKit does not suppress Taptic playback.
+ */
+function triggerIosSwitchTaptic(): void {
+  if (typeof document === 'undefined' || !document.body) return;
   try {
-    switch (kind) {
-      case 'accept':
-        navigator.vibrate([25, 35, 50]);
-        break;
-      case 'dispatch':
-        navigator.vibrate([45, 55, 45]);
-        break;
-      case 'cash':
-        navigator.vibrate([30, 30, 30, 40, 65]);
-        break;
-      case 'alert':
-        navigator.vibrate([70, 40, 70]);
-        break;
-      default:
-        navigator.vibrate(18);
-        break;
+    if (!iosTapticLabelEl || !document.body.contains(iosTapticLabelEl)) {
+      const label = document.createElement('label');
+      label.setAttribute('aria-hidden', 'true');
+      label.style.position = 'fixed';
+      label.style.left = '-9999px';
+      label.style.top = '0';
+      label.style.width = '1px';
+      label.style.height = '1px';
+      label.style.opacity = '0.01';
+      label.style.overflow = 'hidden';
+      label.style.pointerEvents = 'none';
+      label.style.margin = '0';
+      label.style.padding = '0';
+
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.setAttribute('switch', '');
+      input.tabIndex = -1;
+      input.setAttribute('aria-hidden', 'true');
+      input.style.width = '1px';
+      input.style.height = '1px';
+      input.style.margin = '0';
+
+      label.appendChild(input);
+      document.body.appendChild(label);
+      iosTapticLabelEl = label;
+      iosTapticInputEl = input;
+    }
+
+    if (iosTapticLabelEl) {
+      iosTapticLabelEl.click();
+    } else if (iosTapticInputEl) {
+      iosTapticInputEl.click();
     }
   } catch {
-    // Ignore unsupported or blocked haptics
+    // Ignore DOM/Taptic fallback errors
   }
+}
+
+function getHapticPattern(kind: HapticPatternKind): number[] {
+  switch (kind) {
+    case 'online':
+      return [28, 45, 55];
+    case 'offline':
+      return [40, 35, 20];
+    case 'accept':
+      return [30, 35, 65];
+    case 'complete':
+      return [35, 35, 45, 35, 80];
+    case 'dispatch':
+      return [60, 60, 60];
+    case 'cash':
+      return [38, 30, 38, 45, 85];
+    case 'alert':
+      return [85, 45, 85];
+    case 'decline':
+      return [25, 30, 18];
+    case 'light':
+    default:
+      return [18];
+  }
+}
+
+export function triggerHaptic(kind: HapticPatternKind = 'light'): void {
+  if (!hapticsEnabled) return;
+  const pattern = getHapticPattern(kind);
+
+  // 1. Native Android Capacitor APK Vibrator bridge
+  if (isNativeAndroidApk()) {
+    void triggerNativeVibration(pattern);
+  }
+
+  // 2. Standard Web Vibration API (Android Chrome / supported browsers)
+  const canWebVibrate =
+    typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+  if (canWebVibrate) {
+    try {
+      navigator.vibrate(pattern.length === 1 ? pattern[0] : pattern);
+    } catch {
+      // Ignore blocked web vibrate
+    }
+  }
+
+  // 3. iPhone / iOS Safari PWA Taptic Engine fallback (iOS 17.4+ / iOS 18+)
+  if (!canWebVibrate || isAppleTouchDevice()) {
+    triggerIosSwitchTaptic();
+    if (kind === 'dispatch' || kind === 'cash' || kind === 'alert' || kind === 'complete') {
+      window.setTimeout(() => {
+        if (hapticsEnabled) triggerIosSwitchTaptic();
+      }, 115);
+    }
+  }
+}
+
+export function stopDispatchHapticLoop(): void {
+  if (dispatchHapticTimer !== null && typeof window !== 'undefined') {
+    window.clearInterval(dispatchHapticTimer);
+    dispatchHapticTimer = null;
+  }
+}
+
+export function startDispatchHapticLoop(
+  kind: 'dispatch' | 'cash' | 'alert' = 'dispatch'
+): void {
+  stopDispatchHapticLoop();
+  if (!hapticsEnabled || typeof window === 'undefined') return;
+  dispatchHapticTimer = window.setInterval(() => {
+    if (!hapticsEnabled) {
+      stopDispatchHapticLoop();
+      return;
+    }
+    triggerHaptic(kind);
+  }, 2400);
 }
 
 type Mp3Key =

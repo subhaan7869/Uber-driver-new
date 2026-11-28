@@ -395,6 +395,7 @@ export interface DriverPreferences {
   shareTripStatus: boolean;
   recordAudio: boolean;
   soundEffects: boolean;
+  vibrationEnabled?: boolean;
   notificationsEnabled: boolean;
   backgroundAppRefresh: boolean;
   nightMode: boolean;
